@@ -114,7 +114,7 @@ async function inspectLayouts(cases, screenshots) {
   const executable = process.env.CHROME_BIN || ['/usr/bin/google-chrome', '/usr/bin/chromium'].find(file => fs.existsSync(file));
   if (!executable) throw new Error('Set CHROME_BIN to a supported local Chromium executable for layout checks');
   const profile = fs.mkdtempSync(path.join(directory, 'chrome-profile-'));
-  const browser = cp.spawn(executable, ['--headless', '--no-sandbox', '--disable-gpu', '--disable-background-networking', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, '--remote-debugging-pipe', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env: { ...process.env, HOME: profile, XDG_CONFIG_HOME: path.join(profile, 'config'), XDG_CACHE_HOME: path.join(profile, 'cache') } });
+  const browser = cp.spawn(executable, ['--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--disable-background-networking', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, '--remote-debugging-pipe', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env: { ...process.env, HOME: profile, XDG_CONFIG_HOME: path.join(profile, 'config'), XDG_CACHE_HOME: path.join(profile, 'cache') } });
   let sequence = 0, buffered = '', errors = '';
   const pending = new Map(), listeners = new Set(), loadedDocuments = new Set();
   browser.stderr.setEncoding('utf8'); browser.stderr.on('data', chunk => { errors = (errors + chunk).slice(-16000); });
@@ -149,13 +149,13 @@ async function inspectLayouts(cases, screenshots) {
   });
   const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
     const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`DevTools timeout: ${method}; ${errors}`)); }, 15000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`DevTools timeout: ${method}; ${errors}`)); }, 45000);
     pending.set(id, { resolve, reject, timer });
     browser.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
   });
   const event = (method, sessionId, matches) => new Promise((resolve, reject) => {
     const listener = { method, sessionId, matches, resolve, reject };
-    listener.timer = setTimeout(() => { listeners.delete(listener); reject(new Error(`DevTools event timeout: ${method}`)); }, 15000);
+    listener.timer = setTimeout(() => { listeners.delete(listener); reject(new Error(`DevTools event timeout: ${method}`)); }, 45000);
     listeners.add(listener);
   });
   const results = [];
@@ -168,6 +168,7 @@ async function inspectLayouts(cases, screenshots) {
     response.end(html || 'Not found');
   });
   try {
+    console.log('WORKBENCH_BROWSER:' + JSON.stringify(await send('Browser.getVersion')));
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     const origin = `http://127.0.0.1:${server.address().port}`;
     for (const review of cases) {

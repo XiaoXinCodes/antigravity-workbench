@@ -193,7 +193,7 @@ test('Windows transport uses the system helper, short constant argv and stdin so
   let result = runWindowsProcessHelper({ operation: 'end', csrfToken: 'synthetic-capability' }, undefined, () => { authorizations++; });
   assert.match(spawnArgs[0], /System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/);
   assert.equal(spawnArgs[2].shell, false); assert.equal(Buffer.from(spawnArgs[1].at(-1), 'base64').toString('utf16le'), WINDOWS_PROCESS_BOOTSTRAP);
-  assert.ok(spawnArgs[1].join(' ').length < 2000, 'source is never passed as a long encoded argv'); assert.doesNotMatch(spawnArgs[1].join(' '), /synthetic-capability|ExecutionPolicy|RunAs/);
+  assert.ok(spawnArgs[1].join(' ').length < 4096, 'bootstrap stays well below the Windows argv limit; helper source is on stdin'); assert.doesNotMatch(spawnArgs[1].join(' '), /synthetic-capability|ExecutionPolicy|RunAs/);
   const frames = writes[0].trim().split('\n'); assert.equal(Buffer.from(frames[0], 'base64').toString(), WINDOWS_PROCESS_HELPER); assert.equal(JSON.parse(frames[1]).csrfToken, 'synthetic-capability');
   child.stdout.write('{"authorize":"force"}\n'); assert.equal(authorizations, 1); assert.equal(writes[1], 'continue\n');assert.equal(child.stdin.writableEnded,false);
   child.stdout.write('{"result":"forced"}\n');assert.equal(child.stdin.writableEnded,true); child.exitCode = 0; child.emit('close', 0); assert.deepEqual(await result, { result: 'forced' });
@@ -248,6 +248,7 @@ test('Windows reads complete identity only from an isolated synthetic child, wit
   };
   const normalFlags = ['--hub-port=32124', '--csrf_token=synthetic-foreign-capability'];
   let inspected = await inspectChild(home, normalFlags);
+  assert.equal(inspected.result.code,undefined,JSON.stringify({code:inspected.result.code,stage:inspected.result.stage}));
   assert.equal(inspected.result.pid, inspected.pid); assert.equal(inspected.result.parentPid, process.pid); assert.equal(inspected.result.kind, 'unowned-hub');
   assert.match(inspected.result.startTicks, /^\d+$/); assert.match(inspected.result.commandHash, /^[a-f0-9]{64}$/); assert.ok(Number.isFinite(Date.parse(inspected.result.startedAt)));
   assert.doesNotMatch(JSON.stringify(inspected.result), /synthetic-foreign-capability|USERPROFILE|--csrf_token/);

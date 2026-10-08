@@ -5,9 +5,14 @@
  * closed. Bounded launch metadata is read in memory and never sent to the UI. */
 export const WINDOWS_PROCESS_BOOTSTRAP = String.raw`
 $ErrorActionPreference='Stop'
-[Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
-[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 try {
+ # Redirected helpers have no console code page. Use one explicit reader for
+ # source, request and acknowledgement; never reset its buffered input.
+ $encoding=[Text.UTF8Encoding]::new($false,$true)
+ [Console]::SetIn([IO.StreamReader]::new([Console]::OpenStandardInput(),$encoding,$false,4096,$true))
+ $writer=[IO.StreamWriter]::new([Console]::OpenStandardOutput(),$encoding,4096,$true)
+ $writer.AutoFlush=$true
+ [Console]::SetOut($writer)
  $source=[Console]::In.ReadLine()
  if($null -eq $source -or $source.Length -gt 262144){throw 'invalid'}
  & ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($source))))
@@ -101,29 +106,32 @@ public static class AgProcess {
  static string Flag(string[] args,string flag){string found=null;int count=0;foreach(string a in args){if(a.Split('=')[0]==flag){count++;if(a.StartsWith(flag+"=",StringComparison.Ordinal))found=a.Substring(flag.Length+1);}}return count==1?found:null;}
  static string Hash(string value){using(SHA256 sha=SHA256.Create()){return BitConverter.ToString(sha.ComputeHash(new UTF8Encoding(false,true).GetBytes(value))).Replace("-","").ToLowerInvariant();}}
  sealed class Metadata { public int Parent;public string Command,Scope,Image; }
- static Metadata Launch(IntPtr h,int pid,string home){
+ static Metadata Launch(IntPtr h,int pid,string home,Action<string> progress=null){
+  if(progress!=null)progress("architecture");
   ushort machine,native;if(IntPtr.Size!=8||!IsWow64Process2(h,out machine,out native)||machine!=0||(native!=0x8664&&native!=0xaa64))throw Unavailable();
-  Basic basic;int returned;if(NtQueryInformationProcess(h,0,out basic,Marshal.SizeOf(typeof(Basic)),out returned)!=0||returned!=Marshal.SizeOf(typeof(Basic))||basic.Pid.ToInt64()!=pid||basic.Parent.ToInt64()<0||basic.Parent.ToInt64()>Int32.MaxValue)throw Stale();
-  byte[] peb=Read(h,basic.Peb.ToInt64(),40);long parameters=Pointer(peb,32);byte[] block=Read(h,parameters,136);
+  if(progress!=null)progress("process-info");Basic basic;int returned;if(NtQueryInformationProcess(h,0,out basic,Marshal.SizeOf(typeof(Basic)),out returned)!=0||returned!=Marshal.SizeOf(typeof(Basic))||basic.Pid.ToInt64()!=pid||basic.Parent.ToInt64()<0||basic.Parent.ToInt64()>Int32.MaxValue)throw Stale();
+  if(progress!=null)progress("parameters");byte[] peb=Read(h,basic.Peb.ToInt64(),40);long parameters=Pointer(peb,32);byte[] block=Read(h,parameters,136);
   uint maximum=BitConverter.ToUInt32(block,0),length=BitConverter.ToUInt32(block,4),flags=BitConverter.ToUInt32(block,8);
   if(length<136||maximum<length||maximum>131072||(flags&1)==0)throw Stale();
-  return new Metadata{Parent=(int)basic.Parent.ToInt64(),Command=Unicode(h,block,112),Image=Unicode(h,block,96),Scope=Scope(EnvironmentScope(h,Pointer(block,128)),home)};
+  if(progress!=null)progress("environment");return new Metadata{Parent=(int)basic.Parent.ToInt64(),Command=Unicode(h,block,112),Image=Unicode(h,block,96),Scope=Scope(EnvironmentScope(h,Pointer(block,128)),home)};
  }
- static Row Inspect(IntPtr h,int pid,string executable,string home,int ownerPid,int port,string csrf){
-  if(Exited(h))throw new Fixed("gone");long birth=Birth(h);string image=Image(h),sid=Sid(h);if(!SamePath(image,executable)||sid!=CurrentSid())throw Stale();Metadata launch=Launch(h,pid,home);
-  if(!SamePath(launch.Image,executable))throw Stale();
-  string[] args=Args(launch.Command);if(!SamePath(args[0],executable))throw Stale();
+ static Row Inspect(IntPtr h,int pid,string executable,string home,int ownerPid,int port,string csrf,Action<string> progress=null){
+  if(progress!=null)progress("identity");if(Exited(h))throw new Fixed("gone");long birth=Birth(h);string image=Image(h),sid=Sid(h);if(!SamePath(image,executable)||sid!=CurrentSid())throw Stale();Metadata launch=Launch(h,pid,home,progress);
+  if(progress!=null)progress("image-path");if(!SamePath(launch.Image,executable))throw Stale();
+  if(progress!=null)progress("argv");string[] args=Args(launch.Command);if(!SamePath(args[0],executable))throw Stale();
   int hubs=0;bool exactHub=false;foreach(string a in args){if(a.Split('=')[0]=="--hub"){hubs++;exactHub=a=="--hub";}}
   string advertisedPort=Flag(args,"--hub-port"),advertisedCsrf=Flag(args,"--csrf_token");int parsedPort;
   if(hubs!=1||!exactHub||Flag(args,"--app_data_dir")!="antigravity"||advertisedPort==null||!System.Text.RegularExpressions.Regex.IsMatch(advertisedPort,@"\A[1-9][0-9]{0,4}\z")||!Int32.TryParse(advertisedPort,out parsedPort)||parsedPort>65535||advertisedCsrf==null||!System.Text.RegularExpressions.Regex.IsMatch(advertisedCsrf,@"\A[A-Za-z0-9_-]{16,128}\z"))throw Stale();
-  Metadata after=Launch(h,pid,home);if(Exited(h))throw new Fixed("gone");
+  if(progress!=null)progress("stability");Metadata after=Launch(h,pid,home);if(Exited(h))throw new Fixed("gone");
   if(birth!=Birth(h)||image!=Image(h)||sid!=Sid(h)||launch.Parent!=after.Parent||launch.Command!=after.Command||launch.Scope!=after.Scope||launch.Image!=after.Image)throw Stale();
   bool advertised=parsedPort==port&&advertisedCsrf==csrf;
   Row row=new Row{pid=pid,parentPid=launch.Parent,startTicks=birth.ToString(CultureInfo.InvariantCulture),commandHash=Hash(launch.Command+"\0"+launch.Scope+"\0"+image+"\0"+sid+"\0"+launch.Parent),kind=advertised?(launch.Parent==ownerPid?"current-hub":"unverified"):"unowned-hub",startedAt=DateTime.FromFileTimeUtc(birth).ToString("o",CultureInfo.InvariantCulture)};
   IntPtr parent=OpenProcess(Synchronize,false,row.parentPid);if(parent!=IntPtr.Zero){try{row.parentState=Exited(parent)?"gone":"alive";}finally{CloseHandle(parent);}}else if(Marshal.GetLastWin32Error()==87)row.parentState="gone";
   return row;
  }
- public static Row InspectOnly(int pid,string executable,string home,int ownerPid,int port,string csrf){IntPtr h=IntPtr.Zero;try{h=Bind(pid,false);return Inspect(h,pid,executable,home,ownerPid,port,csrf);}finally{if(h!=IntPtr.Zero)CloseHandle(h);}}
+ // Fixed stage labels support the internal read-only native fixture. They carry
+ // no path, argv, SID, environment or capability and are never shown by the UI.
+ public static object InspectOnly(int pid,string executable,string home,int ownerPid,int port,string csrf){IntPtr h=IntPtr.Zero;string stage="bind";try{h=Bind(pid,false);return Inspect(h,pid,executable,home,ownerPid,port,csrf,value=>stage=value);}catch(Fixed e){return new {code=e.Code,stage=stage};}finally{if(h!=IntPtr.Zero)CloseHandle(h);}}
  public static Row[] Scan(string executable,string home,int ownerPid,int port,string csrf){
   List<Row> rows=new List<Row>();Process[] processes=Process.GetProcessesByName("agy");if(processes.Length>1024)throw Unavailable();
   foreach(Process process in processes){using(process){int pid;try{pid=process.Id;}catch(InvalidOperationException){continue;}IntPtr h=IntPtr.Zero;

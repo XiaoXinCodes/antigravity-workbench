@@ -43,7 +43,7 @@ export function windowsPowerShell(): string {
 export function runWindowsProcessHelper(request: HelperRequest, signal?: AbortSignal, authorize?: () => void): Promise<unknown> {
   const env: NodeJS.ProcessEnv = {};
   for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH']) if (process.env[name]) env[name] = process.env[name];
-  return runHelper(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_PROCESS_BOOTSTRAP, 'utf16le').toString('base64')], request, signal, authorize, { stages: ['force'], prefix: `${Buffer.from(WINDOWS_PROCESS_HELPER).toString('base64')}\n`, env, timeout: 20_000 });
+  return runHelper(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_PROCESS_BOOTSTRAP, 'utf16le').toString('base64')], request, signal, authorize, { stages: ['force'], prefix: `${Buffer.from(WINDOWS_PROCESS_HELPER).toString('base64')}\n`, env, timeout: 45_000 });
 }
 function runHelper(executable: string, args: string[], request: HelperRequest, signal?: AbortSignal, authorize?: () => void, options: { stages?: string[]; prefix?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {}): Promise<unknown> {
   if (signal?.aborted) return Promise.reject(new LiveError('OFFICIAL_PROCESS_END_CANCELLED'));
