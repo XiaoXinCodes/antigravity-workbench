@@ -200,10 +200,33 @@ test('Windows transport uses the system helper, short constant argv and stdin so
   writes = []; result = runWindowsProcessHelper({ operation: 'end' }, undefined, () => {});
   child.stdout.write('{"authorize":"term"}\n'); await assert.rejects(result, /PROCESS_CHECK_FAILED/); assert.equal(writes.length, 1);
 });
-test('Windows system PowerShell compiles the shipped native adapter without touching any target', { skip: process.platform !== 'win32' }, async () => {
-  const { runWindowsProcessHelper } = require('../out/official-process-recovery');
-  const result = await runWindowsProcessHelper({ operation: 'probe' });
-  assert.equal(typeof result.supported, 'boolean');
+test('Windows system PowerShell compiles the shipped native adapter without touching any target', { skip: process.platform !== 'win32' }, async t => {
+  const { runWindowsProcessHelper, windowsPowerShell } = require('../out/official-process-recovery');
+  try {
+    const result = await runWindowsProcessHelper({ operation: 'probe' });
+    assert.equal(typeof result.supported, 'boolean');
+  } catch(error) {
+    // Only a synthetic capability probe: report fixed milestones, never raw
+    // helper output, environment, argv, identity or compiler exceptions.
+    const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process');
+    const {WINDOWS_PROCESS_BOOTSTRAP,WINDOWS_PROCESS_HELPER}=require('../out/official-process-windows');
+    const bootstrap=WINDOWS_PROCESS_BOOTSTRAP.replace('try {',"[Console]::Error.WriteLine('agw-start')\ntry {").replace(' & ([ScriptBlock]'," [Console]::Error.WriteLine('agw-source-read')\n & ([ScriptBlock]");
+    const source=WINDOWS_PROCESS_HELPER.replace('Add-Type -TypeDefinition',"[Console]::Error.WriteLine('agw-before-compile')\nAdd-Type -TypeDefinition").replace('$line=[Console]',"[Console]::Error.WriteLine('agw-after-compile')\n$line=[Console]").replace('$r=$line',"[Console]::Error.WriteLine('agw-request-read')\n$r=$line");
+    const dir=await fs.mkdtemp(path.join(os.tmpdir(),'agw-probe-transport-'));try{
+      const file=path.join(dir,'probe.ps1');await fs.writeFile(file,bootstrap);
+      for(const mode of ['encoded','file','inherited'])await new Promise(resolve=>{
+        const args=['-NoLogo','-NoProfile','-NonInteractive',...(mode==='file'?['-File',file]:['-EncodedCommand',Buffer.from(bootstrap,'utf16le').toString('base64')])];
+        const env={};for(const name of ['SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH'])if(process.env[name])env[name]=process.env[name];
+        const child=spawn(windowsPowerShell(),args,{stdio:['pipe','pipe','pipe'],windowsHide:true,env:mode==='inherited'?process.env:env});let stdout='',stderr='',before=[];
+        const milestones=()=>['agw-start','agw-source-read','agw-before-compile','agw-after-compile','agw-request-read'].filter(x=>stderr.includes(x));
+        child.stdout.on('data',b=>{stdout+=b.toString();});child.stderr.on('data',b=>{stderr+=b.toString();});child.stdin.on('error',()=>{});
+        const eof=setTimeout(()=>{before=milestones();child.stdin.end();},5000),limit=setTimeout(()=>child.kill(),15000);
+        child.once('close',code=>{clearTimeout(eof);clearTimeout(limit);t.diagnostic(JSON.stringify({mode,beforeEOF:before,afterEOF:milestones(),resultSeen:stdout.includes('supported'),exitCode:code}));resolve();});
+        child.stdin.write(Buffer.from(source).toString('base64')+'\n'+JSON.stringify({operation:'probe'})+'\n');
+      });
+    }finally{await fs.rm(dir,{recursive:true,force:true});}
+    throw error;
+  }
 });
 
 test('Windows reads complete identity only from an isolated synthetic child, without sending a signal', { skip: process.platform !== 'win32' }, async t => {
