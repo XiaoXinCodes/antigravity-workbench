@@ -1,0 +1,19 @@
+# Interface localization
+
+`antigravityAccounts.language` is an application-scoped user setting. Its default is `zh-CN`; `en` is an explicit manual choice. Activation reads the global value only. System language and workspace settings do not select the runtime interface language. Invalid values fall back to Simplified Chinese.
+
+The central registry and translator are in `src/i18n.ts`. `i18n-zh.ts` defines stable message keys; `i18n-en.ts` must implement the same keys and interpolation parameters. Text parameters are opaque scalar data, never expressions. Webviews escape markup and update text through `textContent` and attributes. Account names, prompts, model IDs, paths and filenames are not translated. Generated status and diagnostic fields can be relocalized from bounded in-memory message descriptors or known legacy templates; no network translation service is used.
+
+The account view rerenders from existing safe state and restores expanded sections through webview state. The image panel updates its existing document, preserving pending form values, selected account/model, references, layout and task IDs. Changing language does not send login, quota or image requests and does not resubmit tasks. Consent labels are captured before awaiting a dialog, so a language change cannot invalidate an already-open confirmation. The read-only quick start and sanitized diagnostic preview notify VS Code to update their existing document URI.
+
+To add a language, implement a typed dictionary, add it to the central registry, add its setting enum/label and native manifest catalog, and provide or select an appropriate bundled quick start. Keep technical IDs and user input unchanged. The browser dictionaries are derived from the registry; application code should use message keys rather than language conditionals. Run catalog, parameter, persistence, open-view and confirmation regressions when extending the registry.
+
+## VS Code static contribution boundary
+
+Command Palette titles, contributed view names and settings descriptions use `package.nls.json` and `package.nls.zh-cn.json`. These static entries follow VS Code's display language and are loaded through native manifest localization. The extension's runtime setting cannot instantly replace them. Settings and the language description include bilingual discovery labels. See Microsoft's [vscode-l10n documentation](https://github.com/microsoft/vscode-l10n/blob/main/README.md) and [extension manifest reference](https://code.visualstudio.com/api/references/extension-manifest).
+
+## Validation
+
+`npm run check` includes catalog completeness, placeholder parity, fallback and escaping, global-setting persistence, source literal coverage, open-view updates and multiline diagnostic history. Session tests exercise a language change while a fake generation confirmation is open and verify the same draft/account/task after confirmation. `npm run test:host` uses an isolated actual VS Code host to change the persisted setting and update an already-open quick start.
+
+For browser layout review, compile and run `node scripts/render-i18n.cjs`, then `python3 scripts/review-i18n.py` with Python Playwright and Chromium installed. This renders production HTML with explicitly synthetic account/quota data and local fixture PNG pixels, blocks HTTP(S) requests, and checks both languages and themes at widths from 160 to 1440 pixels. It also checks in-flight client language changes and screenshots. Generated evidence stays under `.test-results/i18n/` and is excluded from the VSIX.

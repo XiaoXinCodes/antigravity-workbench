@@ -1,0 +1,59 @@
+{
+  "protocol": "https:",
+  "port": 443,
+  "method": "POST",
+  "agent": false,
+  "rejectUnauthorized": true,
+  "hosts": {
+    "production": "cloudcode-pa.googleapis.com",
+    "daily": "daily-cloudcode-pa.googleapis.com"
+  },
+  "client": {
+    "httpUserAgent": "Antigravity-Workbench/0.0.8",
+    "bodyUserAgent": null
+  },
+  "project": {
+    "path": "/v1internal:loadCodeAssist",
+    "body": {
+      "metadata": {
+        "ideType": "ANTIGRAVITY"
+      }
+    }
+  },
+  "image": {
+    "path": "/v1internal:generateContent",
+    "body": {
+      "project": "fixture-project-from-selected-endpoint",
+      "requestId": "agent-10000000-0000-4000-8000-000000000001",
+      "request": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "A red circle. 红圆。"
+              }
+            ]
+          }
+        ],
+        "labels": {
+          "last_step_index": "0",
+          "model_enum": "MODEL_PLACEHOLDER_M21",
+          "request_id": "20000000-0000-4000-8000-000000000002-0",
+          "trajectory_id": "20000000-0000-4000-8000-000000000002",
+          "used_claude": "false",
+          "used_claude_conservative": "false",
+          "used_non_gemini_model": "false"
+        },
+        "generationConfig": {
+          "candidateCount": 1,
+          "imageConfig": {
+            "aspectRatio": "1:1"
+          }
+        }
+      },
+      "model": "gemini-3.1-flash-image",
+      "requestType": "image_gen"
+    }
+  }
+}

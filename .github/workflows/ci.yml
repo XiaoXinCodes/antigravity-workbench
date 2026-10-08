@@ -1,0 +1,87 @@
+name: Validate and release
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Record actual runner platform
+        run: node -p "JSON.stringify({platform:process.platform,arch:process.arch,node:process.version})"
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: python test/release-safety.test.py
+      - if: runner.os == 'Linux'
+        name: Render production workbench UI
+        run: |
+          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+          node scripts/render-workbench.cjs --all-screenshots
+        env:
+          AG_UI_LOG_SCREENSHOT: '1'
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:host
+        timeout-minutes: 5
+      - if: runner.os != 'Linux'
+        run: npm run test:host
+        timeout-minutes: 5
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extension-host-diagnostics-${{ runner.os }}
+          include-hidden-files: true
+          path: .test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+      - run: npm run package
+      - run: python scripts/verify-release.py artifacts/antigravity-workbench-0.0.8.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-workbench-vsix-${{ runner.os }}
+          path: artifacts/*.vsix
+          if-no-files-found: error
+          retention-days: 14
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run package
+      - name: Publish verified release assets
+        run: python scripts/publish-release.py
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AG_ALLOW_PUBLIC_REPOSITORY: 'true'

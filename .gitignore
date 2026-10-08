@@ -1,0 +1,10 @@
+node_modules
+node_modules/
+out/
+artifacts/
+.vscode-test/
+.test-results/
+*.vsix
+*.log
+.DS_Store
+__pycache__/

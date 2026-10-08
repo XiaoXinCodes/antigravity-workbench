@@ -1,0 +1,29 @@
+Antigravity Workbench — third-party notices
+
+The project license in LICENSE does not replace the licenses of third-party
+material identified below. This inventory covers third-party code actually
+included in the VSIX, not packages used only by development/build tools.
+
+TypeScript 5.9.3 — emitted CommonJS interoperability helpers
+
+Copyright (c) Microsoft Corporation. All rights reserved.
+Licensed under the Apache License, Version 2.0.
+Full license text: LICENSES/TypeScript-Apache-2.0.txt
+
+Included helpers: __createBinding, __setModuleDefault, __importStar,
+and __importDefault. TypeScript emits these into the extension's out/*.js
+files for CommonJS/ES module interoperability. The helper bodies are unchanged
+apart from compiler emission/formatting; surrounding application code is not
+part of TypeScript. The TypeScript compiler itself is not distributed in the
+VSIX.
+
+Source templates:
+https://github.com/microsoft/TypeScript/blob/v5.9.3/src/compiler/factory/emitHelpers.ts
+License:
+https://github.com/microsoft/TypeScript/blob/v5.9.3/LICENSE.txt
+
+The installed compiler's copyright header, LICENSE.txt and
+ThirdPartyNoticeText.txt were reviewed. Compiler-only type definitions, Unicode
+identifier tables and other compiler components listed in that notice are not
+included in these four helper bodies or in this VSIX; they are not presented
+here as bundled components.
