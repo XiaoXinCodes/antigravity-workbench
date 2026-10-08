@@ -1,7 +1,7 @@
 /* eslint-disable no-control-regex -- Reject control characters in recovered identity metadata. */
 import { t as tr } from './i18n';
 import { createHash, randomUUID } from 'node:crypto';
-import { LiveError, equalSlots, validateSlots, assertSlotIdentity, validateSlotScope, tokenAccountHint, type Slots, type TokenSlots } from './live-storage';
+import { LiveError, equalSlots, validateSlots, validateStoredToken, assertSlotIdentity, validateSlotScope, tokenAccountHint, type Slots, type TokenSlots } from './live-storage';
 import { portableToken, validateMigrationAccounts, type MigrationAccount } from './account-migration';
 import { AccountImportTransaction, type AccountIndex } from './account-import';
 import { RecoveryStore, type RecoveryStoreOptions } from './recovery-store';
@@ -11,7 +11,7 @@ export interface SecretVault { get(key: string): Thenable<string | undefined> | 
 export interface SavedLogin { id: string; label: string; expectedEmail: string; capturedAt: string; identitySource: 'hub' | 'user'; hostId?: string; migrationState?: 'pending' | 'verified' }
 export interface LiveAccount extends SavedLogin { slots: TokenSlots }
 export interface VerificationState { state: 'pending' | 'retry' | 'verified'; attempts: number; checkedAt?: string; code?: string }
-export interface Journal { schema: 1; id: string; revision?: number; writeId?: string; phase: 'authorizing' | 'prepared' | 'installed' | 'restored'; operation?: 'login'; backup: TokenSlots; target: SavedLogin; oldGeneration: string; hostId?: string; loginMode?: 'save-only'; original?: { email: string | null }; restoreGeneration?: string; verification?: VerificationState }
+export interface Journal { schema: 1; id: string; revision?: number; writeId?: string; phase: 'authorizing' | 'prepared' | 'installed' | 'restored'; operation?: 'login'; backup: TokenSlots; loginCurrent?: TokenSlots; target: SavedLogin; oldGeneration: string; hostId?: string; loginMode?: 'save-only'; original?: { email: string | null }; restoreGeneration?: string; verification?: VerificationState }
 export interface HubProof { email: string; generation: string; observedAt: string; authValid: boolean; quotaSource?: 'server'; buckets: { label: string; remaining: number | null; resetAt: string | null; remainingAmount?: string; disabled?: boolean }[] }
 export interface SignedOutProof { generation: string; authValid: false }
 export interface Lifecycle { stop(): Promise<void>; reload(): Promise<void>; proof(signal?: AbortSignal): Promise<HubProof>; signedOutProof?(signal?: AbortSignal): Promise<SignedOutProof>; generation: string; restartMode?: 'component' | 'unavailable' }
@@ -81,6 +81,7 @@ export function parseJournal(raw: string): Journal {
     if (j.restoreGeneration !== undefined && !validHostId(j.restoreGeneration)) throw 0;
     if (j.verification !== undefined && (!j.verification || !['pending', 'retry', 'verified'].includes(j.verification.state) || !Number.isSafeInteger(j.verification.attempts) || j.verification.attempts < 0 || j.verification.checkedAt !== undefined && !Number.isFinite(Date.parse(j.verification.checkedAt)) || j.verification.code !== undefined && !/^[A-Z0-9_]{1,100}$/.test(j.verification.code))) throw 0;
     validateSlotScope(j.backup);
+    if (j.loginCurrent !== undefined) { if (j.operation !== 'login') throw 0; validateSlotScope(j.loginCurrent); for (const token of [j.loginCurrent.keyring, j.loginCurrent.file]) if (token !== null) validateStoredToken(token); }
     for (const value of [j.backup.keyring, j.backup.file]) if (value !== null && typeof value !== 'string') throw 0;
     return j;
   } catch { throw new LiveError('RECOVERY_RECORD_INVALID'); }
@@ -102,6 +103,7 @@ export class LiveSwitchService {
     this.recoveryStore = new RecoveryStore(vault, recoveryOptions);
   }
   hostIsCurrent(record: { hostId?: string }): boolean { return this.hostId === undefined || record.hostId === this.hostId; }
+  credentialHostIdentity(): string | undefined { return this.hostId; }
   private assertHost(record: { hostId?: string }, kind: 'ACCOUNT' | 'RECOVERY'): void {
     if (this.hostId === undefined) return;
     if (record.hostId === undefined) throw new LiveError(`HOST_${kind}_UNBOUND`);
@@ -159,17 +161,24 @@ export class LiveSwitchService {
   /** Caller holds the shared host operation lock. Serialize same-instance calls too.
    * A fresh Hub guard surrounds all awaits; updates retain the original ID and roll
    * back only this write on failed identity/index verification. No OAuth is started. */
-  captureCurrent(metadata: CaptureMetadata, index: AccountIndex, verify: () => Promise<void>, allowWrite = true): Promise<{ account: SavedLogin; saved: boolean }> {
+  captureCurrent(metadata: CaptureMetadata, index: AccountIndex, verify: () => Promise<void>, allowWrite = true, expectedLogin?: Journal, refreshExisting = false): Promise<{ account: SavedLogin; saved: boolean }> {
     const operation = this.captureQueue.then(async () => {
       if (metadata.identitySource !== 'hub') throw new LiveError('HUB_FRESH_IDENTITY_REQUIRED');
-      if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
-      await verify();
+      const expected = expectedLogin && JSON.stringify(expectedLogin);
+      const assertCapture = async (): Promise<void> => {
+        const journal = await this.journal();
+        if (expectedLogin) {
+          if (expectedLogin.operation !== 'login' || expectedLogin.loginMode !== 'save-only' || JSON.stringify(journal) !== expected) throw new LiveError('RECOVERY_CHANGED');
+        } else if (journal) throw new LiveError('RECOVERY_PENDING');
+        await verify();
+      };
+      await assertCapture();
       const beforeIndex = JSON.stringify(index.read());
       const matches = index.read().filter(account => this.hostIsCurrent(account) && account.expectedEmail.toLowerCase() === metadata.expectedEmail.toLowerCase());
       if (matches.length > 1 || matches.length === 1 && index.read().filter(account => account.id === matches[0]!.id).length !== 1) throw new LiveError('CAPTURE_ACCOUNT_AMBIGUOUS');
       const previous = matches[0];
-      if (previous && await this.savedLoginUsable(previous)) {
-        await verify();
+      if (previous && !refreshExisting && await this.savedLoginUsable(previous)) {
+        await assertCapture();
         if (JSON.stringify(index.read()) !== beforeIndex) throw new LiveError('MIGRATION_INDEX_CHANGED');
         return { account: previous, saved: true };
       }
@@ -185,19 +194,21 @@ export class LiveSwitchService {
       }
       const value = await this.slots.read(); validateSlots(value); assertSlotIdentity(value, metadata.expectedEmail);
       if (!equalSlots(value, await this.slots.read())) throw new LiveError('OFFICIAL_STORAGE_CHANGED');
-      await verify();
+      await assertCapture();
       if (JSON.stringify(index.read()) !== beforeIndex || await this.vault.get(key) !== before) throw new LiveError('MIGRATION_INDEX_CHANGED');
-      const account: LiveAccount = { ...metadata, ...this.hostBinding(), id, capturedAt: new Date().toISOString(), slots: value };
+      if (previous && before !== undefined && equalSlots((JSON.parse(before) as LiveAccount).slots, value)) return { account: previous, saved: true };
+      const account: LiveAccount = { ...metadata, label: previous?.label ?? metadata.label, ...this.hostBinding(), id, capturedAt: new Date().toISOString(), slots: value };
       const { slots: _slots, ...summary } = account; void _slots;
       const after = JSON.stringify(account);
       try {
+        await assertCapture();
         await this.vault.store(key, after);
         if (await this.vault.get(key) !== after) throw new LiveError('SECURE_SAVE_NOT_VERIFIED');
-        await verify();
+        await assertCapture();
         if (JSON.stringify(index.read()) !== beforeIndex) throw new LiveError('MIGRATION_INDEX_CHANGED');
         await index.write(previous ? index.read().map(item => item.id === id ? summary : item) : [...index.read(), summary]);
         if (!index.read().some(item => JSON.stringify(item) === JSON.stringify(summary))) throw new LiveError('SECURE_SAVE_NOT_VERIFIED');
-        await verify();
+        await assertCapture();
         return { account: summary, saved: false };
       } catch (error) {
         // Restore the index only if it still contains our exact summary; preserve concurrent rows.
@@ -209,15 +220,17 @@ export class LiveSwitchService {
     this.captureQueue = operation.catch(() => undefined);
     return operation;
   }
-  private async saveAccount(metadata: CaptureMetadata, value: TokenSlots, id: string = randomUUID()): Promise<SavedLogin> {
+  private async saveAccount(metadata: CaptureMetadata, value: TokenSlots, id: string = randomUUID(), assertCurrent?: () => Promise<void>): Promise<SavedLogin> {
     // Recheck shared recovery ownership after reading native storage. Preserve an
     // incompatible journal verbatim rather than importing or replacing it.
     await this.journal();
     const { label, expectedEmail, identitySource } = metadata;
     const account: LiveAccount = { label, expectedEmail, identitySource, ...this.hostBinding(), id, capturedAt: new Date().toISOString(), slots: value };
     const key = ACCOUNT_PREFIX + account.id, raw = JSON.stringify(account);
+    await assertCurrent?.();
     await this.vault.store(key, raw);
     if (await this.vault.get(key) !== raw) throw new LiveError('SECURE_SAVE_NOT_VERIFIED');
+    await assertCurrent?.();
     const { slots: _slots, ...summary } = account; void _slots;
     return summary;
   }
@@ -245,8 +258,9 @@ export class LiveSwitchService {
     await this.saveJournal({ schema: 1, id: transactionId, operation: 'login', loginMode: 'save-only', original, phase: 'authorizing', backup, ...this.hostBinding(),
       target: { id: transactionId, label: tr("liveSwitch.f55c4f895a"), expectedEmail: '', capturedAt: new Date().toISOString(), identitySource: 'user', ...this.hostBinding() }, oldGeneration: lifecycle.generation });
   }
-  async captureLogin(metadata: CaptureMetadata): Promise<SavedLogin> {
+  async captureLogin(metadata: CaptureMetadata, expectedTransactionId?: string): Promise<SavedLogin> {
     const journal = await this.journal();
+    if (expectedTransactionId !== undefined && journal?.id !== expectedTransactionId) throw new LiveError('RECOVERY_CHANGED');
     if (journal?.operation !== 'login' || journal.phase !== 'authorizing') throw new LiveError('NO_LOGIN_TO_CAPTURE');
     const current = await this.slots.read(journal.backup);
     if (!equalSlots(current, await this.slots.read(journal.backup))) throw new LiveError('OFFICIAL_STORAGE_CHANGED');
@@ -257,8 +271,8 @@ export class LiveSwitchService {
     validateSlots(fresh); assertSlotIdentity(fresh, metadata.expectedEmail);
     // Reserve the transaction ID for its saved copy, so a crash between vault and
     // ordinary index writes can be recovered without duplicate profiles.
-    const saved = await this.saveAccount(metadata, fresh, journal.id);
-    journal.target = saved; await this.saveJournal(journal);
+    const saved = await this.saveAccount(metadata, fresh, journal.id, () => this.assertJournalSnapshot(journal));
+    journal.target = saved; journal.loginCurrent = current; await this.saveJournal(journal);
     return saved;
   }
   async recoverLogin(index: AccountIndex): Promise<void> {
@@ -279,7 +293,14 @@ export class LiveSwitchService {
     const { slots: _slots, ...saved } = await this.account(id); void _slots;
     if (journal.loginMode !== 'save-only' || id !== journal.id) throw new LiveError('LOGIN_TRANSACTION_MISMATCH');
     journal.target = saved; await this.saveJournal(journal);
-    await this.restore(lifecycle);
+    await this.restoreLogin(journal.id, lifecycle);
+  }
+  /** Automatic save-only restoration is authorized only for this transaction's
+   * captured full official slots, or its unchanged original backup. */
+  async restoreLogin(transactionId: string, lifecycle: Lifecycle, options: { reload?: boolean } = {}): Promise<void> {
+    const journal = await this.journal();
+    if (journal?.id !== transactionId || journal.operation !== 'login' || journal.loginMode !== 'save-only') throw new LiveError('RECOVERY_CHANGED');
+    await this.restore(lifecycle, { ...options, expectedTransactionId: transactionId, expectedCurrent: journal.loginCurrent ?? journal.backup });
   }
   /** Kept for older callers; adding an account always returns to the original session. */
   async installLogin(id: string, lifecycle: Lifecycle): Promise<void> { await this.completeLogin(id, lifecycle); }
@@ -390,6 +411,11 @@ export class LiveSwitchService {
     return current ? parse(current, this.recoveryKey) : previous;
   }
   async journal(): Promise<Journal | null> { return (await this.recoveryRecord())?.journal ?? null; }
+  private async assertJournalSnapshot(journal: Journal): Promise<void> {
+    const snapshot = this.snapshots.get(journal), current = await this.recoveryRecord();
+    const observed = current && this.snapshots.get(current.journal);
+    if (!snapshot || !observed || snapshot.key !== observed.key || snapshot.raw !== observed.raw) throw new LiveError('RECOVERY_CHANGED');
+  }
   private async saveJournal(j: Journal): Promise<void> {
     this.assertHost(j, 'RECOVERY'); this.assertHost(j.target, 'RECOVERY');
     const existing = await this.recoveryRecord();
@@ -639,8 +665,10 @@ export class LiveSwitchService {
     await index.write(current.map(item => item.id === account.id ? summary : item));
     if (!index.read().some(item => item.id === account.id && item.migrationState === 'verified' && item.identitySource === 'hub')) throw new LiveError('MIGRATION_INDEX_CHANGED');
   }
-  async restore(lifecycle: Lifecycle, options: { reload?: boolean; guardInstalled?: boolean } = {}): Promise<void> {
+  async restore(lifecycle: Lifecycle, options: { reload?: boolean; guardInstalled?: boolean; expectedTransactionId?: string; expectedCurrent?: TokenSlots } = {}): Promise<void> {
     const j = await this.journal(); if (!j) throw new LiveError('NO_RECOVERY_BACKUP');
+    if (options.expectedTransactionId !== undefined && j.id !== options.expectedTransactionId) throw new LiveError('RECOVERY_CHANGED');
+    if (options.expectedCurrent && !equalSlots(options.expectedCurrent, await this.slots.read(j.backup))) throw new LiveError('EXTERNAL_CHANGE');
     let expectedCurrent: TokenSlots | undefined;
     if (options.guardInstalled) {
       if (j.phase !== 'installed' || j.operation === 'login') throw new LiveError('RECOVERY_RECORD_INVALID');
@@ -656,9 +684,13 @@ export class LiveSwitchService {
     if (j.backup.keyringState !== 'unobserved') await this.slots.read(j.backup);
     j.phase = 'prepared'; j.restoreGeneration = lifecycle.generation; j.verification = { state: 'pending', attempts: 0 };
     await this.saveJournal(j);
+    if (options.expectedCurrent && !equalSlots(options.expectedCurrent, await this.slots.read(j.backup))) throw new LiveError('EXTERNAL_CHANGE');
+    await this.assertJournalSnapshot(j);
     await lifecycle.stop();
     const current = await this.slots.read(j.backup);
+    if (options.expectedCurrent && !equalSlots(options.expectedCurrent, current)) throw new LiveError('EXTERNAL_CHANGE');
     if (expectedCurrent && !equalSlots(current, expectedCurrent)) throw new LiveError('EXTERNAL_CHANGE');
+    await this.assertJournalSnapshot(j);
     await this.slots.write(j.backup, current);
     // Do not report a completed recovery until its original scope is read back.
     // Unobserved keyrings remain unobserved, never interpreted as empty.
@@ -666,7 +698,7 @@ export class LiveSwitchService {
     j.phase = 'restored'; await this.saveJournal(j);
     // Cancellation can stop callbacks and restore safely without surprising the user
     // with a reload. The durable journal is retained until live verification succeeds.
-    if (options.reload !== false) await lifecycle.reload();
+    if (options.reload !== false) { await this.assertJournalSnapshot(j); await lifecycle.reload(); }
   }
   async finish(guard?: VerificationGuard, expected?: Journal): Promise<void> {
     // Low-level cleanup for trusted callers. UI must use finishVerified, which obtains

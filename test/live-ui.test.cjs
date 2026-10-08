@@ -6,7 +6,7 @@ const settle=()=>new Promise(setImmediate);
 function setup(options={}){
  const commands=new Map(),events=[],state=new Map(),warnings=[],notifications=[];
  const ui={answer:undefined,trusted:true,selected:undefined,remoteName:undefined,official:undefined,config:{}};
- const vscode={UIKind:{Desktop:1},ExtensionKind:{UI:1,Workspace:2},env:{uiKind:1,get remoteName(){return ui.remoteName;}},extensions:{getExtension(id){return id==='google.google-antigravity'?ui.official:undefined;}},workspace:{get isTrusted(){return ui.trusted;},getConfiguration(){return{get:key=>ui.config[key]};}},commands:{async getCommands(){return ui.commandIds||[];},registerCommand(n,fn){commands.set(n,fn);return {dispose(){}};},async executeCommand(n){events.push(n);if(ui.execute)await ui.execute(n);}},window:{onDidChangeWindowState(fn){ui.focus=fn;return{dispose(){}};},async showWarningMessage(text){warnings.push(text);return ui.answer;},async showQuickPick(){return ui.selected;},async showInformationMessage(text){notifications.push(text);return ui.quotaConsent?'允许本机查询':undefined;}}};
+ const vscode={UIKind:{Desktop:1},ExtensionKind:{UI:1,Workspace:2},env:{uiKind:1,get remoteName(){return ui.remoteName;}},extensions:{getExtension(id){return id==='google.google-antigravity'?ui.official:undefined;}},workspace:{get isTrusted(){return ui.trusted;},getConfiguration(){return{get:key=>ui.config[key]};}},commands:{async getCommands(){return ui.commandIds||[];},registerCommand(n,fn){commands.set(n,fn);return {dispose(){}};},async executeCommand(n){events.push(n);if(ui.execute)await ui.execute(n);}},window:{onDidChangeWindowState(fn){ui.focus=fn;return{dispose(){}};},async showWarningMessage(text){warnings.push(text);return ui.answer;},async showQuickPick(){return ui.selected;},async showInformationMessage(text){notifications.push(text);return undefined;}}};
  const original=Module._load;Module._load=function(n,...args){return n==='vscode'?vscode:original.call(this,n,...args);};
  let api;try{delete require.cache[entry];api=require(entry);}finally{Module._load=original;}
  const context={secrets:{get:async()=>undefined},globalState:{get(k,d){return state.has(k)?state.get(k):d;},async update(k,v){state.set(k,v);}},extension:{extensionKind:1},extensionUri:{scheme:'file',authority:''},globalStorageUri:{scheme:'file',authority:'',toString:()=> 'file:///synthetic-private-home'},subscriptions:[]};
@@ -19,7 +19,80 @@ function setup(options={}){
  const diag=api.registerLiveUi(context,{changed:()=>ui.changed?.(),verificationClock:options.verificationClock,service,locks,lifecycle,processCount:async()=>0,savedQuota:async(account,signal,options)=>ui.savedQuota?ui.savedQuota(account,signal,options):backend.quota(account.expectedEmail,signal),currentIdentity:async()=>ui.currentIdentity?ui.currentIdentity():ui.currentProof,currentQuota:async(email,signal)=>backend.quota(email,signal)});
  return{api,commands,events,state,ui,service,locks,lifecycle,context,warnings,notifications,backend,diag,call:(s,arg)=>commands.get('antigravityAccounts.live.'+s)(arg)};
 }
+
+function officialSyncFixture(t){
+ const f=setup(),official=officialFixture(f),{LiveSwitchService}=require('../out/live-switch'),data=new Map();official.isActive=true;
+ let email='a@example.test',current;
+ const token=value=>JSON.stringify({token:{refresh_token:'synthetic-refresh-'+Buffer.from(value).toString('base64url'),access_token:'synthetic-access-'+Buffer.from(value).toString('base64url'),expiry:'2099-01-01T00:00:00Z',token_type:'Bearer'},id_token:'e30.'+Buffer.from(JSON.stringify({email:value.split(':')[0]})).toString('base64url')+'.synthetic'});
+ const set=value=>{email=value;const raw=token(value);current={keyring:raw,file:raw}};
+ set(email);const vault={get:async key=>data.get(key),store:async(key,value)=>data.set(key,value),delete:async key=>data.delete(key)};
+ const slots={read:async()=>structuredClone(current),write:async(next,expected)=>{assert.deepEqual(current,expected);f.events.push('credential-write');current=structuredClone(next);email=require('../out/live-storage').tokenAccountHint(current.file||current.keyring).email}};
+ const real=new LiveSwitchService(vault,slots,'a'.repeat(64));Object.assign(f.context.secrets,vault);
+ for(const method of ['journal','account','hostIsCurrent','credentialHostIdentity','captureCurrent','savedLoginUsable','install','finishVerified','restore','restoreLogin','recoverLogin'])f.service[method]=real[method].bind(real);
+ const proof=()=>({email,generation:require('../out/live-hub').generation(official.exports),observedAt:new Date().toISOString(),authValid:true,quotaSource:'server',buckets:[]});
+ f.ui.currentIdentity=async()=>proof();f.backend.restartMode='component';f.backend.generation=proof().generation;f.backend.proof=async()=>proof();f.backend.reload=async()=>{f.events.push('reload');official.exports={...official.exports,csrfToken:official.exports.csrfToken+'x'};f.backend.generation=proof().generation};f.locks.assertRecovery=async()=>{};
+ t.after(()=>f.context.subscriptions.forEach(sub=>sub.dispose()));
+ return{...f,real,data,slots,proof,set,current:()=>current,official,token};
+}
+test('external official login on the same Hub immediately refreshes, saves and deduplicates without another OAuth or official write',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,'a@example.test');assert.equal(f.diag.getAccounts().length,1);const first=f.diag.getAccounts()[0].id;
+ f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.equal(f.diag.getAccounts().length,2);assert.equal(f.diag.getAccounts()[0].id,first);assert.equal(f.diag.getAccounts()[1].active,true);
+ const second=f.diag.getAccounts()[1].id;f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getAccounts().length,2);assert.equal(f.diag.getAccounts()[1].id,second);assert.ok(!f.events.includes('stop')&&!f.events.includes('reload')&&!f.events.includes('credential-write'));assert.deepEqual(f.warnings,[]);assert.deepEqual(f.notifications,[]);
+});
+test('automatic save updates a new same-identity authorization under the original id and keeps the user label',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();const saved=f.diag.getAccounts()[0];f.state.set('live-switch.accounts.v1',[{...saved,label:'Personal label'}]);
+ const raw=f.token('a@example.test:second-authorization');Object.assign(f.current(),{keyring:raw,file:raw});f.ui.focus({focused:true});await f.diag.refresh();
+ assert.equal(f.diag.getAccounts().length,1);assert.equal(f.diag.getAccounts()[0].id,saved.id);assert.equal(f.diag.getAccounts()[0].label,'Personal label');assert.equal((await f.real.account(saved.id)).slots.file,raw);assert.ok(!f.events.includes('credential-write'));
+});
+test('automatic save failure retains the verified official current identity and reports saving separately',async t=>{
+ const f=officialSyncFixture(t);f.service.captureCurrent=async()=>{throw new (require('../out/live-storage').LiveError)('SECURE_SAVE_NOT_VERIFIED')};await f.diag.refresh();
+ assert.equal(f.diag.getState().activeEmail,'a@example.test');assert.equal(f.diag.getAccounts().length,0);assert.match(f.diag.getState().status,/当前账号已核实.*自动保存未完成/);assert.ok(!f.events.includes('stop'));
+});
+test('pending old add journal does not hide or overwrite a separately verified official login',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();await f.real.prepareLogin(f.backend,'00000000-0000-4000-8000-000000000081');const before=JSON.stringify(await f.real.journal());f.set('c@example.test');
+ f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,'c@example.test');assert.equal(f.diag.getAccounts().at(-1).expectedEmail,'c@example.test');assert.equal(JSON.stringify(await f.real.journal()),before);assert.equal(f.diag.getState().pending,true);assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
+});
+test('idle loopback candidate change triggers fresh official verification and automatic save within one probe interval',async t=>{
+ const f=officialSyncFixture(t),hub=require('../out/live-hub'),old=hub.queryHub;hub.queryHub=async()=>f.proof();t.after(()=>hub.queryHub=old);await f.diag.refresh();f.set('b@example.test');
+ await new Promise(resolve=>setTimeout(resolve,5300));await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.equal(f.diag.getAccounts().length,2);assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
+});
+test('remove current switches to the first usable different account before deleting its copy',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
+ const a=f.diag.getAccounts().find(item=>item.expectedEmail==='a@example.test'),b=f.diag.getAccounts().find(item=>item.expectedEmail==='b@example.test');f.ui.answer='删除保存副本';await f.call('remove',a.id);
+ assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.deepEqual(f.diag.getAccounts().map(item=>item.id),[b.id]);assert.equal(f.data.has('live-switch.account.v1.'+a.id),false);assert.equal(f.events.filter(e=>e==='credential-write').length,1);assert.equal(f.warnings.length,1);assert.equal(await f.real.journal(),null);
+});
+test('remove the only current copy keeps official login and suppresses same-identity readding until an identity change',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();const a=f.diag.getAccounts()[0];const before=structuredClone(f.current());f.ui.answer='删除保存副本';await f.call('remove',a.id);assert.equal(f.diag.getAccounts().length,0);assert.deepEqual(f.current(),before);assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
+ f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getAccounts().length,0);assert.equal(f.diag.getState().activeEmail,'a@example.test');
+ f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getAccounts().length,1);f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getAccounts().length,2);
+});
+test('remove a noncurrent copy does not switch; failed current replacement retains its saved copy',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();const [a,b]=f.diag.getAccounts();f.ui.answer='删除保存副本';await f.call('remove',a.id);assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
+ f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.service.install=async()=>{throw new (require('../out/live-storage').LiveError)('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN')};await f.call('remove',f.diag.getAccounts().find(item=>item.expectedEmail==='a@example.test').id);
+ assert.equal(f.diag.getAccounts().length,2);assert.equal(f.data.has('live-switch.account.v1.'+b.id),true);assert.match(f.diag.getState().error,/任务状态无法确认/);assert.ok(!f.events.includes('credential-write'));
+});
 test('activation registers real commands but reads no credentials and starts no backend',()=>{const f=setup();assert.equal(f.commands.size,12);assert.deepEqual(f.events,[]);assert.match(f.diag.getStatus(),/尚未操作/);});
+test('read-only quota preserves a freshly verified official badge while an older add journal remains pending',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();await f.real.prepareLogin(f.backend,'00000000-0000-4000-8000-000000000080');f.set('c@example.test');f.ui.focus({focused:true});await f.diag.refresh();const account=f.diag.getAccounts().find(item=>item.expectedEmail==='c@example.test');
+ assert.equal(account.active,true);await f.call('quota',account.id);assert.equal(f.diag.getAccounts().find(item=>item.id===account.id).active,true);assert.equal(f.diag.getState().identityVerifiedDuringRecovery,true);assert.equal(f.diag.getState().pending,true);assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
+});
+
+test('deleting a foreign-host copy of the current email never switches the local official login',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();const local=f.diag.getAccounts()[0];f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
+ const foreign={...local,id:'00000000-0000-4000-8000-000000000088',hostId:'b'.repeat(64)};f.state.set('live-switch.accounts.v1',[...f.state.get('live-switch.accounts.v1'),foreign]);f.data.set('live-switch.account.v1.'+foreign.id,JSON.stringify({...foreign,slots:f.current()}));
+ f.ui.answer='删除保存副本';await f.call('remove',foreign.id);assert.equal(f.diag.getState().activeEmail,'a@example.test');assert.ok(f.diag.getAccounts().some(item=>item.id===local.id&&item.active));assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));assert.equal(f.state.get('live-switch.removed-current.v1'),undefined);
+});
+test('a verified replacement switch lets a later official login re-add the removed identity immediately',async t=>{
+ const f=officialSyncFixture(t);await f.diag.refresh();const a=f.diag.getAccounts()[0];f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
+ f.ui.answer='删除保存副本';await f.call('remove',a.id);assert.equal(f.diag.getState().activeEmail,'b@example.test');f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
+ assert.equal(f.diag.getState().activeEmail,'a@example.test');assert.equal(f.diag.getAccounts().filter(item=>item.expectedEmail==='a@example.test').length,1);assert.equal(f.diag.getAccounts().length,2);
+});
+test('idle official sign-out invalidates the same-Hub current badge instead of swallowing its fixed auth error',async t=>{
+ const f=officialSyncFixture(t),hub=require('../out/live-hub'),old=hub.queryHub;let signedOut=false;
+ hub.queryHub=async()=>{if(signedOut)throw new (require('../out/live-storage').LiveError)('HUB_AUTH_INVALID');return f.proof()};t.after(()=>hub.queryHub=old);
+ f.ui.currentIdentity=async()=>{if(signedOut)throw new (require('../out/live-storage').LiveError)('HUB_AUTH_INVALID');return f.proof()};await f.diag.refresh();signedOut=true;await new Promise(resolve=>setTimeout(resolve,5300));
+ assert.equal(f.diag.getState().activeEmail,undefined);assert.ok(f.diag.getAccounts().every(item=>!item.active));assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
+});
 test('explicit verify resumes a stopped installed transaction, repins the lifecycle and then verifies under its lock',async()=>{
  const f=setup();await f.diag.refresh();let journal={id:'resume-transaction',phase:'installed',target:{expectedEmail:'a@example.test'}};
  f.service.journal=async()=>journal;f.locks.assertRecovery=async()=>{};f.backend.restartMode='component';f.backend.generation='stopped';
@@ -397,36 +470,50 @@ test('current-account legacy query stays inline and reads no saved credentials',
  f.service.account=async()=>{throw Error('must not read saved token')};await f.call('quota');
  assert.equal(f.diag.getAccounts()[0].quota.phase,'ready');assert.deepEqual(f.warnings,[]);assert.deepEqual(f.notifications,[]);
 });
-test('independent saved-account query requires local consent before loading a token, then only updates that card',async()=>{
+test('explicit saved-account refresh queries without a reminder and only updates that card',async()=>{
  const f=setup(),other={...saved,id:'00000000-0000-4000-8000-000000000002',expectedEmail:'other@example.test'};f.state.set('live-switch.accounts.v1',[saved,other]);
  let reads=0;f.service.account=async id=>{reads++;return {...other,id,slots:{keyring:null,file:'synthetic'}}};
- f.ui.quotaConsent=false;await f.call('quota',other.id);assert.equal(reads,0);assert.equal(f.diag.getAccounts()[1].quota,undefined);
- f.ui.quotaConsent=true;f.backend.quota=async expected=>({...await f.backend.proof(),email:expected,quotaSource:'server'});await f.call('quota',other.id);
+ assert.equal(reads,0);f.backend.quota=async expected=>({...await f.backend.proof(),email:expected,quotaSource:'server'});await f.call('quota',other.id);
  assert.equal(reads,2);assert.equal(f.diag.getAccounts()[0].quota,undefined);assert.equal(f.diag.getAccounts()[1].quota.snapshot.email,other.expectedEmail);
- assert.equal(f.state.get('live-switch.quota-consent.v2.'+other.id),true);assert.ok(!f.events.includes('stop')&&!f.events.includes('install'));
+ assert.equal(f.state.get('live-switch.quota-consent.v2.'+other.id),undefined);assert.deepEqual(f.notifications,[]);assert.deepEqual(f.warnings,[]);assert.ok(!f.events.includes('stop')&&!f.events.includes('install'));
+});
+for(const language of ['zh-CN','en']) test(`${language} manual quota refresh stays inline through loading, failure and retry`,async t=>{
+ const i18n=require('../out/i18n');i18n.setLanguage(language);t.after(()=>i18n.setLanguage('zh-CN'));
+ const f=setup(),other={...saved,id:'00000000-0000-4000-8000-000000000002',expectedEmail:'other@example.test'};
+ f.state.set('live-switch.accounts.v1',[saved,other]);let calls=0,release;
+ f.ui.savedQuota=async account=>{calls++;await new Promise(resolve=>release=resolve);if(calls===1)throw new (require('../out/live-storage').LiveError)('ACCOUNT_QUOTA_REAUTH_REQUIRED');return {...await f.backend.proof(),email:account.expectedEmail,quotaSource:'server'};};
+ await f.diag.refresh();f.ui.focus({focused:true});await settle();assert.equal(calls,0,'activation and focus do not query a saved account');
+ const first=f.call('quota',other.id);await settle();assert.equal(calls,1);assert.equal(f.diag.getAccounts()[1].quota.phase,'loading');assert.equal(f.diag.getAccounts()[0].quota,undefined);
+ await f.call('quota',other.id);assert.equal(calls,1,'repeat click shares the pending request');release();await first;
+ assert.equal(f.diag.getAccounts()[1].quota.phase,'error');assert.match(f.diag.getAccounts()[1].quota.message,language==='en'?/Authorize and save again/:/重新授权/);
+ const retry=f.call('quota',other.id);await settle();assert.equal(calls,2);release();await retry;
+ assert.equal(f.diag.getAccounts()[1].quota.phase,'ready');assert.equal(f.diag.getAccounts()[1].quota.snapshot.observedAt,'2026-10-01T00:00:00.000Z');assert.equal(f.diag.getAccounts()[0].quota,undefined);
+ f.service.account=async()=>assert.fail('current quota must not read saved credentials');await f.call('quota');assert.equal(f.diag.getAccounts()[0].quota.phase,'ready');
+ assert.deepEqual(f.notifications,[]);assert.deepEqual(f.warnings,[]);assert.ok(!f.events.includes('stop')&&!f.events.includes('install'));
+ for(const sub of f.context.subscriptions)sub.dispose();
 });
 test('saved-account identity mismatch never repaints current or selected accounts with unrelated quota',async()=>{
- const f=setup();f.state.set('live-switch.accounts.v1',[{...saved,expectedEmail:'other@example.test'}]);f.ui.quotaConsent=true;
+ const f=setup();f.state.set('live-switch.accounts.v1',[{...saved,expectedEmail:'other@example.test'}]);
  await f.call('quota',saved.id);assert.equal(f.diag.getAccounts()[0].quota.phase,'error');assert.equal(f.diag.getAccounts()[0].quota.snapshot,undefined);assert.equal(f.diag.getState().currentQuota,undefined);
 });
 test('quota errors preserve only explicitly historical server results and no toast',async()=>{
- const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;await f.call('quota',saved.id);
+ const f=setup();f.state.set('live-switch.accounts.v1',[saved]);await f.call('quota',saved.id);
  f.backend.quota=async()=>{throw new (require('../out/live-storage').LiveError)('ACCOUNT_QUOTA_REAUTH_REQUIRED')};await f.call('quota',saved.id);
  assert.equal(f.diag.getAccounts()[0].quota.phase,'error');assert.equal(f.diag.getAccounts()[0].quota.snapshot.email,saved.expectedEmail);assert.match(f.diag.getAccounts()[0].quota.message,/重新授权/);assert.deepEqual(f.warnings,[]);
 });
 test('untrusted, foreign and invalid saved-account requests never read saved credentials',async()=>{
- const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;let reads=0;f.service.account=async()=>{reads++;throw Error('must not read')};
+ const f=setup();f.state.set('live-switch.accounts.v1',[saved]);let reads=0;f.service.account=async()=>{reads++;throw Error('must not read')};
  for(const value of ['invalid',{id:saved.id},'00000000-0000-4000-8000-000000000002'])await f.call('quota',value);
  f.service.hostIsCurrent=()=>false;await f.call('quota',saved.id);f.ui.trusted=false;await f.call('quota',saved.id);assert.equal(reads,0);
 });
 test('cancel interrupts saved-account query and retry remains isolated',async()=>{
- const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;let signal;
+ const f=setup();f.state.set('live-switch.accounts.v1',[saved]);let signal;
  f.backend.quota=async(_email,value)=>{signal=value;return new Promise((_r,reject)=>value.addEventListener('abort',()=>reject(new (require('../out/live-storage').LiveError)('QUOTA_QUERY_CANCELLED'))))};
  const pending=f.call('quota',saved.id);await new Promise(setImmediate);await f.call('quotaCancel');await pending;assert.equal(signal.aborted,true);assert.match(f.diag.getAccounts()[0].quota.message,/已取消/);
  f.backend.quota=async()=>({...await f.backend.proof(),quotaSource:'server'});await f.call('quota',saved.id);assert.equal(f.diag.getAccounts()[0].quota.phase,'ready');
 });
 test('cached status cannot become a saved-account quota and repeated clicks are coalesced',async()=>{
- const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;f.backend.quota=f.backend.proof;await f.call('quota',saved.id);assert.equal(f.diag.getAccounts()[0].quota.phase,'error');
+ const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.backend.quota=f.backend.proof;await f.call('quota',saved.id);assert.equal(f.diag.getAccounts()[0].quota.phase,'error');
  let release,starts=0;f.backend.quota=async()=>{starts++;await new Promise(r=>release=r);return {...await f.backend.proof(),quotaSource:'server'}};
  const first=f.call('quota',saved.id);await new Promise(setImmediate);await f.call('quota',saved.id);assert.equal(starts,1);release();await first;assert.equal(f.diag.getAccounts()[0].quota.phase,'ready');
 });
@@ -530,7 +617,7 @@ test('read-only hub ignores unrelated CLI processes while rejecting generation d
 });
 
 test('saved-account replacement during query discards the result',async()=>{
- const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;
+ const f=setup();f.state.set('live-switch.accounts.v1',[saved]);
  f.backend.quota=async()=>{f.state.set('live-switch.accounts.v1',[]);return {...await f.backend.proof(),quotaSource:'server'}};
  await f.call('quota',saved.id);assert.equal(f.diag.getAccounts().length,0);assert.equal(f.diag.getState().currentQuota?.phase,'error');
 });
@@ -591,7 +678,7 @@ test('current badge comes only from fresh official identity and isolated quota c
  const f=setup();await f.diag.refresh();const official=officialFixture(f);official.isActive=true;
  const current={email:'current@example.test',generation:require('../out/live-hub').generation(official.exports),observedAt:new Date().toISOString(),authValid:true,quotaSource:'server',buckets:[]};
  f.ui.currentProof=current;await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,'current@example.test');
- f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;await f.call('quota',saved.id);assert.equal(f.diag.getState().activeEmail,'current@example.test');assert.equal(f.diag.getAccounts()[0].active,undefined);
+ f.state.set('live-switch.accounts.v1',[saved]);await f.call('quota',saved.id);assert.equal(f.diag.getState().activeEmail,'current@example.test');assert.equal(f.diag.getAccounts()[0].active,undefined);
  official.isActive=false;await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,undefined);
 });
 test('startup readiness activates only the same-host official extension and verifies fresh identity',async()=>{
@@ -619,7 +706,7 @@ test('focus after sixty seconds keeps the same verified card visible while reche
  official.exports={...official.exports}; // A new wrapper is the same backend, not a different account.
  complete({...proof,observedAt:new Date().toISOString()});await f.diag.refresh();
  assert.ok(states.length>=2);assert.ok(states.every(s=>s.activeEmail==='a@example.test'));assert.equal(f.diag.getState().identityChecking,false);
- f.ui.focus({focused:true});await settle();assert.equal(reads,1,'fresh identity does not requery on every focus event');
+ f.ui.focus({focused:true});await settle();assert.equal(reads,2,'focus rechecks even a fresh same-Hub identity after external login');complete({...proof,observedAt:new Date().toISOString()});await f.diag.refresh();
 });
 
 test('a failed focus proof invalidates identity; a late proof cannot survive backend replacement',async t=>{
@@ -642,7 +729,7 @@ test('fresh proof of a different identity replaces the current card only after v
 });
 
 test('refresh callbacks are scoped to selected account, preserve pending continuation, and compare committed snapshot',async()=>{
- const f=setup();await f.diag.refresh();f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;
+ const f=setup();await f.diag.refresh();f.state.set('live-switch.accounts.v1',[saved]);
  const old={keyring:null,file:'synthetic-old'},pending={keyring:null,file:'synthetic-pending'},next={keyring:null,file:'synthetic-new'};let stored={...saved,slots:old};const calls=[];
  f.service.account=async id=>{assert.equal(id,saved.id);return structuredClone(stored)};
  f.service.pendingQuotaRefresh=async(id,expected)=>{calls.push('pending');assert.equal(id,saved.id);assert.deepEqual(expected,old);return pending};
@@ -671,7 +758,7 @@ test('manual refresh logs current environment and recovery failures after enabli
  f.context.globalStorageUri.scheme='vscode-remote';await f.diag.refresh();assert.ok(records.some(e=>e.operation==='account.refresh'&&e.outcome==='blocked'&&e.data.code==='NATIVE_HOST_PATH_REQUIRED'));f.context.globalStorageUri.scheme='file';f.service.journal=async()=>{throw Error('SECRET_RECOVERY_DETAIL')};await f.diag.refresh();assert.ok(records.some(e=>e.operation==='account.refresh'&&e.outcome==='failed'&&e.data.code==='UNCLASSIFIED_ERROR'));assert.doesNotMatch(JSON.stringify(records),/SECRET|synthetic-private|@/);
 });
 test('debug cancelled quota records its actual cancellation code and never reports completed',async t=>{
- const f=setup();await f.diag.refresh();const {DebugRecorder,installDebugRecorder}=require('../out/debug-events'),{LiveError}=require('../out/live-storage'),records=[];const logger=new DebugRecorder({append:async(line,current)=>{if(current())records.push(JSON.parse(line));},readLines:async()=>[],flush:async()=>{},dispose(){}},{version:'0.13.2',platform:'linux',host:'local'});await logger.setEnabled(true);const installed=installDebugRecorder(logger);t.after(()=>installed.dispose());f.state.set('live-switch.accounts.v1',[saved]);f.ui.quotaConsent=true;f.ui.savedQuota=async()=>{throw new LiveError('QUOTA_QUERY_CANCELLED')};await f.call('quota',saved.id);const ends=records.filter(e=>e.operation==='account.quota'&&e.phase==='result');assert.equal(ends.length,1);assert.equal(ends[0].outcome,'cancelled');assert.equal(ends[0].data.code,'QUOTA_QUERY_CANCELLED');
+ const f=setup();await f.diag.refresh();const {DebugRecorder,installDebugRecorder}=require('../out/debug-events'),{LiveError}=require('../out/live-storage'),records=[];const logger=new DebugRecorder({append:async(line,current)=>{if(current())records.push(JSON.parse(line));},readLines:async()=>[],flush:async()=>{},dispose(){}},{version:'0.13.2',platform:'linux',host:'local'});await logger.setEnabled(true);const installed=installDebugRecorder(logger);t.after(()=>installed.dispose());f.state.set('live-switch.accounts.v1',[saved]);f.ui.savedQuota=async()=>{throw new LiveError('QUOTA_QUERY_CANCELLED')};await f.call('quota',saved.id);const ends=records.filter(e=>e.operation==='account.quota'&&e.phase==='result');assert.equal(ends.length,1);assert.equal(ends[0].outcome,'cancelled');assert.equal(ends[0].data.code,'QUOTA_QUERY_CANCELLED');
 });
 
 

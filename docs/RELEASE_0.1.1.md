@@ -4,6 +4,10 @@
 
 ## 简体中文
 
+- **官方登录直接同步。** 核验并显示新的官方当前身份，自动保存同宿主加密副本，不需再次手动保存。返回窗口立即检查，空闲时每五秒从本机 Hub 探测变化；同身份保留 ID 与标签。保存失败仍显示已核实身份。旧添加事务仅可恢复本事务完整快照，未知变化不自动停机或写回。
+- **移除当前账号安全接续。** 先安全切换至首个本地凭据可用的同宿主其他账号，核验成功再删除；失败保留原副本。没有替代账号时保持官方登录，抑制同身份立即重新添加，身份变化后解除。非当前或其他宿主副本移除不切号。
+- **登录进度分阶段显示。** 官方 Login 返回有效授权结果后结束浏览器通知，后续核验、保存和恢复使用明确阶段；安全保存后及时刷新列表。Google 本人验证及既有身份、存储与恢复检查均保留。
+- **额度刷新留在卡片内。** 点击刷新直接请求所选账号的服务端额度，不再额外确认或弹出成功提醒；加载状态、查询时间和失败重试均在账号卡片显示，查询与授权校验保持不变。
 - **WSL 切号检查更准确。** 核对当前 Hub 的可执行文件、宿主、端口与进程启动身份。检测到外部或遗留 Hub 时，明确说明任务状态未知并阻止继续操作，不自动终止它，也不将其直接认定为另一窗口。
 - **等待受控停机实际完成。** 官方停机钩子返回后，最多等待十秒确认后台退出和导出状态清空，再继续操作。受控重启后重新绑定进程身份，保护连续切号与恢复操作；保留 macOS / Windows 原有排他检查。
 - **保持凭据与任务保护。** 未知进程、身份变化、PID 复用及退出超时均不会成为跳过检查或写入切号凭据的理由。没有按进程名称批量结束任务的行为。
@@ -18,6 +22,10 @@ GitHub Release 与 Marketplace 是独立渠道；Marketplace 更新使用同源�
 
 ## English
 
+- **Synchronize direct official logins.** Verify and display the official current identity and automatically save its encrypted same-host copy. Check on window focus and detect changes through the local Hub every five seconds while idle, retaining IDs and labels. Saving failures keep the verified identity visible. Old add transactions may restore only their confirmed full snapshot; unknown changes prevent automatic stop or credential writes.
+- **Continue safely after current-account removal.** Switch to the first different same-host account with usable local credentials, verify it, then delete the old copy. Failure retains that copy. With no replacement, keep the official login and suppress immediate re-adding until an identity change. Noncurrent or foreign-host removal does not switch.
+- **Show distinct login stages.** Close browser progress after the official Login returns a valid auth result; show verification, saving and restoration explicitly, refreshing the list after secure saving. Google identity verification and existing identity, storage and recovery checks remain in place.
+- **Quota refresh stays on the card.** Clicking Refresh requests the selected account's server quota without an extra confirmation or success notification. Loading, query time and retryable failures remain on the account card; query behavior and authorization validation are unchanged.
 - **More precise WSL switch checks.** Verify the current Hub's executable, host, port and process start identity. An external or leftover Hub blocks further work with an explicit unknown-task-state explanation. It is not automatically terminated or assumed to represent another window.
 - **Observe controlled shutdown completion.** After the official stop hook returns, wait up to ten seconds for backend exit and cleared exports before continuing. Controlled restarts rebind process identity to protect consecutive switches and recovery. Existing macOS / Windows exclusivity checks remain in place.
 - **Preserve credential and task protections.** Unknown processes, identity changes, PID reuse and shutdown timeout do not permit skipping checks or writing switch credentials. No task is terminated by process name.

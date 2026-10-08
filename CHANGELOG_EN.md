@@ -6,6 +6,10 @@ User-visible features and fixes in this repository's formal releases. Release da
 
 ## [0.1.1](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.1) — 2026-10-08
 
+- Automatically verify, display and save direct official logins on the same host, deduplicating identities while retaining IDs and labels. An old add transaction can restore only its confirmed full snapshot and cannot overwrite an independent official login.
+- Removing the current account first safely switches to the first different account with usable local credentials on the same host, then deletes the old copy after verification. With no replacement, keep the official login and suppress immediate re-adding. Noncurrent or foreign-host removal does not switch.
+- Close browser authorization progress when the official Login result is confirmed. Show subsequent verification, saving and restoration stages inline, and refresh the account list after secure saving. Google verification, server proof and storage confirmation remain required.
+- Refresh quota without an extra confirmation or success notification. Update the selected account card and query time directly; loading and retryable errors stay on the card.
 - WSL switching verifies the current Hub's executable, host, port and process start identity. An external or leftover Hub with unknown task activity blocks switching with a specific explanation; no process is automatically terminated.
 - After the official stop hook returns, wait up to ten seconds to observe actual backend exit before continuing. Controlled restarts rebind process identity so consecutive operations do not reuse the old process proof.
 - Preserve existing process exclusivity and credential protections. Add regressions for PID reuse, changed start identity, delayed exit, consecutive restarts and macOS / Windows fallback paths.

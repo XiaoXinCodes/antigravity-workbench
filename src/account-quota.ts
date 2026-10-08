@@ -254,7 +254,7 @@ export class SavedAccountQuotaClient {
 }
 
 const localQuotaClient = new SavedAccountQuotaClient();
-/** Caller must obtain explicit local consent before loading a saved login from SecretStorage. */
+/** Caller must receive an explicit user quota action before loading a saved login from SecretStorage. */
 export function querySavedAccountQuota(account: LiveAccount, signal?: AbortSignal, options: SavedAccountQuotaOptions = {}): Promise<HubProof> {
   return localQuotaClient.query(account, signal, options);
 }

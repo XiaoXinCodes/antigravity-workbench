@@ -19,6 +19,7 @@ export interface WorkbenchState {
   activeEmail?: string;
   activeVerifiedAt?: string;
   identityChecking?: boolean;
+  identityVerifiedDuringRecovery?: boolean;
   currentLoginSave?: 'saved' | 'update';
   /** Kept for legacy storage compatibility; offline snapshots are not account logins. */
   snapshots: Account[];
@@ -76,7 +77,7 @@ export function renderWorkbench(state: WorkbenchState, nonce: string): string {
   const restoreLabel = phase === 'restored' ? tr("workbenchView.5bbf610aad") : phase === 'authorizing' || phase === 'prepared' ? tr("workbenchView.96ec98e121") : tr("workbenchView.ce965cd194");
   const showStatus = state.busy || state.pending || (state.status && ![tr("workbenchView.d98a7e24c6"), tr("workbenchView.0746a7244b"), tr("workbenchView.3aeb83569c"), tr("workbenchView.1bd1893c09"), 'idle', tr("workbenchView.d47369e8f6")].includes(state.status));
   const activeEmail = !state.pending && state.activeEmail?.trim().toLowerCase();
-  const currentAccountId = verifiedCurrentAccountId(state.accounts, state.activeEmail, state.pending);
+  const currentAccountId = verifiedCurrentAccountId(state.accounts, state.activeEmail, state.pending && !state.identityVerifiedDuringRecovery);
   const logins = state.accounts.map(account => {
     const active = account.id === currentAccountId;
     const unavailable = account.hostCurrent === false;

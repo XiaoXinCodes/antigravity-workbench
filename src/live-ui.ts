@@ -420,7 +420,7 @@ export interface LiveQuotaSnapshot { email: string; observedAt: string; source: 
 export interface LiveQuotaState { phase: 'loading' | 'ready' | 'error' | 'mismatch'; snapshot?: LiveQuotaSnapshot; message?: string }
 export type LiveAccountView = SavedLogin & { hostCurrent?: boolean; quota?: LiveQuotaState; active?: boolean; activeVerifiedAt?: string };
 export type LiveRecoveryPhase = 'checking' | 'none' | 'authorizing' | 'prepared' | 'installed' | 'restored' | 'locked' | 'unavailable';
-export interface LiveUiState { recoveryPhase: LiveRecoveryPhase; status: string; busy: boolean; pending: boolean; identityChecking?: boolean; currentLoginSave?: 'saved' | 'update'; error?: string; lastFailure?: LastAccountFailure; environment: NativeHostStatus; official: NativeHostStatus; storageMode?: string; accountStorageReady: boolean; currentQuota?: LiveQuotaState; activeEmail?: string; activeVerifiedAt?: string }
+export interface LiveUiState { recoveryPhase: LiveRecoveryPhase; status: string; busy: boolean; pending: boolean; identityChecking?: boolean; identityVerifiedDuringRecovery?: boolean; currentLoginSave?: 'saved' | 'update'; error?: string; lastFailure?: LastAccountFailure; environment: NativeHostStatus; official: NativeHostStatus; storageMode?: string; accountStorageReady: boolean; currentQuota?: LiveQuotaState; activeEmail?: string; activeVerifiedAt?: string }
 export interface LiveUiController { getStatus(): string; getAccounts(): LiveAccountView[]; getState(): LiveUiState; refresh(): Promise<void> }
 export function registerLiveUi(context: vscode.ExtensionContext, dependencies: LiveUiDependencies = {}): LiveUiController {
   let fileOnlyGuard: WslFileGuard | undefined;
@@ -482,6 +482,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   const quotas = new Map<string, LiveQuotaState>();
   let currentQuota: LiveQuotaState | undefined;
   let activeEmail: string | undefined, activeVerifiedAt: string | undefined, activeGeneration: string | undefined;
+  let identityVerifiedDuringRecovery = false;
   let disposed = false;
   const verification = new RecoveryVerification(dependencies.verificationClock, lease => {
     if (disposed || verificationLease !== lease) return;
@@ -491,12 +492,19 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   let verificationSuspended = false;
   let identityTimer: NodeJS.Timeout | undefined;
   let identityAbort: AbortController | undefined;
-  const identityDeadline = Date.now() + 90_000;
+  let identityDeadline = Date.now() + 90_000;
   let identityAttempts = 0;
   let officialActivationStarted = false, officialActivationPending = false;
   let identityStatus: string | undefined;
   let identityChecking = false;
   let loginAbort: AbortController | undefined;
+  let identityNeedsRefresh = false;
+  const removedIdentityKey = (): string => `live-switch.removed-current.v1.${captureService?.credentialHostIdentity?.() ?? 'legacy'}`;
+  const removedIdentity = (): string | undefined => {
+    const value = context.globalState.get<string>(removedIdentityKey());
+    return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : undefined;
+  };
+  const identityHash = (email: string): string => createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
   let quotaAbort: AbortController | undefined;
   context.subscriptions.push({ dispose: () => { disposed = true; verification.dispose(); clearTimeout(identityTimer); identityAbort?.abort(); loginAbort?.abort(); quotaAbort?.abort(); } });
   const items = (): SavedLogin[] => validIndex(context.globalState.get(INDEX, []));
@@ -609,7 +617,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (disposed || email !== activeEmail || verifiedAt !== activeVerifiedAt || hostGeneration !== activeGeneration || pending || identityChecking || JSON.stringify(items().map(item => ({ ...item, hostCurrent: service!.hostIsCurrent(item) })).find(item => item.id === id)) !== fingerprint) return;
     currentLoginSave = usable ? 'saved' : 'update'; currentLoginSaveFingerprint = fingerprint;
   };
-  const clearActiveIdentity = (): void => { currentLoginSave = undefined; activeEmail = undefined; activeVerifiedAt = undefined; activeGeneration = undefined; identityChecking = false; };
+  const clearActiveIdentity = (): void => { currentLoginSave = undefined; activeEmail = undefined; activeVerifiedAt = undefined; activeGeneration = undefined; identityChecking = false; identityVerifiedDuringRecovery = false; };
   function scheduleIdentity(): boolean {
     if (disposed || !['none', 'locked'].includes(recoveryPhase) || identityAttempts >= 12 || Date.now() >= identityDeadline) return false;
     if (identityTimer) return true;
@@ -675,7 +683,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       if (official.exports?.port === undefined) throw new LiveError('OFFICIAL_HUB_NOT_READY');
       if (!hasOfficialHubApi(official.exports)) throw new LiveError('OFFICIAL_HUB_API_UNAVAILABLE');
       const currentGeneration = generation(official.exports);
-      if (activeVerifiedAt && activeGeneration === currentGeneration && Date.now() - Date.parse(activeVerifiedAt) < 60_000) {
+      if (!identityNeedsRefresh && activeVerifiedAt && activeGeneration === currentGeneration && Date.now() - Date.parse(activeVerifiedAt) < 60_000) {
         identityStatus = undefined; clearTimeout(identityTimer); identityTimer = undefined; return;
       }
       // A routine same-backend recheck is not a sign-out. Retain the last
@@ -690,7 +698,34 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       if (!proof?.authValid || proof.quotaSource !== 'server' || !proof.email || !Number.isFinite(Date.parse(proof.observedAt))) throw new LiveError('HUB_FRESH_IDENTITY_REQUIRED');
       if (!matchesOfficialExtension(pinned, officialExtensionForHost(context)) || !official.isActive || !hasOfficialHubApi(official.exports) || proof.generation !== currentGeneration || generation(official.exports) !== currentGeneration) throw new LiveError('HUB_CHANGED_DURING_QUERY');
       activeEmail = proof.email; activeVerifiedAt = proof.observedAt; activeGeneration = proof.generation;
+      identityVerifiedDuringRecovery = pending;
+      identityNeedsRefresh = false;
       identityStatus = undefined; clearTimeout(identityTimer); identityTimer = undefined;
+      // A verified official login is authoritative independently of whether its
+      // local encrypted copy can be saved. Copying never stops or rewrites agy.
+      dependencies.changed?.();
+      if (captureService?.captureCurrent) {
+        try {
+          const removed = removedIdentity();
+          if (removed === identityHash(proof.email)) return;
+          if (removed) await context.globalState.update(removedIdentityKey(), undefined);
+          await locks.withOperation(async () => {
+            const journal = await service!.journal();
+            if (journal && (journal.operation !== 'login' || journal.loginMode !== 'save-only')) return;
+            const verify = async (): Promise<void> => {
+              if (disposed || busy || controller.signal.aborted || !matchesOfficialExtension(pinned, officialExtensionForHost(context)) || generation(official.exports) !== currentGeneration) throw new LiveError('HUB_CHANGED_DURING_QUERY');
+              const current = await waitForIdentity(dependencies.currentIdentity ? dependencies.currentIdentity(controller.signal) : resolveOfficialReadOnlyHub(context).then(backend => backend.proof()), controller.signal);
+              if (!current?.authValid || current.email.toLowerCase() !== proof.email.toLowerCase() || current.generation !== proof.generation) throw new LiveError('CAPTURE_HUB_CHANGED');
+              if (disposed || busy || controller.signal.aborted) throw new LiveError('QUOTA_QUERY_CANCELLED');
+            };
+            await captureService!.captureCurrent({ label: normalizeLabel(proof.email.slice(0, 80)), expectedEmail: proof.email.toLowerCase(), identitySource: 'hub' }, index, verify, true, journal ?? undefined, true);
+          });
+          if (!disposed && !busy && !controller.signal.aborted) await refreshCurrentLoginSave();
+        } catch (error) {
+          diagnostic.event('status', debugErrorData(error));
+          if (!disposed && !busy && !controller.signal.aborted) identityStatus = tr("liveUi.officialSaveFailed", { p0: liveErrorMessage(error instanceof LiveError ? error.code : 'LOCAL_OPERATION_FAILED') });
+        }
+      }
     } catch (error) {
       clearActiveIdentity();
       const code = timedOut ? 'HUB_RPC_TIMEOUT' : error instanceof LiveError ? error.code : 'HUB_RPC_FAILED';
@@ -767,10 +802,15 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
             status = tr("liveUi.254260d5f2", { p0: errorMessage });
             // Retry only this already-authorized recovery, never a new login or switch.
             scheduleVerification();
+            // A pending recovery cannot make its old identity authoritative over
+            // a separately verified official login. This path never writes agy.
+            await refreshIdentity(diagnostic);
           }
         } else if (recoveryPhase === 'none') {
           await refreshIdentity(diagnostic);
           await refreshCurrentLoginSave();
+        } else if (['authorizing', 'prepared', 'restored'].includes(recoveryPhase)) {
+          await refreshIdentity(diagnostic);
         } else {
           clearActiveIdentity(); identityStatus = undefined; clearTimeout(identityTimer); identityTimer = undefined;
         }
@@ -790,7 +830,26 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     currentLoginSave = undefined; dependencies.changed?.();
     if (!busy && !disposed) void refresh();
   }));
-  if (vscode.window.onDidChangeWindowState) context.subscriptions.push(vscode.window.onDidChangeWindowState(state => { if (state.focused) void refresh(); }));
+  const requestOfficialRefresh = (): void => {
+    if (disposed) return;
+    identityNeedsRefresh = true; identityAttempts = 0; identityDeadline = Date.now() + 90_000;
+    if (!busy) void refresh();
+  };
+  if (vscode.window.onDidChangeWindowState) context.subscriptions.push(vscode.window.onDidChangeWindowState(state => { if (state.focused) requestOfficialRefresh(); }));
+  let probeRunning = false;
+  const officialProbe = setInterval(() => {
+    if (disposed || busy || recoveryRefresh || probeRunning || !nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName).available) return;
+    probeRunning = true;
+    // Only the existing loopback Hub is probed; no saved credentials, OAuth or
+    // remote quota query is started to detect a candidate login change.
+    void resolveOfficialReadOnlyHub(context).then(backend => backend.proof()).then(proof => {
+      if (!disposed && !busy && (proof.email.toLowerCase() !== activeEmail?.toLowerCase() || proof.generation !== activeGeneration || !proof.authValid)) requestOfficialRefresh();
+    }).catch(error => {
+      if (error instanceof LiveError && ['HUB_AUTH_INVALID', 'HUB_EMAIL_MISSING', 'HUB_CHANGED_DURING_QUERY', 'OFFICIAL_HUB_NOT_READY', 'OFFICIAL_HUB_API_UNAVAILABLE'].includes(error.code) && !disposed && !busy) requestOfficialRefresh();
+    }).finally(() => { probeRunning = false; });
+  }, 5000);
+  officialProbe.unref?.();
+  context.subscriptions.push({ dispose: () => clearInterval(officialProbe) });
 
   async function finishRequestedRestart(): Promise<void> {
     if (disposed) { reloadRequested = false; requestedRestartBackend = undefined; return; }
@@ -812,7 +871,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   }
   const register = (name: string, fn: (argument?: unknown) => Promise<boolean | void>, unlocked = false): void => {
     context.subscriptions.push(vscode.commands.registerCommand(`antigravityAccounts.live.${name}`, async (argument?: unknown) => {
-      if (busy || disposed) return; busy = true; identityAbort?.abort(); identityStatus = undefined; errorMessage = undefined; dependencies.changed?.();
+      if (busy || disposed) return; busy = true; identityAbort?.abort(); identityStatus = undefined; errorMessage = undefined; if (['login', 'switch', 'restore'].includes(name)) identityVerifiedDuringRecovery = false; dependencies.changed?.();
       operationAction = name; operationStage = 'command'; operationFailure = undefined;
       const diagnostic = ['login', 'capture', 'switch', 'verify', 'quota', 'restore', 'remove', 'export', 'import'].includes(name) ? beginDebugOperation(`account.${name}` as DebugOperation) : undefined;
       debugSpan = diagnostic; diagnostic?.event('preparing');
@@ -823,7 +882,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         assertNativeHost(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName);
         await recoveryReady; await recoveryRefresh; if (disposed) return; if (setupError) throw setupError;
         if (officialActivationPending) throw new LiveError('OFFICIAL_HUB_NOT_READY');
-        if (unlocked) { try { completed = await fn(argument) === true; } finally { await refreshRecovery(false, diagnostic); } } else await locks.withOperation(async () => {
+        if (unlocked) { try { completed = await fn(argument) === true; } finally { if (!disposed) await refreshRecovery(false, diagnostic); } } else await locks.withOperation(async () => {
           // Finish or roll back a crashed import before another credential operation.
           if (name !== 'quota') {
             const journal = await service!.journal();
@@ -832,7 +891,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
             await service!.recoverLogin?.(index);
           }
           try { completed = await fn(argument) === true; }
-          finally { if (name !== 'quota') await refreshRecovery(false, diagnostic); }
+          finally { if (name !== 'quota' && !disposed) await refreshRecovery(false, diagnostic); }
         }); diagnostic?.end(completed ? 'completed' : 'cancelled'); }
       catch (e) {
         await rememberFailure(e);
@@ -941,30 +1000,46 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       await service!.prepareLogin(backend, transactionId); prepared = true; activeEmail = undefined; activeVerifiedAt = undefined; activeGeneration = undefined;
       loginAbort = new AbortController();
       const abort = loginAbort;
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: tr("liveUi.15afa50070"), cancellable: true }, async (progress, token) => {
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: tr("liveUi.15afa50070"), cancellable: true }, async (_progress, token) => {
         const cancel = token.onCancellationRequested(() => abort.abort());
         try {
           if (token.isCancellationRequested) abort.abort();
           status = tr("liveUi.3473d3c082"); dependencies.changed?.();
+          debugSpan?.event('running');
           await backend.login(abort.signal);
-          if (abort.signal.aborted) throw new LiveError('LOGIN_CANCELLED');
-          progress.report({ message: tr("liveUi.aa3daf4de6") });
-          const proof = await backend.proof();
-          if (!proof.authValid || proof.generation !== backend.generation) throw new LiveError('LOGIN_HUB_NOT_VERIFIED');
-          if (abort.signal.aborted) throw new LiveError('LOGIN_CANCELLED');
-          account = await service!.captureLogin({ label: proof.email, expectedEmail: proof.email, identitySource: 'hub' });
-          await context.globalState.update(INDEX, [...items(), account]);
-          await recordAcceptance('account-saved');
-          const fresh = await backend.proof();
-          if (!fresh.authValid || fresh.email !== proof.email || fresh.generation !== proof.generation) throw new LiveError('LOGIN_HUB_CHANGED');
           if (abort.signal.aborted) throw new LiveError('LOGIN_CANCELLED');
         } finally { cancel.dispose(); }
       });
+      // Login's validated result ends the browser notification. Server proof and
+      // durable storage remain required, but their progress belongs to the panel.
+      const assertLoginCurrent = async (): Promise<void> => {
+        if (abort.signal.aborted || disposed) throw new LiveError('LOGIN_CANCELLED');
+        const journal = await service!.journal();
+        if (journal?.id !== transactionId || journal.operation !== 'login' || journal.phase !== 'authorizing') throw new LiveError('RECOVERY_CHANGED');
+      };
+      await assertLoginCurrent();
+      status = tr("liveUi.aa3daf4de6"); dependencies.changed?.();
+      debugSpan?.event('verifying');
+      const proof = await backend.proof(abort.signal);
+      if (!proof.authValid || proof.generation !== backend.generation) throw new LiveError('LOGIN_HUB_NOT_VERIFIED');
+      await assertLoginCurrent();
+      debugSpan?.event('saving');
+      account = await service!.captureLogin({ label: proof.email, expectedEmail: proof.email, identitySource: 'hub' }, transactionId);
+      await assertLoginCurrent();
+      await context.globalState.update(INDEX, [...items(), account]);
+      status = tr("liveUi.loginSavedChecking"); dependencies.changed?.();
+      debugSpan?.event('verifying');
+      const fresh = await backend.proof(abort.signal);
+      if (!fresh.authValid || fresh.email !== proof.email || fresh.generation !== proof.generation) throw new LiveError('LOGIN_HUB_CHANGED');
+      await assertLoginCurrent();
+      await recordAcceptance('account-saved');
       if (abort.signal.aborted) throw new LiveError('LOGIN_CANCELLED');
       if (!account) throw new LiveError('LOGIN_ACCOUNT_NOT_SAVED');
       const saved = account;
       loginAbort = undefined;
       // Close the cancellable browser step before beginning atomic storage installation.
+      status = tr("liveUi.8e349f6760"); dependencies.changed?.();
+      debugSpan?.event('recovering');
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: tr("liveUi.8e349f6760"), cancellable: false }, async () => {
         await service!.completeLogin(saved.id, deferred(backend));
         status = tr("liveUi.f922756e77", { p0: saved.expectedEmail });
@@ -974,22 +1049,25 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     } catch (error) {
       debugSpan?.event('recovering', debugErrorData(error));
       if (prepared) {
+        // A replaced recovery record belongs to another transaction. Do not
+        // restore or clear it on behalf of this late login result.
+        if (error instanceof LiveError && error.code === 'RECOVERY_CHANGED' || (await service!.journal())?.id !== transactionId) throw new LiveError('RECOVERY_CHANGED');
         // Disconnecting a Login RPC alone does not prove that the official browser callback
         // stopped. Stop the whole official backend before touching either credential slot.
         if (error instanceof LiveError && error.code === 'NATIVE_HELPER_TIMEOUT_OR_LIMIT') {
-          await backend.stop(); throw new LiveError('LOGIN_STORAGE_TIMEOUT_RECOVERY_REQUIRED');
+          throw new LiveError('LOGIN_STORAGE_TIMEOUT_RECOVERY_REQUIRED');
         }
         reloadRequested = false;
         try {
-          // Cancellation must disarm the browser callback even if a native store
-          // later becomes unreadable. A failed recovery keeps the original journal.
-          await backend.stop();
-          await service!.restore({ ...backend, stop: async () => {} }, { reload: false });
+          // An independent official login owns its changed slots. Only a proven
+          // snapshot from this add operation authorizes automatic restoration.
+          await service!.restoreLogin(transactionId, backend, { reload: false });
         }
         catch { throw new LiveError('LOGIN_FAILED_RECOVERY_REQUIRED'); }
         const reason = error instanceof LiveError ? error.code : 'LOGIN_OPERATION_FAILED';
         const debugData = debugErrorData(error); debugSpan?.end(debugFailureOutcome(debugData.code), debugData);
         status = tr("liveUi.9949291c78", { p0: reason === 'LOGIN_CANCELLED' ? tr("liveUi.ec872a787c") : tr("liveUi.32fe0d02a6"), p1: account ? tr("liveUi.8b1273fc79") : '' });
+        if (disposed) return;
         await refreshRecovery(); if (disposed) return; dependencies.changed?.();
         // The initial add-account consent covers restoration and one reload.
         // A completed local restore is not called a verified session yet.
@@ -1048,12 +1126,12 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       return true;
     }
   });
-  register('switch', async (argument) => {
+  const switchAccount = async (argument: unknown, alreadyConfirmed = false): Promise<boolean | void> => {
     const direct = accountArgument(argument, items());
     const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: account.label, description: account.expectedEmail, detail: tr("liveUi.3e646493ab", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.8f858aa51c") : account.identitySource === 'hub' ? tr("liveUi.ca7dd652b2") : tr("liveUi.905e17f65c") }), account })), { title: tr("liveUi.13e45587a6") });
     if (!selected) { if (!items().length) void vscode.window.showInformationMessage(tr("liveUi.2fdb70d003")); return; }
     const switchConsent = tr("liveUi.e0351ba254");
-    if (await vscode.window.showWarningMessage(tr("liveUi.9dc41427e9", { p0: selected.account.expectedEmail, p1: selected.account.migrationState === 'pending' ? tr("liveUi.61d34541c9") : '' }), { modal: true }, switchConsent) !== switchConsent) return;
+    if (!alreadyConfirmed && await vscode.window.showWarningMessage(tr("liveUi.9dc41427e9", { p0: selected.account.expectedEmail, p1: selected.account.migrationState === 'pending' ? tr("liveUi.61d34541c9") : '' }), { modal: true }, switchConsent) !== switchConsent) return;
     const backend = await resolveLifecycle();
     if (backend.restartMode === 'unavailable') throw new LiveError('OFFICIAL_COMPONENT_RESTART_UNAVAILABLE');
     const transactionId = randomUUID();
@@ -1130,7 +1208,8 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       }
       throw e;
     }
-  });
+  };
+  register('switch', argument => switchAccount(argument));
   function recordProof(proof: HubProof): SavedLogin[] {
     if (proof.quotaSource !== 'server') return [];
     const snapshot: LiveQuotaSnapshot = { email: proof.email, observedAt: proof.observedAt, source: proof.quotaSource === 'server' ? 'server' : 'hub-status', buckets: proof.buckets.map(bucket => ({ ...bucket })) };
@@ -1159,15 +1238,8 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       if (!proof.authValid || proof.quotaSource !== 'server' || proof.email.toLowerCase() !== target.expectedEmail.toLowerCase() || backend && proof.generation !== backend.generation) throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');
       activeEmail = proof.email; activeVerifiedAt = proof.observedAt; activeGeneration = proof.generation;
     } else if (target) {
-      const consentKey = `live-switch.quota-consent.v2.${target.id}`;
-      if (context.globalState.get<boolean>(consentKey, false) !== true) {
-        const allow = tr("liveUi.570e40b62e");
-        if (await vscode.window.showInformationMessage(tr("liveUi.9ca02bd43f", { p0: target.expectedEmail }), { modal: true }, allow) !== allow) {
-          if (previous) quotas.set(target.id, previous); else quotas.delete(target.id);
-          return;
-        }
-        await context.globalState.update(consentKey, true);
-      }
+      // The explicit Refresh action requests this account's query. Loading,
+      // results and errors stay on its card without another confirmation.
       if (abort.signal.aborted) throw new LiveError('QUOTA_QUERY_CANCELLED');
       const saved = await service!.account(target.id);
       if (saved.expectedEmail.toLowerCase() !== target.expectedEmail.toLowerCase()) throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');
@@ -1231,6 +1303,26 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (!selected) return;
     const removeConsent = tr("liveUi.49283708f3");
     if (await vscode.window.showWarningMessage(tr("liveUi.a1d08d0d5f", { p0: selected.account.expectedEmail }), { modal: true }, removeConsent) !== removeConsent) return;
+    const officialPresent = !!vscode.extensions.getExtension(OFFICIAL_ID);
+    const current = officialPresent ? await (dependencies.currentIdentity ? dependencies.currentIdentity() : resolveOfficialReadOnlyHub(context).then(backend => backend.freshProof!())) : undefined;
+    if (officialPresent && (!current?.authValid || current.quotaSource !== 'server' || !current.email || !Number.isFinite(Date.parse(current.observedAt)))) throw new LiveError('HUB_FRESH_IDENTITY_REQUIRED');
+    const removingCurrent = !!current && service!.hostIsCurrent(selected.account) && current.email.toLowerCase() === selected.account.expectedEmail.toLowerCase();
+    if (removingCurrent) {
+      let replacement: SavedLogin | undefined;
+      for (const item of items()) {
+        if (item.id === selected.account.id || item.expectedEmail.toLowerCase() === current.email.toLowerCase() || !service!.hostIsCurrent(item) || item.migrationState === 'pending') continue;
+        if (await service!.savedLoginUsable(item)) { replacement = item; break; }
+      }
+      if (replacement) {
+        const release = enterAccountChange();
+        try {
+          if (await switchAccount(replacement.id, true) !== true || pending || activeEmail?.toLowerCase() !== replacement.expectedEmail.toLowerCase()) throw new LiveError('HUB_IDENTITY_NOT_VERIFIED');
+        } finally { release(); }
+      }
+      // An explicit removal is not undone by the observer while this same
+      // official identity remains logged in. A later identity change clears it.
+      await context.globalState.update(removedIdentityKey(), replacement ? undefined : identityHash(selected.account.expectedEmail));
+    }
     const secretKeys = [`live-switch.account.v1.${selected.account.id}`, `live-switch.quota-refresh.v1.${selected.account.id}`, `live-switch.quota-pending.v1.${selected.account.id}`];
     for (const key of secretKeys) await context.secrets.delete(key);
     for (const key of secretKeys) if (await context.secrets.get(key) !== undefined) throw new LiveError('SECURE_REMOVE_NOT_VERIFIED');
@@ -1260,7 +1352,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   }, true);
   return { refresh, getStatus: () => localizeMessage(status), getAccounts: () => {
     const accounts = items().map(account => ({ ...account, ...(service?.hostIsCurrent ? { hostCurrent: service.hostIsCurrent(account) } : {}) }));
-    const currentId = verifiedCurrentAccountId(accounts, activeEmail, pending);
+    const currentId = verifiedCurrentAccountId(accounts, activeEmail, pending && !identityVerifiedDuringRecovery);
     return accounts.map(account => ({ ...account, ...(account.id === currentId ? { active: true, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}), ...(quotas.has(account.id) ? { quota: quotas.get(account.id)! } : {}) }));
-  }, getState: () => ({ accountStorageReady: !!service || !!setupError, identityChecking, ...(currentSaveProjection() ? { currentLoginSave: currentSaveProjection()! } : {}), status: !busy && recoveryPhase === 'none' && identityStatus ? localizeMessage(identityStatus) : localizeMessage(status), busy, pending, recoveryPhase, ...(errorMessage ? { error: localizeMessage(errorMessage) } : {}), ...(lastFailure ? { lastFailure } : {}), environment: environmentStatus(), official: officialAvailability(context), ...(storageMode ? { storageMode } : {}), ...(currentQuota ? { currentQuota } : {}), ...(activeEmail ? { activeEmail, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}) }) };
+  }, getState: () => ({ accountStorageReady: !!service || !!setupError, identityChecking, identityVerifiedDuringRecovery, ...(currentSaveProjection() ? { currentLoginSave: currentSaveProjection()! } : {}), status: !busy && recoveryPhase === 'none' && identityStatus ? localizeMessage(identityStatus) : localizeMessage(status), busy, pending, recoveryPhase, ...(errorMessage ? { error: localizeMessage(errorMessage) } : {}), ...(lastFailure ? { lastFailure } : {}), environment: environmentStatus(), official: officialAvailability(context), ...(storageMode ? { storageMode } : {}), ...(currentQuota ? { currentQuota } : {}), ...(activeEmail ? { activeEmail, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}) }) };
 }

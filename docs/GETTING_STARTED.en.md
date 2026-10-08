@@ -7,9 +7,10 @@ Workbench and Google Antigravity must run on the same host. In WSL, install the 
 ## Accounts
 
 1. Click **Add account**, confirm and authorize the Google account in your system browser. Workbench saves the new account, then restores your previous login state.
-2. If you already signed in through Google Antigravity, use **Save current account**, next to Add account. A uniquely matched account with a complete local saved credential becomes **Saved** and cannot be saved twice. Missing or invalid local credentials show **Update credentials**. This checks local record usability; it does not prove that Google still accepts the authorization.
+2. Signing in directly through official Google Antigravity automatically verifies and displays the current identity and saves an encrypted copy on the same host. Returning to the window triggers a check; a local Hub probe detects changes every five seconds while idle. The same identity retains its account ID and label. Saving failures keep the verified identity visible and report an error; **Save current account** can retry. Local credential readiness does not prove Google still accepts authorization.
 3. Click **Switch** on a saved account. After confirmation, Workbench restarts the official component and verifies the target identity before treating the switch as complete.
-4. Click **Refresh** to query that account's server model quotas and reset times, without switching. The first query explains its authorization scope. Follow the prompt if authorization expires.
+4. Click **Refresh** to query that account's server model quotas and reset times, without switching. Progress, quota and errors appear on the account card without another dialog. If authorization expires, resolve the card error and retry.
+5. Removing the current account first safely switches to the first different account with usable local credentials on the same host, then removes the old copy after verification. A failed switch retains that copy. With no replacement, remove only the copy and keep the official login. Background synchronization does not immediately re-add that same current identity; an identity change enables automatic saving again.
 
 Adding and switching are separate operations. Switching interrupts active tasks in the official component; finish those tasks first. Incomplete operations retain recovery actions and backups. Do not manually delete credentials or internal locks. Closing an authorization page does not revoke authorization you already granted to Google.
 
