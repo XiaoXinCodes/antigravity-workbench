@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">Download and install</a> ·
   <a href="docs/GETTING_STARTED.en.md">Getting started</a> ·
+  <a href="CHANGELOG_EN.md">Changelog</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">Report an issue</a>
 </p>
 
@@ -37,6 +38,8 @@
 SSH and container extension hosts have not been verified. Platform support and automated checks do not establish that every real-account scenario works. See [compatibility](docs/COMPATIBILITY.md) (Chinese).
 
 ## Installation
+
+Current formal version: **0.1.0**. See the [changelog](CHANGELOG_EN.md) for release details.
 
 1. Open the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) and download the latest `.vsix` attachment.
 2. Run **Extensions: Install from VSIX…** in the target VS Code window and select the file. With WSL, install into the host where Google Antigravity runs.

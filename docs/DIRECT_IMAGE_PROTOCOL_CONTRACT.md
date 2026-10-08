@@ -19,4 +19,4 @@
 
 协议互通观察参考 [Antigravity-Manager 固定提交](https://github.com/lbjlaq/Antigravity-Manager/tree/6e8b982aee7e3d3d53501825431142eea9a3f9ab)，来源许可证为 [CC BY-NC-SA 4.0](https://github.com/lbjlaq/Antigravity-Manager/blob/6e8b982aee7e3d3d53501825431142eea9a3f9ab/LICENSE)。本项目采用独立 TypeScript 构造和合成 fixture，未打包其 Rust 源文件、重试器或完整模型目录；已核对的行为差异与来源审阅范围见 [项目与服务说明](PROJECT_NOTICES.md#参考与素材)。这不是对所有历史来源的完整版权清查结论。参考行为不构成 Google 的公开接口兼容保证。
 
-合成测试覆盖序列化、账号/project 绑定、错误分类与产物校验。真实服务和发行包验证范围见 [验证说明](VALIDATION_0.0.8.md)。Production 429 原因仍未确认，不能把通用资源错误解释为个人图片张数用尽。
+合成测试覆盖序列化、账号/project 绑定、错误分类与产物校验。真实服务和发行包验证范围见 [验证说明](VALIDATION_0.1.0.md)。Production 429 原因仍未确认，不能把通用资源错误解释为个人图片张数用尽。

@@ -23,7 +23,7 @@ def verify(vsix, source=None):
     package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))
     lock = json.loads((ROOT / 'package-lock.json').read_text(encoding='utf-8'))
     version = package['version']
-    assert version == lock['version'] == lock['packages']['']['version'] == '0.0.8'
+    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.0'
     assert package['license'] == lock['packages']['']['license'] == 'SEE LICENSE IN LICENSE'
     for name, expected in LICENSE_TEXT_HASHES.items():
         assert hashlib.sha256((ROOT / name).read_text(encoding='utf-8').encode()).hexdigest() == expected, f'Unreviewed license text: {name}'

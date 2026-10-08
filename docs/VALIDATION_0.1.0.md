@@ -1,4 +1,4 @@
-# 0.0.8 验证范围
+# 0.1.0 验证范围
 
 账号与图片服务测试使用虚构账号、mock 响应和本地演示图；这些检查不证明真实 Google 账号授权或模型可调用性。
 
@@ -14,4 +14,4 @@
 
 静态 VS Code 命令、视图标题和设置描述遵循宿主显示语言；插件手动语言设置即时更新运行时界面。
 
-[发行说明](RELEASE_0.0.8.md) · [中英界面架构](LOCALIZATION.md) · [兼容性](COMPATIBILITY.md)
+[发行说明](RELEASE_0.1.0.md) · [中英界面架构](LOCALIZATION.md) · [兼容性](COMPATIBILITY.md)

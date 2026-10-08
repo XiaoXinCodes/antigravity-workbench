@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">下载安装</a> ·
   <a href="docs/README.md">使用文档</a> ·
+  <a href="CHANGELOG.md">更新日志</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">提交问题</a>
 </p>
 
@@ -37,6 +38,8 @@
 SSH 和容器扩展宿主尚未核验。平台适配与自动化检查不代表所有真实账号场景都已验证，详见 [兼容性](docs/COMPATIBILITY.md)。
 
 ## 安装
+
+当前正式版本：**0.1.0**。更新内容见 [更新日志](CHANGELOG.md)。
 
 1. 打开 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)，从附件中下载最新的 `.vsix` 安装包。
 2. 在目标 VS Code 窗口执行 **Extensions: Install from VSIX…**，选择文件。WSL 用户应确认安装到 Google Antigravity 所在的 WSL 宿主。

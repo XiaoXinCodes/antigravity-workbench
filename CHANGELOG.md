@@ -1,14 +1,33 @@
-# Changelog
+# 更新日志
 
-## 0.0.8 — 2026-10-07
+简体中文 · [English](CHANGELOG_EN.md)
 
-- 默认简体中文，用户设置手动选择 English；打开的界面与帮助即时切换，保留输入、参考图、账号、布局与任务。
-- 添加账号与保存当前账号同组；本机副本可用时显示“已保存”，缺失或不可用时更新同一记录，防止重复添加。
-- 组件启动时有限重试图片账号检查；切换与恢复的事务修订防止迟到核验清理较新操作。
-- 图片额度按所选账号/模型查询，标记旧值，未满比例不显示为满额，不换算生成张数。
-- 支持合法的不含 image 的图片目录成员 ID，提供按需脱敏目录对比，不保证模型权限。
-- 已保存结果继续修改、版本对比、草稿恢复、项目路径/Markdown、明确编辑器插入与不覆盖的图片复制；原图和任务历史保留。
-- 创作记录兼容 schema 1 / 2，写入 schema 3；改善 Windows 盘符与路径边界处理。
-- 完整中英 README、快速入门与实际渲染功能截图。
+记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC；安装步骤与验证范围见对应发行说明。
 
-English: manual Chinese/English UI with preserved live state; grouped idempotent current-account saving; bounded startup checks and revision-safe recovery; account/model image quota without false full readings; trusted catalog membership; continued editing, version comparison and project actions; compatible creative-record migration; complete bilingual documentation and rendered screenshots. See [release notes](docs/RELEASE_0.0.8.md) for installation and validation boundaries.
+## [0.1.0](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.0) — 2026-10-08
+
+本仓库首发版本。
+
+### 功能
+
+- **多账号管理。** 通过浏览器 OAuth 添加并保存账号，切换已保存账号后重启官方组件并核验身份；可独立查看各账号的模型额度与重置时间。
+- **保存当前登录。** “添加账号”与“保存当前登录”同组显示。唯一匹配的已核验身份有可用本机副本时显示“已保存”；凭据缺失或不可用时更新原记录，避免重复添加。保存状态仅表示本机检查通过。
+- **图片工作室。** 跟随当前登录或独立选择已保存账号，获取该账号的图片模型；支持提示词、参考图、比例和请求次数，保存并预览 PNG/JPEG，以及恢复已有 PNG。参考图可单张移除或全部清空。
+- **继续创作与用进项目。** 保存并恢复草稿和任务卡，从已保存结果继续修改、比较版本、复制相对路径或 Markdown。明确点击后才在所示文本文件插入，不自动保存编辑器；保留原图，中断任务不会自动重发。
+- **即时中英文切换。** 默认简体中文，在 `antigravityAccounts.language` 中手动选择 `en`。已打开的界面和帮助立即更新，保留输入、参考图、账号选择、布局与任务；静态命令和视图标题遵循 VS Code 显示语言。
+- **双语使用说明。** 提供中英文 README、快速入门及实际渲染的功能截图。截图使用虚构账号、模拟额度和本地演示图。
+
+### 改进与修复
+
+- 图片账号检查在官方组件启动期间有限重试；切换与恢复的修订校验防止迟到结果清理较新的操作。
+- 图片额度按所选账号和模型查询，明确标记旧值；未满的比例不显示为 100%，百分比不换算成可生成张数。
+- 按同账号可信图片目录的成员校验模型 ID，兼容合法但不含 `image` 的 ID；提供按需脱敏目录对比。模型名称与目录成员资格不保证实际调用权限。
+- 创作记录可读取已有 schema 1 / 2 并写入 schema 3；改善 Windows 盘符与路径边界处理。降级前应保留数据备份，旧版可能无法读取新记录。
+
+### 兼容性与验证
+
+自动化检查覆盖 Linux、Windows、macOS 的回归、隔离实际 VS Code 宿主、打包与许可检查。真实 Google 账号接入和真实生图未作为本次发布验收；模型、权限和额度以服务端实际结果为准。SSH / 容器宿主尚未核验。
+
+项目自有部分采用 [Sustainable Use License 1.0](LICENSE)，属于 source-available（源码可见）许可，非 OSI 标准开源许可。第三方许可独立保留，见 [第三方声明](THIRD_PARTY_NOTICES.txt)；该许可不授予 Google 服务访问权。
+
+[发行说明](docs/RELEASE_0.1.0.md) · [验证范围](docs/VALIDATION_0.1.0.md) · [中文 README](README.md)

@@ -1,4 +1,6 @@
-# Antigravity Workbench 0.0.8
+# Antigravity Workbench 0.1.0
+
+发布日期 / Release date: 2026-10-08 (UTC)
 
 ## 简体中文
 
