@@ -8,12 +8,12 @@
 
 <p align="center"><strong>Source-available · Sustainable Use License 1.0</strong></p>
 
-<p align="center"><a href="README.md">简体中文</a> · English</p>
+<p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README.md">简体中文</a> · English</p>
 
 <p align="center">
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">Download and install</a> ·
-  <a href="docs/GETTING_STARTED.en.md">Getting started</a> ·
-  <a href="CHANGELOG_EN.md">Changelog</a> ·
+  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/docs/GETTING_STARTED.en.md">Getting started</a> ·
+  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/CHANGELOG_EN.md">Changelog</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">Report an issue</a>
 </p>
 
@@ -103,7 +103,7 @@ Command Palette entries, view titles and settings descriptions are static contri
 | Does selecting another image account switch the official login? | No. Independent selection affects the image task only; confirmation fixes the selected account and model. |
 | What if switching is unavailable or WSL cannot find my accounts? | Check both extensions' hosts and any pending recovery operation, then follow the recovery prompt. Storage is separate per host. See [troubleshooting](docs/TROUBLESHOOTING.md) (Chinese). |
 | Will generation resume automatically after reload? | No. Drafts and task cards return, but interrupted tasks retain their status. Resubmission requires your explicit action. |
-| Can I install from Marketplace? | Distribution currently uses GitHub Release VSIX files; the extension has not been published to Marketplace. Use the latest Release link above. |
+| Can I install from Marketplace? | Download the VSIX from the latest Release link above, then choose Install from VSIX... in VS Code. Marketplace installation depends on the listing's actual availability. |
 
 ## Privacy and usage boundaries
 

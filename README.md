@@ -8,12 +8,12 @@
 
 <p align="center"><strong>Source-available · Sustainable Use License 1.0</strong></p>
 
-<p align="center">简体中文 · <a href="README_EN.md">English</a></p>
+<p align="center">简体中文 · <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README_EN.md">English</a></p>
 
 <p align="center">
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">下载安装</a> ·
-  <a href="docs/README.md">使用文档</a> ·
-  <a href="CHANGELOG.md">更新日志</a> ·
+  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/docs/README.md">使用文档</a> ·
+  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/CHANGELOG.md">更新日志</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">提交问题</a>
 </p>
 
@@ -103,7 +103,7 @@ Workbench 把多账号管理、服务端额度查询和图片工作室放进同�
 | 选择另一生图账号会切换官方登录吗？ | 不会。图片页独立选择只影响该图片任务，确认时固定所选账号与模型。 |
 | 切换不可用或 WSL 找不到账号怎么办？ | 先核对两个扩展的宿主和是否有待恢复操作；按界面恢复提示处理。保存位置按宿主独立。见 [故障排查](docs/TROUBLESHOOTING.md)。 |
 | 重载后会自动继续生图吗？ | 不会。草稿与任务卡会恢复，中断任务保留状态，重新提交需你明确操作。 |
-| 可以从 Marketplace 安装吗？ | 当前通过 GitHub Release 的 VSIX 交付，尚未在 Marketplace 发布。使用上方“最新 Release”入口即可。 |
+| 可以从 Marketplace 安装吗？ | 可以使用上方“最新 Release”下载 VSIX，在 VS Code 中选择“从 VSIX 安装…”进行安装。Marketplace 安装以实际页面可用性为准。 |
 
 ## 隐私与使用边界
 
