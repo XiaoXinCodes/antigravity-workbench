@@ -4,7 +4,7 @@
 
 <h1 align="center">Antigravity Workbench</h1>
 
-<p align="center">在 VS Code 中管理多个 Google Antigravity 账号并生成图片。</p>
+<p align="center">在 VS Code 中管理 Google Antigravity 账号、查看额度并创作图片。</p>
 
 <p align="center"><strong>Source-available · Sustainable Use License 1.0</strong></p>
 
@@ -17,86 +17,119 @@
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">提交问题</a>
 </p>
 
-## 功能
+Workbench 把多账号管理、服务端额度查询和图片工作室放进同一个 VS Code 工作台。你可以保存或切换账号，也可以为图片任务独立选择已保存账号，再把结果用于当前项目。
+
+本项目独立开发，与 Google 不存在隶属、授权或背书关系。可用模型、权限与额度以所选账号的服务端结果为准。
+
+[快速安装](#快速安装) · [使用步骤](#使用步骤) · [功能演示](#功能演示) · [常见问题](#常见问题) · [参与贡献](#参与贡献)
+
+## 快速安装
+
+**准备：** VS Code 1.95 或更高版本，以及可用的 Google Antigravity 扩展和登录。两个扩展应运行在同一本机或 WSL 宿主。
+
+1. 打开 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)，从附件中下载 `.vsix` 安装包。
+2. 在目标 VS Code 窗口的命令面板执行 **Extensions: Install from VSIX…**，选择下载的文件。
+3. 按提示重载，在活动栏打开 **Antigravity Workbench**。WSL 用户请确认安装到 Google Antigravity 所在的 WSL 宿主。
+
+安装与升级不要求清空已有账号、官方登录文件、会话或图片。发行说明、源码和校验文件均在 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)，版本变化见 [更新日志](CHANGELOG.md)。
+
+适配 Windows、macOS、Linux 本机扩展宿主与 WSL Linux 工作区宿主。SSH 和容器宿主尚未核验；三平台自动化检查不代表所有真实账号场景均已验证，详见 [兼容性](docs/COMPATIBILITY.md)。
+
+## 可以做什么
 
 | 功能 | 用途 |
 | --- | --- |
-| 多账号管理 | 通过浏览器 OAuth 添加并保存多个账号；选择已保存账号切换，自动重启官方组件并核验身份，完成后生效 |
-| 服务端配额 | 按账号查看模型额度、重置时间和查询状态，无需先切换当前账号 |
-| 图片生成 | 跟随当前登录或独立选择已保存账号；按所选账号获取图片模型、比例和请求次数，保存并预览 PNG/JPEG，也可恢复已有 PNG |
-| 创作记录 | 自动保存草稿、账号选择与任务卡，重载后恢复；中断任务保留状态，不会自动重发 |
-| 继续修改与版本对比 | 将已保存结果放入可编辑草稿，保留来源与原图；查看已保存版本 |
-| 用进项目 | 复制相对路径或 Markdown；明确点击后在所示文本文件插入，不自动保存 |
-| 账号迁移与排障 | 导出账号、导入账号；命令面板的高级排障入口支持按需诊断及日志导出 |
+| 多账号管理 | 浏览器 OAuth 添加账号，保存当前登录，切换已保存账号并自动重启官方组件、核验身份 |
+| 服务端额度 | 独立查询每个账号的模型剩余比例、重置时间和更新时间，无需先切换登录 |
+| 图片工作室 | 跟随当前登录或独立选择已保存账号；选择其图片模型、提示词、参考图、比例与请求次数，保存和预览 PNG/JPEG |
+| 创作记录与版本 | 恢复草稿和任务卡，从已保存结果继续修改、比较版本；保留原图，中断任务不会自动重发 |
+| 用进项目 | 复制相对路径或 Markdown；明确点击后插入所示文本文件，不自动保存；复制图片到项目时拒绝覆盖已有文件 |
+| 迁移与恢复 | 加密导出、导入账号，恢复已有官方会话 PNG，按需诊断及导出日志 |
 
-## 运行环境
+## 使用步骤
 
-- VS Code 1.95 或更高版本，以及可用的 Google Antigravity 扩展和登录。
-- 适配 Windows、macOS、Linux 本机扩展宿主，以及 WSL Linux 工作区宿主。Workbench 与 Google Antigravity 应运行在同一侧。
-- 图片模型、可用额度与权限以 Google 所选账号返回的结果为准。
+### 保存或添加账号
 
-SSH 和容器扩展宿主尚未核验。平台适配与自动化检查不代表所有真实账号场景都已验证，详见 [兼容性](docs/COMPATIBILITY.md)。
+1. 已有官方登录时，点击“保存当前账号”。需要添加其他账号时，点击“添加账号”，在浏览器完成 OAuth 授权。添加完成后恢复原登录，使用新账号需另行切换。
+2. 需要切换时，在账号卡片点击“切换”并确认。组件重启、身份核验完成后才显示成功；添加或切换前请先结束官方组件中的活动任务。
+3. 在账号卡片点击“刷新”，查询该账号的服务端额度，无需先切换登录。
 
-## 安装
+本机保存记录可用时显示不可点击的“已保存”；凭据缺失或不可用时可更新原记录，避免重复添加。保存状态仅表示本机检查通过，不保证服务端授权仍有效。详细流程见 [账号管理](docs/INDEPENDENT_ACCOUNTS.md)。
 
-当前正式版本：**0.1.0**。更新内容见 [更新日志](CHANGELOG.md)。
+### 生成图片并用进项目
 
-1. 打开 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)，从附件中下载最新的 `.vsix` 安装包。
-2. 在目标 VS Code 窗口执行 **Extensions: Install from VSIX…**，选择文件。WSL 用户应确认安装到 Google Antigravity 所在的 WSL 宿主。
-3. 按提示重载，在活动栏打开 **Antigravity Workbench**。
+1. 打开图片工作室，跟随当前登录，或选择另一个已保存账号。等待该账号自己的模型目录返回。
+2. 选择模型，填写提示词、比例和请求次数；需要时添加参考图或选择其他输出目录。
+3. 点击“生成图片”，核对确认中的账号、模型、请求次数和保存位置后提交。结果默认保存到当前项目，可直接预览。
+4. 在已保存结果中继续修改、比较版本，或复制路径、Markdown、图片到项目；插入文本需要明确点击，不自动保存编辑器。
 
-安装不会要求清空账号、登录文件或官方会话与图片。详见 [最新发行说明](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)。
-
-## 快速开始
-
-**账号：** 点击“添加账号（OAuth 登录）”，在浏览器完成授权。添加仅保存新账号并恢复原登录；需要使用时，在账号卡片点击“切换”。也可以在“添加账号”旁点击“保存当前登录”。已保存且本机凭据可用时显示“已保存”；凭据缺失或失效时可更新原记录，不重复添加。这个状态只表示本机保存检查通过，不保证服务端授权仍然有效。切换完成后自动核验身份，卡片中可独立查询服务端配额。
-
-**图片：** 打开图片生成面板，默认跟随当前登录，也可选择其他已保存账号。页面自动检查所选账号的可用模型；填写提示词、比例和请求次数，确认后生成。默认保存到当前项目，可选择其他目录；生成结果可直接预览。草稿和任务卡保存在本机，重载后恢复。需要找回已有图片时选择恢复入口，无需重新生成。
-
-[账号管理](docs/INDEPENDENT_ACCOUNTS.md) · [服务端配额](docs/INDEPENDENT_ACCOUNT_QUOTA.md) · [图片详情](docs/IMAGE_GENERATION.md) · [完整文档目录](docs/README.md)
-
-正常生图无需配置请求端点。图片确认后固定本次账号和模型；失败不会自动重试、切号或切换端点。需要排查连接问题时，参见 [高级排障](docs/TROUBLESHOOTING.md#高级排障图片端点)。
+草稿与任务卡保存在当前宿主，重载后恢复。已有图片可从恢复入口找回，无需重新生成。正常使用无需配置请求端点；图片请求失败不会自动重试、切号或切换端点。详见 [图片生成](docs/IMAGE_GENERATION.md) 和 [用进项目](docs/IMAGE_RESULTS.md)。
 
 ## 功能演示
 
-下面的截图来自当前代码的实际 Chromium / VS Code 渲染，使用虚构账号、模拟额度和本地演示图；没有登录真实账号或发送生图请求。截图展示源码中的界面，安装包以最新 Release 为准。
+截图来自实际 Chromium / VS Code 渲染，使用虚构账号、模拟额度和本地演示图；没有登录真实账号或发送生图请求。截图展示源码中的界面，安装包以最新 Release 为准。
 
-1. **管理与保存账号。** 在同组工具栏添加账号或保存当前登录；已核验且本机副本可用时显示不可点击的“已保存”。账号卡片标明当前登录，保存状态不代表服务端授权保证。
-2. **刷新模型额度。** 在对应卡片点击“刷新”，查看该账号的模型剩余比例、重置时间和更新时间；无需先切换登录。图中的账号和百分比均为演示值。
+### 账号与额度
 
-<img src="docs/images/accounts-zh-CN.png" width="410" alt="中文账号工作台：添加与已保存同组、当前登录标记和模型额度">
+添加与保存入口同组显示，当前登录有明确标记。点击对应卡片的“刷新”，查看该账号的剩余比例、重置时间和更新时间。图中账号与百分比均为演示值。
 
-3. **准备图片请求。** 在图片工作室选择生图账号、服务端目录中的模型、提示词和请求次数。参考图区支持单张移除或全部清空；确认后才提交。图片额度属于所选账号与模型，百分比不换算张数。
+<img src="docs/images/accounts-zh-CN.png" width="410" alt="中文账号工作台：添加与已保存同组、当前登录标记和模拟模型额度">
+
+### 图片工作室
+
+选择独立生图账号和它的服务端图片模型，准备提示词、参考图和参数；确认后才提交。右侧保留已保存结果，图片额度百分比不换算成可生成张数。
 
 <img src="docs/images/image-studio-zh-CN.png" width="960" alt="中文图片工作室：独立账号、模拟模型额度、参考图与已保存演示结果">
 
-4. **清理参考图并保留结果。** 点击参考图右侧“移除”，或“全部清空”。下图是实际宿主执行清空后的状态，原图和右侧已保存结果仍保留；需要时可从结果继续修改。
+### 清理参考图与继续创作
+
+参考图可单张移除或全部清空。下图来自实际宿主执行清空后的状态：当前参考图已清空，原图和已保存结果保留，仍可从结果继续修改。
 
 <img src="docs/images/image-studio-cleared-zh-CN.png" width="960" alt="中文图片工作室清空参考图后，已保存结果和原图仍保留">
 
-5. **即时切换语言。** 在设置中将 `antigravityAccounts.language` 改为 `en`，现有面板立即切换并保留输入、账号、参考图和任务。查看 [英文版相同演示](README_EN.md#feature-walkthrough) 的实际界面截图；改回 `zh-CN` 即恢复中文。
-
 ## 界面语言
 
-插件默认使用简体中文，不跟随系统语言。点击工作台“设置 / Settings”，或在 VS Code 设置中搜索 `antigravityAccounts.language`，手动选择 `zh-CN` 或 `en`。选择保存在用户设置；已打开的工作台、图片面板、提示和快速入门立即更新，草稿、参考图、账号选择、布局与任务继续保留。
+默认使用简体中文。点击工作台“设置 / Settings”，或在 VS Code 设置中搜索 `antigravityAccounts.language`，手动选择 `zh-CN` 或 `en`。已打开的工作台、图片面板、提示和快速入门立即更新，保留输入、参考图、账号选择、布局与任务。查看 [英文版演示](README_EN.md#feature-walkthrough)。
 
-VS Code 的命令面板、视图标题和设置描述属于静态贡献项，随 VS Code 的显示语言加载；改变 VS Code 显示语言可能需要重载窗口。插件的手动语言选择不会改变这些静态项。
+命令面板、视图标题和设置描述属于静态贡献项，遵循 VS Code 显示语言；更改 VS Code 显示语言可能需要重载。插件的手动语言选择不改变这些静态项。
+
+## 常见问题
+
+| 问题 | 回答 |
+| --- | --- |
+| 为什么“已保存”不能再点？ | 当前已核验身份已有可用本机副本，无需重复保存；这不保证服务端授权有效。 |
+| 为什么某个图片模型没有列出？ | 列表来自所选账号的服务端目录。可以重新检查，但模型名称或订阅名称不保证目录中存在或可调用。见 [目录排查](docs/TROUBLESHOOTING.md#图片模型目录与-pro-排查)。 |
+| 额度百分比能换算成图片张数吗？ | 不能。它是所选模型的服务端剩余比例，旧结果会标记；请求次数也不保证产出张数。 |
+| 选择另一生图账号会切换官方登录吗？ | 不会。图片页独立选择只影响该图片任务，确认时固定所选账号与模型。 |
+| 切换不可用或 WSL 找不到账号怎么办？ | 先核对两个扩展的宿主和是否有待恢复操作；按界面恢复提示处理。保存位置按宿主独立。见 [故障排查](docs/TROUBLESHOOTING.md)。 |
+| 重载后会自动继续生图吗？ | 不会。草稿与任务卡会恢复，中断任务保留状态，重新提交需你明确操作。 |
+| 可以从 Marketplace 安装吗？ | 当前通过 GitHub Release 的 VSIX 交付，尚未在 Marketplace 发布。使用上方“最新 Release”入口即可。 |
 
 ## 隐私与使用边界
 
-账号凭据存放在 VS Code SecretStorage 或当前宿主的受限存储中；账号导出使用 `.agwenc` 加密格式。草稿、参考图路径和任务记录保存在当前宿主，图片写入你选择的目录。日志和账号导出包不会自动上传。生成时，所选账号的授权、提示词和选定参考图会发给相应 Google 服务；请只提交你有权使用的内容。
+账号凭据存放在 VS Code SecretStorage 或当前宿主的受限存储中；账号导出使用 `.agwenc` 加密格式。草稿、参考图路径和任务记录保存在当前宿主，图片写入所选目录。日志与账号导出包不会自动上传。
 
-切换账号会写入官方组件的本机凭据并重启组件。遇到未完成事务或身份核验失败，应按恢复提示操作。不要把 token、凭据文件、导出包或未经检查的日志放进 Issue。模型是否可用、能否调用和额度含义以服务端结果为准；模型名称不保证权限，额度百分比不等于可生成张数。
+生成时，所选账号的授权、提示词和选定参考图会发给相应 Google 服务；请只提交你有权使用的内容。切换账号会写入官方组件的本机凭据并重启组件；遇到未完成事务或身份核验失败，应按恢复提示操作。模型是否可用、能否调用及额度含义以服务端结果为准。
 
-## 调试与反馈
+## 文档与反馈
 
-从命令面板打开“Antigravity Workbench: 高级排障…”，选择开启调试日志，复现一次问题后关闭。通过“预览 / 导出日志”检查内容并保存，在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 提供扩展版本、系统与宿主、复现步骤、预期结果及错误码。不要附上凭据文件或账号导出包；插件不会自动上传日志。疑似漏洞请按 [安全报告流程](SECURITY.md) 私下报告。
+| 你要了解 | 文档 |
+| --- | --- |
+| 完整使用流程 | [快速入门](docs/GETTING_STARTED.md) · [文档目录](docs/README.md) |
+| 账号、切换与迁移 | [账号管理](docs/INDEPENDENT_ACCOUNTS.md) · [切换与恢复](docs/ACCOUNT_SWITCHING.md) · [加密迁移](docs/ACCOUNT_MIGRATION.md) |
+| 图片与项目操作 | [图片生成](docs/IMAGE_GENERATION.md) · [额度说明](docs/IMAGE_QUOTA.md) · [继续创作与用进项目](docs/IMAGE_RESULTS.md) |
+| 排障与支持范围 | [故障排查](docs/TROUBLESHOOTING.md) · [日志说明](docs/DEBUG_LOGS.md) · [兼容性](docs/COMPATIBILITY.md) |
+| 版本与使用条件 | [更新日志](CHANGELOG.md) · [项目与服务说明](docs/PROJECT_NOTICES.md) |
 
-[日志说明](docs/DEBUG_LOGS.md) · [兼容性与限制](docs/COMPATIBILITY.md) · [项目与服务说明](docs/PROJECT_NOTICES.md)
+反馈问题时，在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 提供扩展版本、系统与宿主、最少复现步骤、预期结果和错误码。需要日志时，从命令面板打开“Antigravity Workbench: 高级排障…”，开启调试，复现必要的一次操作后关闭，再预览和导出。
 
-## 开发
+不要提交 token、凭据文件、账号导出包、私人提示词或未经检查的原始日志。疑似安全漏洞请按 [安全报告流程](SECURITY.md) 私下报告。
 
-源码包含 TypeScript、测试、构建脚本和锁文件，无运行时 npm 依赖。
+## 参与贡献
+
+欢迎文档改进、问题复现、功能建议与 Pull Request。较大改动请先在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 讨论，再按 [贡献指南](CONTRIBUTING.md) 准备提交；只贡献你有权提供的内容，保留第三方许可与来源。
+
+开发使用 Node.js 20+，CI 使用 Node.js 22。源码包含 TypeScript、测试、构建脚本和锁文件，无运行时 npm 依赖。
 
 ```sh
 npm ci --ignore-scripts
@@ -105,9 +138,7 @@ npm run test:host
 npm run package
 ```
 
-无显示器的 Linux 使用 `xvfb-run -a npm run test:host`。CI 覆盖 Linux、Windows、macOS 的检查、隔离 VS Code 宿主和打包；Release 提供 VSIX、完整源码与 SHA-256 校验文件。
-
-问题讨论、提交步骤与来源要求见 [贡献指南](https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/CONTRIBUTING.md)。
+无显示器的 Linux 使用 `xvfb-run -a npm run test:host`。CI 覆盖 Linux、Windows、macOS 的检查、隔离 VS Code 宿主和打包；默认检查使用合成数据，不要求真实 Google 登录或生图。
 
 ## 许可
 
