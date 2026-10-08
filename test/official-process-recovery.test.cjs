@@ -236,7 +236,9 @@ test('Windows reads complete identity only from an isolated synthetic child, wit
   const executable = path.join(home, '.gemini', 'bin', 'agy.exe'); await fs.mkdir(path.dirname(executable), { recursive: true }); await fs.copyFile(process.execPath, executable);
   t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const inspectChild = async (profile, flags) => {
-    const child = spawn(executable, ['-e', 'setInterval(()=>{},1000)', '--', '--hub', '--app_data_dir=antigravity', ...flags], { env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: profile }, stdio: 'ignore', windowsHide: true });
+    // libuv restores missing HOMEDRIVE/HOMEPATH from the parent on Windows.
+    // Set the whole synthetic scope explicitly rather than mixing two homes.
+    const child = spawn(executable, ['-e', 'setInterval(()=>{},1000)', '--', '--hub', '--app_data_dir=antigravity', ...flags], { env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: profile, HOMEDRIVE:home.slice(0,2),HOMEPATH:home.slice(2) }, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     const closed = new Promise(resolve => child.once('close', resolve));
     try {
