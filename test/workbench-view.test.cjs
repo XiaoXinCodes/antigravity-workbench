@@ -11,6 +11,14 @@ const { renderWorkbench, WorkbenchView } = require(entry);
 Module._load = original;
 const state = (extra = {}) => ({ accounts: [], snapshots: [], status: '准备就绪', busy: false, pending: false, recoveryPhase: 'none', warning: null, environment: { available: true, message: '本机工作台 · WSL 工作区' }, ...extra });
 const account = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', label: 'Example', expectedEmail: 'example@example.test', capturedAt: '2026-10-01T00:00:00.000Z', identitySource: 'hub' };
+test('conflict list shows PID, birth, ownership uncertainty and the intended switch without private proof',()=>{
+ const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true}]};
+ let html=renderWorkbench(state({processConflicts,processSwitchTarget:'target@example.test'}),'nonce');
+ assert.match(html,/PID 710/);assert.match(html,/父进程：702/);assert.match(html,/原窗口未知/);assert.match(html,/任务状态未知/);assert.match(html,/target@example.test/);assert.match(html,/data-command="live.processScan"/);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection"/);
+ assert.doesNotMatch(html,/commandHash|csrfToken|startTicks|bootId/);
+ html=renderWorkbench(state({processConflicts:{...processConflicts,limitation:'platform',processes:[{...processConflicts.processes[0],canEnd:false}]}}),'nonce');assert.match(html,/暂不支持安全结束/);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection" disabled/);
+ html=renderWorkbench(state({processConflicts:{phase:'clear',canContinue:true,processes:[]},processSwitchTarget:'target@example.test'}),'nonce');assert.match(html,/data-command="live.processContinue"/);
+});
 test('capture shares the add toolbar and saved is disabled only for a verified unique host identity',()=>{
  const base={accounts:[{...account,hostCurrent:true}],activeEmail:account.expectedEmail,activeVerifiedAt:new Date().toISOString(),currentLoginSave:'saved'};
  let html=renderWorkbench(state(base),'nonce');assert.match(html,/<div class="account-toolbar"[^>]*>[^]*?data-command="live.login"[^]*?data-command="live.capture" disabled[^]*?已保存[^]*?<\/div>/);
@@ -60,6 +68,14 @@ function fixture(extra = {}) {
  provider.resolveWebviewView(view);
  return { provider, webview, posted, message: value => message(value), close: () => closed() };
 }
+test('process messages require a current opaque selection and reject arbitrary PID, paths, signals and stale views',async()=>{
+ calls.length=0;const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,owner:'other',parentState:'alive',taskState:'unknown',canEnd:true}]};
+ const f=fixture({processConflicts});
+ for(const payload of [{command:'live.processEnd',pid:710},{command:'live.processEnd',processId:710},{command:'live.processEnd',processId:'wrong'},{command:'live.processEnd',processId:'opaque-selection',signal:'SIGKILL'},{command:'live.processScan',processId:'opaque-selection'},{command:'live.processEnd',processId:'opaque-selection',path:'/synthetic/agy'}])await f.message(payload);
+ assert.equal(calls.length,0);await f.message({command:'live.processEnd',processId:'opaque-selection'});await f.message({command:'live.processScan'});
+ assert.deepEqual(calls,[['antigravityAccounts.live.processEnd','opaque-selection'],['antigravityAccounts.live.processScan']]);
+ f.provider.dispose();await f.message({command:'live.processEnd',processId:'opaque-selection'});assert.equal(calls.length,2);
+});
 test('webview routes only known actions and stored account ids', async () => {
  calls.length = 0;
  const f = fixture();
