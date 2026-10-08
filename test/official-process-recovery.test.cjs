@@ -195,8 +195,8 @@ test('Windows transport uses the system helper, short constant argv and stdin so
   assert.equal(spawnArgs[2].shell, false); assert.equal(Buffer.from(spawnArgs[1].at(-1), 'base64').toString('utf16le'), WINDOWS_PROCESS_BOOTSTRAP);
   assert.ok(spawnArgs[1].join(' ').length < 2000, 'source is never passed as a long encoded argv'); assert.doesNotMatch(spawnArgs[1].join(' '), /synthetic-capability|ExecutionPolicy|RunAs/);
   const frames = writes[0].trim().split('\n'); assert.equal(Buffer.from(frames[0], 'base64').toString(), WINDOWS_PROCESS_HELPER); assert.equal(JSON.parse(frames[1]).csrfToken, 'synthetic-capability');
-  child.stdout.write('{"authorize":"force"}\n'); assert.equal(authorizations, 1); assert.equal(writes[1], 'continue\n');
-  child.stdout.write('{"result":"forced"}\n'); child.exitCode = 0; child.emit('close', 0); assert.deepEqual(await result, { result: 'forced' });
+  child.stdout.write('{"authorize":"force"}\n'); assert.equal(authorizations, 1); assert.equal(writes[1], 'continue\n');assert.equal(child.stdin.writableEnded,false);
+  child.stdout.write('{"result":"forced"}\n');assert.equal(child.stdin.writableEnded,true); child.exitCode = 0; child.emit('close', 0); assert.deepEqual(await result, { result: 'forced' });
   writes = []; result = runWindowsProcessHelper({ operation: 'end' }, undefined, () => {});
   child.stdout.write('{"authorize":"term"}\n'); await assert.rejects(result, /PROCESS_CHECK_FAILED/); assert.equal(writes.length, 1);
 });

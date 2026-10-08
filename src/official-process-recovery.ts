@@ -79,11 +79,15 @@ function runHelper(executable: string, args: string[], request: HelperRequest, s
           } else {
             if (resultSeen) throw new LiveError('PROCESS_CHECK_FAILED');
             resultSeen = true; result = message;
+            // PowerShell's command pipeline waits for redirected stdin EOF even
+            // after our script returns. Only a final result ends this channel;
+            // authorization frames must keep it open for cancellation checks.
+            child.stdin.end();
           }
         } catch (error) { finish(error instanceof LiveError ? error : new LiveError('PROCESS_CHECK_FAILED')); }
       }
     });
-    child.stderr.resume(); // Never return Python exceptions or private process arguments.
+    child.stderr.resume(); // Never return helper exceptions or private process arguments.
     child.stdin.on('error', () => { /* close/error handlers own the fixed result */ });
     child.on('error', () => finish(new LiveError('OFFICIAL_PROCESS_END_UNAVAILABLE')));
     child.on('close', code => {
