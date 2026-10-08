@@ -691,6 +691,8 @@ export const zhCN = {
   "liveUi.3473d3c082": "正在等待浏览器授权；原登录已有加密备份",
   "liveUi.aa3daf4de6": "核验新 hub 身份并安全保存登录",
   "liveUi.loginSavedChecking": "账号已安全保存；正在确认登录状态",
+  "liveUi.officialSavePending": "当前登录已核验，但本机副本保存尚未完成。可重新检查身份；保存状态未确认。",
+  "workbenchView.lastKnownLogin": "上次确认的登录：{p0}（待后台确认）",
   "liveUi.officialSaveFailed": "官方当前账号已核实；自动保存未完成：{p0}",
   "liveUi.8e349f6760": "登录已保存；正在恢复原登录",
   "liveUi.f922756e77": "已保存 {p0}；正在恢复并自动检查原登录",

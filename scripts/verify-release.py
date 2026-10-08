@@ -1,5 +1,6 @@
 """Offline release byte checks; never reads a user account, prompt or log."""
 import hashlib
+import importlib.util
 import json
 import pathlib
 import re
@@ -23,7 +24,7 @@ def verify(vsix, source=None):
     package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))
     lock = json.loads((ROOT / 'package-lock.json').read_text(encoding='utf-8'))
     version = package['version']
-    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.2'
+    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.3'
     assert package['license'] == lock['packages']['']['license'] == 'SEE LICENSE IN LICENSE'
     for name, expected in LICENSE_TEXT_HASHES.items():
         assert hashlib.sha256((ROOT / name).read_text(encoding='utf-8').encode()).hexdigest() == expected, f'Unreviewed license text: {name}'
@@ -35,6 +36,10 @@ def verify(vsix, source=None):
     assert package['icon'] == 'media/icon.png'
     assert package['contributes']['viewsContainers']['activitybar'][0]['icon'] == 'media/workbench.svg'
     assert package['contributes']['configuration']['properties']['antigravityAccounts.images.endpoint']['default'] == 'daily'
+    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    docs_spec = importlib.util.spec_from_file_location('package_docs', ROOT / 'scripts/prepare-vsix.py')
+    package_docs = importlib.util.module_from_spec(docs_spec)
+    docs_spec.loader.exec_module(package_docs)
     blocked = re.compile(rb'ya29\.[A-Za-z0-9_-]{20,}|1//[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----', re.I)
     tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode().split('\0')[:-1]
     for name in tracked:
@@ -76,6 +81,12 @@ def verify(vsix, source=None):
                     assert data[:16] == b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', name
                     assert struct.unpack('>II', data[16:24]) == (size, size), name
                 assert 'media/brand-logo.png' in archive.read('extension/readme.md').decode('utf-8')
+                for member in archive.namelist():
+                    if member.lower().endswith('.md'):
+                        source_name = {'extension/readme.md': 'README.md', 'extension/changelog.md': 'CHANGELOG.md'}.get(member, member.removeprefix('extension/'))
+                        expected = package_docs.rewrite_document((ROOT / source_name).read_bytes(), member, commit)
+                        assert archive.read(member) == expected, f'Documentation differs from source commit: {member}'
+                result['documentation_commit'] = commit
                 activity_icon = archive.read('extension/media/workbench.svg')
                 assert activity_icon == (ROOT / 'media/workbench.svg').read_bytes()
                 svg = ET.fromstring(activity_icon)

@@ -19,6 +19,7 @@ export interface WorkbenchState {
   activeEmail?: string;
   activeVerifiedAt?: string;
   identityChecking?: boolean;
+  lastKnownAccountId?: string;
   identityVerifiedDuringRecovery?: boolean;
   currentLoginSave?: 'saved' | 'update';
   /** Kept for legacy storage compatibility; offline snapshots are not account logins. */
@@ -77,6 +78,7 @@ export function renderWorkbench(state: WorkbenchState, nonce: string): string {
   const restoreLabel = phase === 'restored' ? tr("workbenchView.5bbf610aad") : phase === 'authorizing' || phase === 'prepared' ? tr("workbenchView.96ec98e121") : tr("workbenchView.ce965cd194");
   const showStatus = state.busy || state.pending || (state.status && ![tr("workbenchView.d98a7e24c6"), tr("workbenchView.0746a7244b"), tr("workbenchView.3aeb83569c"), tr("workbenchView.1bd1893c09"), 'idle', tr("workbenchView.d47369e8f6")].includes(state.status));
   const activeEmail = !state.pending && state.activeEmail?.trim().toLowerCase();
+  const lastKnown = !activeEmail && !state.pending ? state.accounts.find(account => account.id === state.lastKnownAccountId && account.hostCurrent === true) : undefined;
   const currentAccountId = verifiedCurrentAccountId(state.accounts, state.activeEmail, state.pending && !state.identityVerifiedDuringRecovery);
   const logins = state.accounts.map(account => {
     const active = account.id === currentAccountId;
@@ -101,7 +103,7 @@ footer{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
 <section class="section" aria-labelledby="accounts-heading"><div class="section-head"><h2 id="accounts-heading">${ht("workbenchView.311bb313fd")}<span class="count">${state.accounts.length ? tr("workbenchView.78ac141f4c", { p0: state.accounts.length }) : tr("workbenchView.452f1ad450")}</span></h2></div>
 ${showStatus ? `<div class="status${state.busy ? ' busy' : state.pending ? ' warning' : ''}" role="status" data-recovery-phase="${phase}"><p>${escape(state.status)}</p>${verify || restore ? `<div class="actions">${verify ? button('live.verify', tr("workbenchView.2e1b7b66de"), true, undefined, blocked) : ''}${restore ? button('live.restore', restoreLabel, !verify, undefined, blocked || (captureOnly && phase !== 'restored')) : ''}</div>` : ''}</div>` : ''}
 ${state.warning ? `<div class="status warning" role="alert">${escape(state.warning)}</div>` : ''}
-<div class="account-toolbar" aria-label="${ht("workbenchView.b7d5411de6")}">${button('live.login', tr("workbenchView.91af6e57e7"), true, undefined, mutationBlocked, tr("workbenchView.f8ee1d2d2e"))}${button('live.capture', state.currentLoginSave === 'saved' && currentAccountId ? tr("workbenchView.1bd91a7d0c") : state.currentLoginSave === 'update' && currentAccountId ? tr("workbenchView.dd6eec0893") : tr("workbenchView.dafb62a962"), false, undefined, captureBlocked || state.currentLoginSave === 'saved' && !!currentAccountId, tr("workbenchView.134e0c6295"))}</div><p class="account-transfer">${ht("workbenchView.df905107eb")}</p><div class="account-tools" aria-label="${ht("workbenchView.9cc7f74985")}">${button('live.export', tr("workbenchView.476e06f788"), false, undefined, migrationBlocked || !state.accounts.some(account => account.hostCurrent === true), tr("workbenchView.31407f52c0"))}${button('live.import', tr("workbenchView.9c2aa49d9c"), false, undefined, migrationBlocked, tr("workbenchView.5f1e2217ee"))}</div><p class="current-status${activeEmail && !state.identityChecking ? ' verified' : ''}"${activeEmail && state.activeVerifiedAt ? ` title="${escape(tr("workbenchView.b9c235e243", { p0: quotaDate(state.activeVerifiedAt) }))}"` : ''}>${state.identityChecking ? tr("workbenchView.249825545e") : activeEmail ? state.accounts.some(account => account.hostCurrent === true && account.expectedEmail.trim().toLowerCase() === activeEmail) ? tr("workbenchView.716e587169") : tr("workbenchView.31679a5ff2", { p0: escape(activeEmail) }) : state.pending ? tr("workbenchView.17e7d078ed") : tr("workbenchView.ca462750dc")}</p>
+<div class="account-toolbar" aria-label="${ht("workbenchView.b7d5411de6")}">${button('live.login', tr("workbenchView.91af6e57e7"), true, undefined, mutationBlocked, tr("workbenchView.f8ee1d2d2e"))}${button('live.capture', state.currentLoginSave === 'saved' && currentAccountId ? tr("workbenchView.1bd91a7d0c") : state.currentLoginSave === 'update' && currentAccountId ? tr("workbenchView.dd6eec0893") : tr("workbenchView.dafb62a962"), false, undefined, captureBlocked || state.currentLoginSave === 'saved' && !!currentAccountId, tr("workbenchView.134e0c6295"))}</div><p class="account-transfer">${ht("workbenchView.df905107eb")}</p><div class="account-tools" aria-label="${ht("workbenchView.9cc7f74985")}">${button('live.export', tr("workbenchView.476e06f788"), false, undefined, migrationBlocked || !state.accounts.some(account => account.hostCurrent === true), tr("workbenchView.31407f52c0"))}${button('live.import', tr("workbenchView.9c2aa49d9c"), false, undefined, migrationBlocked, tr("workbenchView.5f1e2217ee"))}</div><p class="current-status${activeEmail && !state.identityChecking ? ' verified' : ''}"${activeEmail && state.activeVerifiedAt ? ` title="${escape(tr("workbenchView.b9c235e243", { p0: quotaDate(state.activeVerifiedAt) }))}"` : ''}>${lastKnown ? tr("workbenchView.lastKnownLogin", { p0: escape(lastKnown.expectedEmail) }) : state.identityChecking ? tr("workbenchView.249825545e") : activeEmail ? state.accounts.some(account => account.hostCurrent === true && account.expectedEmail.trim().toLowerCase() === activeEmail) ? tr("workbenchView.716e587169") : tr("workbenchView.31679a5ff2", { p0: escape(activeEmail) }) : state.pending ? tr("workbenchView.17e7d078ed") : tr("workbenchView.ca462750dc")}</p>
 ${captureOnly ? `<p class="oauth-reason" role="status">${escape(state.loginMutationReason || tr("workbenchView.ad02b7826a"))}</p>${!hostBlocked ? button('recheck', tr("workbenchView.c25fb86b1e")) : ''}` : ''}
 ${state.accounts.length ? `<div class="account-list">${logins}</div>` : `<div class="panel empty"><h2>${ht("workbenchView.63f894d55b")}</h2><p>${ht("workbenchView.2baac78070")}</p></div>`}
 ${state.currentQuota?.snapshot && !state.accounts.some(account => account.hostCurrent !== false && account.expectedEmail.toLowerCase() === state.currentQuota!.snapshot!.email.toLowerCase()) ? `<p class="muted section-note">${ht("workbenchView.c70dbf24eb")}${escape(state.currentQuota.snapshot.email)}${ht("workbenchView.b53229f96c")}</p>` : ''}
@@ -122,7 +124,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
   private lastHtml = '';
   private dispatchWarning: string | null = null;
   private readonly subscriptions: vscode.Disposable[] = [];
-  constructor(private readonly state: () => WorkbenchState) { this.subscriptions.push(onLanguageChange(() => this.refresh())); }
+  constructor(private readonly state: () => WorkbenchState, private readonly onResolve?: () => void) { this.subscriptions.push(onLanguageChange(() => this.refresh())); }
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view; this.nonce = randomBytes(16).toString('hex'); this.lastHtml = '';
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
@@ -146,6 +148,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
       finally { this.inFlight.delete(command); if (!independent) this.running = false; if (!this.disposed) this.refresh(); await complete(); }
     }), view.onDidDispose(() => { if (this.view === view) { this.view = undefined; this.lastHtml = ''; } }));
     this.refresh();
+    this.onResolve?.();
   }
   async revealCatalog(): Promise<void> {
     if (this.disposed) throw new Error('CATALOG_VIEW_UNAVAILABLE');

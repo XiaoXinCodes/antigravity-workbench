@@ -94,6 +94,7 @@ def main():
     artifacts = ROOT / 'artifacts'
     source = artifacts / f'antigravity-workbench-{VERSION}-source.zip'
     vsix = artifacts / f'antigravity-workbench-{VERSION}.vsix'
+    run('node', 'scripts/verify-marketplace-vsix.cjs', str(vsix))
     run('git', 'archive', '--format=zip', f'--prefix=antigravity-workbench-{VERSION}/', f'--output={source}', sha)
     spec = importlib.util.spec_from_file_location('verify_release', ROOT / 'scripts/verify-release.py')
     verifier = importlib.util.module_from_spec(spec)

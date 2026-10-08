@@ -51,7 +51,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const dashboard = new WorkbenchView(() => {
     const state = live.getState();
     return { version: context.extension.packageJSON.version, accounts: live.getAccounts(), snapshots: tree.accounts, warning: null, ...state, locations: locations.getState(), debug: debug.getState() }; // Legacy snapshot diagnostics never block the account workbench.
-  });
+  }, () => { void live.ensureIdentity?.(); });
   refreshDebug = () => dashboard.refresh();
   context.subscriptions.push(dashboard, vscode.window.registerWebviewViewProvider('antigravityAccounts.accounts', dashboard));
   const stateDirectory = path.join(context.globalStorageUri.fsPath, 'metadata');
@@ -120,7 +120,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.refresh', async (accountId?: unknown) => {
     if (!disposed) await vscode.commands.executeCommand('antigravityAccounts.live.quota', ...(accountId === undefined ? [] : [accountId]));
   }));
-  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.recheck', async () => { await live.refresh(); tree.refresh(); }));
+  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.recheck', async () => { await (live.recheck?.() ?? live.refresh()); tree.refresh(); }));
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.openOfficialExtension', async () => {
     await vscode.commands.executeCommand('workbench.extensions.search', '@id:google.google-antigravity');
   }));

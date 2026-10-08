@@ -18,6 +18,15 @@ function options(probe = async () => ({ state: 'dead' }), pid = 99) {
   return { pid, probe: async id => id === pid ? { state: 'alive', startIdentity: `self-${pid}` } : probe(id) };
 }
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+test('held operation recognition requires this instance and every owner identity field',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER,options()),other=new LiveLocks(dir,OWNER,options());let observed;
+ await locks.withOperation(async()=>{
+  observed=await locks.inspectOperation();assert.equal(locks.ownsOperation(observed),true);assert.equal(other.ownsOperation(observed),false);
+  for(const [key,value] of [['schema',1],['owner',OTHER],['id',randomUUID()],['pid',101],['nonce',randomUUID()],['startIdentity','other-start'],['purpose','image']])assert.equal(locks.ownsOperation({...observed,owner:{...observed.owner,[key]:value}}),false,key);
+  for(const state of ['absent','stale','uncertain'])assert.equal(locks.ownsOperation({...observed,state}),false,state);
+ });
+ assert.equal(locks.ownsOperation(observed),false);assert.equal((await locks.inspectOperation()).state,'absent');
+}));
 test('image batches publish purpose while retaining the same cross-host account mutex', async()=>fixture(async dir=>{
  const writer=new LiveLocks(dir,OWNER,{...options(),purpose:'image'}),reader=new LiveLocks(dir,OWNER,options());
  await writer.withOperation(async()=>{

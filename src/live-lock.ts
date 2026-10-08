@@ -122,6 +122,13 @@ export class LiveLocks {
     catch (error) { return { state: 'uncertain', reason: error instanceof LiveError ? error.code : 'LOCK_PROCESS_STATUS_UNKNOWN' }; }
   }
   async inspectOperation(): Promise<LockInspection> { return this.inspect(this.operation); }
+  /** Recognize only this instance's currently held, fully identified operation. */
+  ownsOperation(inspection: LockInspection): boolean {
+    const owner = inspection.owner, held = this.heldOperation;
+    return inspection.state === 'active' && !!owner && !!held && owner.schema === 2 && !!owner.startIdentity &&
+      owner.schema === held.schema && owner.owner === held.owner && owner.id === held.id && owner.pid === held.pid &&
+      owner.nonce === held.nonce && owner.startIdentity === held.startIdentity && owner.purpose === held.purpose;
+  }
   async inspectRecovery(): Promise<LockInspection> { return this.inspect(this.recovery); }
   private async create(location: string, id: string): Promise<LockOwner> {
     if (!UUID.test(id) || !/^[a-f0-9]{64}$/.test(this.owner)) throw new LiveError('LOCK_OWNER_INVALID');

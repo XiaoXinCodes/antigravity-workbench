@@ -4,19 +4,19 @@ const Module=require('node:module');
 const entry=require.resolve('../out/live-ui');
 const settle=()=>new Promise(setImmediate);
 function setup(options={}){
- const commands=new Map(),events=[],state=new Map(),warnings=[],notifications=[];
+ const commands=new Map(),events=[],state=options.state??new Map(),warnings=[],notifications=[];
  const ui={answer:undefined,trusted:true,selected:undefined,remoteName:undefined,official:undefined,config:{}};
  const vscode={UIKind:{Desktop:1},ExtensionKind:{UI:1,Workspace:2},env:{uiKind:1,get remoteName(){return ui.remoteName;}},extensions:{getExtension(id){return id==='google.google-antigravity'?ui.official:undefined;}},workspace:{get isTrusted(){return ui.trusted;},getConfiguration(){return{get:key=>ui.config[key]};}},commands:{async getCommands(){return ui.commandIds||[];},registerCommand(n,fn){commands.set(n,fn);return {dispose(){}};},async executeCommand(n){events.push(n);if(ui.execute)await ui.execute(n);}},window:{onDidChangeWindowState(fn){ui.focus=fn;return{dispose(){}};},async showWarningMessage(text){warnings.push(text);return ui.answer;},async showQuickPick(){return ui.selected;},async showInformationMessage(text){notifications.push(text);return undefined;}}};
  const original=Module._load;Module._load=function(n,...args){return n==='vscode'?vscode:original.call(this,n,...args);};
  let api;try{delete require.cache[entry];api=require(entry);}finally{Module._load=original;}
  const context={secrets:{get:async()=>undefined},globalState:{get(k,d){return state.has(k)?state.get(k):d;},async update(k,v){state.set(k,v);}},extension:{extensionKind:1},extensionUri:{scheme:'file',authority:''},globalStorageUri:{scheme:'file',authority:'',toString:()=> 'file:///synthetic-private-home'},subscriptions:[]};
  const service={journal:async()=>null,async install(){events.push('install');},};
- const locks={withOperation:async fn=>{events.push('locked');try{return await fn();}finally{events.push('unlocked');}},hasRecovery:async()=>false,async beginRecovery(){events.push('recovery');},async clearRecovery(){events.push('clear');}};
+ const locks=options.locks??{withOperation:async fn=>{events.push('locked');try{return await fn();}finally{events.push('unlocked');}},hasRecovery:async()=>false,async beginRecovery(){events.push('recovery');},async clearRecovery(){events.push('clear');}};
  const backend={generation:'old',async stop(){events.push('stop');},async reload(){events.push('bad-direct-reload');},async proof(){events.push('proof');return{email:'personal@example.test',generation:'old',authValid:true,observedAt:'2026-10-01T00:00:00.000Z',buckets:[{label:'Gemini',remaining:0.5,resetAt:null}]}}};
  backend.quota=async()=>({...await backend.proof(),quotaSource:'server'});
  service.account=async id=>({...state.get('live-switch.accounts.v1').find(a=>a.id===id),slots:{keyring:null,file:'synthetic'}});
  const lifecycle=async(running,login)=>ui.resolveLifecycle?ui.resolveLifecycle(running,login):backend;
- const diag=api.registerLiveUi(context,{changed:()=>ui.changed?.(),verificationClock:options.verificationClock,service,locks,lifecycle,processCount:async()=>0,savedQuota:async(account,signal,options)=>ui.savedQuota?ui.savedQuota(account,signal,options):backend.quota(account.expectedEmail,signal),currentIdentity:async()=>ui.currentIdentity?ui.currentIdentity():ui.currentProof,currentQuota:async(email,signal)=>backend.quota(email,signal)});
+ const diag=api.registerLiveUi(context,{changed:()=>ui.changed?.(),verificationClock:options.verificationClock,service,locks,lifecycle,processCount:async()=>0,savedQuota:async(account,signal,options)=>ui.savedQuota?ui.savedQuota(account,signal,options):backend.quota(account.expectedEmail,signal),currentIdentity:async signal=>ui.currentIdentity?ui.currentIdentity(signal):ui.currentProof,currentQuota:async(email,signal)=>backend.quota(email,signal)});
  return{api,commands,events,state,ui,service,locks,lifecycle,context,warnings,notifications,backend,diag,call:(s,arg)=>commands.get('antigravityAccounts.live.'+s)(arg)};
 }
 
@@ -768,4 +768,122 @@ test('official-current identity never marks ambiguous saved records or a pending
  f.ui.currentProof={email:saved.expectedEmail,generation:require('../out/live-hub').generation(official.exports),observedAt:new Date().toISOString(),authValid:true,quotaSource:'server',buckets:[]};await f.diag.refresh();assert.ok(f.diag.getAccounts().every(a=>!a.active));
  f.state.set('live-switch.accounts.v1',[saved]);assert.equal(f.diag.getAccounts()[0].active,true);
  official.isActive=false;await f.diag.refresh();assert.ok(f.diag.getAccounts().every(a=>!a.active));
+});
+
+function startupProof(f,email='cold@example.test') { return {email,generation:require('../out/live-hub').generation(f.ui.official.exports),observedAt:new Date().toISOString(),authValid:true,quotaSource:'server',buckets:[]}; }
+test('cold startup accepts a 25-second fresh proof automatically and view readiness coalesces it',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));officialFixture(f);
+ let reads=0;f.ui.currentIdentity=()=>{reads++;return new Promise(resolve=>setTimeout(()=>resolve(startupProof(f)),25_000));};
+ const pending=f.diag.refresh();await settle();assert.equal(reads,1);assert.equal(f.diag.ensureIdentity(),pending);assert.equal(f.diag.getState().identityChecking,true);
+ t.mock.timers.tick(20_000);await settle();assert.equal(f.diag.getState().identityChecking,true);t.mock.timers.tick(5_000);await pending;
+ assert.equal(f.diag.getState().activeEmail,'cold@example.test');assert.equal(f.diag.getState().identityChecking,false);assert.equal(reads,1);
+ await f.diag.ensureIdentity();assert.equal(reads,1,'rebuilding a fresh view does not force another server refresh');
+});
+test('a never-resolving identity lookup has a bounded deadline and explicit recheck can recover',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));officialFixture(f).isActive=true;let signal;
+ f.ui.currentIdentity=s=>{signal=s;return new Promise(()=>{});};const pending=f.diag.refresh();await settle();t.mock.timers.tick(60_000);await pending;
+ assert.equal(signal.aborted,true);assert.equal(f.diag.getState().identityChecking,false);assert.equal(f.diag.getState().activeEmail,undefined);
+ f.ui.currentIdentity=async()=>startupProof(f);await f.diag.recheck();assert.equal(f.diag.getState().activeEmail,'cold@example.test');
+});
+test('verified identity is visible before local capture, whose timeout retains the host lock and permits recheck',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));officialFixture(f).isActive=true;f.ui.currentIdentity=async()=>startupProof(f);
+ let release,verify,captures=0;f.service.captureCurrent=async(_metadata,_index,guard)=>{captures++;verify=guard;await new Promise(resolve=>release=resolve);await guard();f.events.push('late-save');};
+ const pending=f.diag.refresh();await settle();assert.equal(f.diag.getState().identityChecking,false);assert.equal(f.diag.getState().activeEmail,'cold@example.test');assert.equal(captures,1);
+ const unlocked=f.events.filter(x=>x==='unlocked').length;t.mock.timers.tick(20_000);await pending;
+ assert.match(f.diag.getState().status,/已核验.*保存尚未完成/);assert.equal(f.events.filter(x=>x==='unlocked').length,unlocked,'a timed-out UI cannot release an unfinished secure operation');
+ await f.diag.recheck();assert.equal(f.diag.getState().activeEmail,'cold@example.test');assert.equal(captures,1,'do not enqueue another save behind a hung one');
+ await assert.rejects(verify());release();await settle();await settle();assert.ok(!f.events.includes('late-save'));assert.equal(f.events.filter(x=>x==='unlocked').length,unlocked+1);
+});
+test('explicit recheck replaces a pending proof and late old-generation success cannot overwrite the new identity',async t=>{
+ const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));officialFixture(f).isActive=true;let finish,oldSignal,calls=0;
+ f.ui.currentIdentity=signal=>{calls++;oldSignal=signal;return new Promise(resolve=>finish=resolve);};const pending=f.diag.refresh();await settle();const oldProof=startupProof(f,'old@example.test');
+ f.ui.official.exports={...f.ui.official.exports,port:f.ui.official.exports.port+1};f.ui.currentIdentity=async()=>{calls++;return startupProof(f,'new@example.test');};
+ const recheck=f.diag.recheck();assert.equal(f.diag.recheck(),recheck);assert.equal(oldSignal.aborted,true);await recheck;await pending;
+ assert.equal(f.diag.getState().activeEmail,'new@example.test');finish(oldProof);await settle();assert.equal(f.diag.getState().activeEmail,'new@example.test');assert.equal(calls,2);
+});
+test('recheck cancels a hung save wait without erasing a newer verified identity',async t=>{
+ const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));officialFixture(f).isActive=true;f.ui.currentIdentity=async()=>startupProof(f,'old@example.test');let release;
+ f.service.captureCurrent=async(_metadata,_index,verify)=>{await new Promise(resolve=>release=resolve);await verify();f.events.push('late-save');};
+ const pending=f.diag.refresh();await settle();f.ui.official.exports={...f.ui.official.exports,port:f.ui.official.exports.port+1};f.ui.currentIdentity=async()=>startupProof(f,'new@example.test');
+ await f.diag.recheck();await pending;assert.equal(f.diag.getState().identityChecking,false);assert.equal(f.diag.getState().activeEmail,'new@example.test');release();await settle();await settle();assert.ok(!f.events.includes('late-save'));assert.equal(f.diag.getState().activeEmail,'new@example.test');
+});
+test('disposal cancels identity lookup and ignores its later proof',async()=>{
+ const f=setup();officialFixture(f).isActive=true;let finish,signal;f.ui.currentIdentity=s=>{signal=s;return new Promise(resolve=>finish=resolve);};const pending=f.diag.refresh();await settle();f.context.subscriptions.forEach(s=>s.dispose());await pending;
+ assert.equal(signal.aborted,true);finish(startupProof(f));await settle();assert.equal(f.diag.getState().activeEmail,undefined);
+});
+test('focus and panel readiness share the current lookup instead of duplicating it',async t=>{
+ const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));officialFixture(f).isActive=true;let finish,reads=0;
+ f.ui.currentIdentity=()=>{reads++;return new Promise(resolve=>finish=resolve);};const pending=f.diag.refresh();await settle();f.ui.focus({focused:true});assert.equal(f.diag.ensureIdentity(),pending);assert.equal(reads,1);
+ finish(startupProof(f));await pending;await f.diag.ensureIdentity();assert.equal(reads,1);
+});
+test('last confirmed account persists only a host-bound ID and is restored as unverified display metadata',async t=>{
+ const storage=new Map(),id='00000000-0000-4000-8000-000000000001',host='f'.repeat(64),row={...saved,id,expectedEmail:'cold@example.test',hostId:host};storage.set('live-switch.accounts.v1',[row]);
+ const f=setup({state:storage});t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));f.service.hostIsCurrent=a=>a.hostId===host;f.service.credentialHostIdentity=()=>host;officialFixture(f).isActive=true;f.ui.currentIdentity=async()=>startupProof(f);await f.diag.refresh();
+ const key='live-switch.last-verified-account.v1.'+host;assert.equal(storage.get(key),id);assert.equal(f.diag.getState().lastKnownAccountId,id);assert.ok(f.diag.getAccounts()[0].active);
+ const restored=setup({state:storage});t.after(()=>restored.context.subscriptions.forEach(s=>s.dispose()));restored.service.hostIsCurrent=a=>a.hostId===host;restored.service.credentialHostIdentity=()=>host;officialFixture(restored).isActive=true;
+ let finish;restored.ui.currentIdentity=()=>new Promise(resolve=>finish=resolve);const pending=restored.diag.refresh();await settle();
+ assert.equal(restored.diag.getAccounts().length,1);assert.equal(restored.diag.getAccounts()[0].active,undefined);assert.equal(restored.diag.getState().activeEmail,undefined);assert.equal(restored.diag.getState().lastKnownAccountId,id);assert.equal(restored.diag.getState().currentLoginSave,undefined);
+ finish(startupProof(restored));await pending;assert.equal(restored.diag.getAccounts()[0].active,true);assert.equal(typeof storage.get(key),'string');assert.ok(!storage.get(key).includes('@'));
+});
+test('deleted, ambiguous or foreign-host last-known IDs never become display identities',async t=>{
+ for(const rows of [[],[{...saved,hostId:'e'.repeat(64)}],[{...saved,hostId:'f'.repeat(64)},{...saved,hostId:'f'.repeat(64)}]]) await t.test(JSON.stringify(rows.map(x=>x.hostId)),async st=>{
+  const state=new Map([['live-switch.accounts.v1',rows],['live-switch.last-verified-account.v1.'+'f'.repeat(64),saved.id]]),f=setup({state});st.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));f.service.hostIsCurrent=a=>a.hostId==='f'.repeat(64);f.service.credentialHostIdentity=()=> 'f'.repeat(64);await f.diag.refresh();assert.equal(f.diag.getState().lastKnownAccountId,undefined);assert.equal(f.diag.getState().activeEmail,undefined);
+ });
+});
+test('repeated cached Hub proof cannot renew an exhausted fresh-identity retry budget forever',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','setInterval','Date']});const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));officialFixture(f).isActive=true;
+ const hub=require('../out/live-hub'),original=hub.queryHub;hub.queryHub=async()=>startupProof(f);t.after(()=>hub.queryHub=original);
+ let reads=0;f.ui.currentIdentity=async()=>{reads++;throw new (require('../out/live-storage').LiveError)('HUB_RPC_FAILED');};await f.diag.refresh();
+ for(let i=0;i<60;i++){t.mock.timers.tick(5_000);await settle();await settle();}
+ const exhausted=reads;for(let i=0;i<12;i++){t.mock.timers.tick(5_000);await settle();await settle();}assert.equal(reads,exhausted);assert.equal(f.diag.getState().identityChecking,false);assert.equal(f.diag.getState().activeEmail,undefined);
+ f.ui.currentIdentity=async()=>startupProof(f);await f.diag.recheck();assert.equal(f.diag.getState().activeEmail,'cold@example.test');
+});
+
+async function ownedStartupCapture(t){
+ const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),{LiveLocks}=require('../out/live-lock');
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'agm-startup-owned-'));
+ const locks=new LiveLocks(directory,'a'.repeat(64),{pid:99,probe:async()=>({state:'alive',startIdentity:'synthetic-self-99'})}),operations=[],withOperation=locks.withOperation.bind(locks);
+ locks.withOperation=fn=>{const promise=withOperation(fn);operations.push(promise);return promise;};
+ const f=setup({locks});officialFixture(f).isActive=true;let release,ready,captures=0,proofs=0,journal=null;
+ const started=new Promise(resolve=>ready=resolve);f.service.journal=async()=>journal;
+ f.ui.currentIdentity=async()=>{proofs++;return startupProof(f);};
+ f.service.captureCurrent=async(_metadata,_index,verify)=>{captures++;ready();await new Promise(resolve=>release=resolve);await verify();f.events.push('late-save');};
+ t.after(async()=>{f.context.subscriptions.forEach(s=>s.dispose());release?.();await Promise.allSettled(operations);await fs.rm(directory,{recursive:true,force:true});});
+ const pending=f.diag.refresh();await started;
+ return{f,locks,pending,operations,release:()=>release(),captures:()=>captures,proofs:()=>proofs,setJournal:value=>journal=value};
+}
+test('production lock path preserves verified identity after save timeout and rechecks without unlocking or another save',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});const x=await ownedStartupCapture(t),{f,locks}=x;
+ const owner=(await locks.inspectOperation()).owner;t.mock.timers.tick(20_000);await x.pending;
+ assert.equal(f.diag.getState().activeEmail,'cold@example.test');assert.equal(f.diag.getState().pending,false);
+ f.ui.currentIdentity=async()=>startupProof(f,'new@example.test');await f.diag.recheck();await f.diag.ensureIdentity();
+ assert.equal(f.diag.getState().activeEmail,'new@example.test');assert.equal(f.diag.getState().pending,false);assert.equal(f.diag.getState().identityChecking,false);
+ assert.equal(x.captures(),1);assert.deepEqual((await locks.inspectOperation()).owner,owner);assert.equal((await locks.inspectOperation()).state,'active');
+ x.release();await Promise.allSettled(x.operations);assert.equal((await locks.inspectOperation()).state,'absent');assert.ok(!f.events.includes('late-save'));assert.equal(f.diag.getState().activeEmail,'new@example.test');
+});
+test('owned copy refresh accepts only its matching active save-only recovery marker',async t=>{
+ const x=await ownedStartupCapture(t),{f,locks}=x,owner=(await locks.inspectOperation()).owner;
+ const journal={id:'00000000-0000-4000-8000-000000000099',operation:'login',loginMode:'save-only'};x.setJournal(journal);
+ locks.inspectRecovery=async()=>({state:'active',owner:{...owner,id:journal.id}});
+ locks.reconcileRecovery=async()=>assert.fail('must not reconcile while copy holds lock');f.service.recoverLogin=async()=>assert.fail('must not recover or write official slots');
+ f.ui.currentIdentity=async()=>startupProof(f,'new@example.test');await f.diag.recheck();await x.pending;
+ assert.equal(f.diag.getState().activeEmail,'new@example.test');assert.equal(f.diag.getState().pending,false);assert.equal(x.captures(),1);assert.equal((await locks.inspectOperation()).state,'active');
+});
+test('production copy exception rejects external or unidentified operation and recovery owners',async t=>{
+ for(const mode of ['id','nonce','startIdentity','owner','uncertain-operation','legacy-operation','marker-id','marker-owner','marker-pid','marker-startIdentity','marker-image','uncertain-marker','stale-marker','legacy-marker','wrong-journal'])await t.test(mode,async st=>{
+  const x=await ownedStartupCapture(st),{f,locks}=x,owner=(await locks.inspectOperation()).owner,inspect=locks.inspectOperation.bind(locks);
+  const journal={id:'00000000-0000-4000-8000-000000000099',operation:'login',loginMode:'save-only'};
+  if(['id','nonce','startIdentity','owner'].includes(mode))locks.inspectOperation=async()=>({state:'active',owner:{...owner,[mode]:mode==='owner'?'b'.repeat(64):mode==='startIdentity'?'different-start':'00000000-0000-4000-8000-000000000100'}});
+  if(mode==='uncertain-operation')locks.inspectOperation=async()=>({state:'uncertain',reason:'LOCK_PROCESS_STATUS_UNKNOWN',owner});
+  if(mode==='legacy-operation')locks.inspectOperation=async()=>({state:'active',owner:{...owner,schema:1}});
+  if(mode.includes('marker')){
+   x.setJournal(journal);let marker={...owner,id:journal.id};const key=mode.replace('marker-','');
+   if(['id','owner','pid','startIdentity'].includes(key))marker={...marker,[key]:key==='owner'?'b'.repeat(64):key==='pid'?101:key==='startIdentity'?'different-start':'00000000-0000-4000-8000-000000000100'};
+   if(mode==='marker-image')marker.purpose='image';if(mode==='legacy-marker')marker.schema=1;
+   locks.inspectRecovery=async()=>({state:mode==='uncertain-marker'?'uncertain':mode==='stale-marker'?'stale':'active',owner:marker});
+  }
+  if(mode==='wrong-journal')x.setJournal({id:journal.id,phase:'installed',operation:'switch'});
+  await f.diag.recheck();await x.pending;
+  assert.equal(f.diag.getState().activeEmail,mode==='uncertain-operation'?'cold@example.test':undefined);assert.equal(f.diag.getState().pending,true);assert.equal(x.proofs(),1);assert.equal(x.captures(),1);assert.equal((await inspect()).state,'active');assert.ok(!f.events.includes('late-save'));
+ });
 });

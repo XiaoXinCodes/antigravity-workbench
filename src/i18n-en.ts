@@ -810,6 +810,8 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "liveUi.3473d3c082": "Waiting for browser authorization; original login has an encrypted backup",
   "liveUi.aa3daf4de6": "Verify the new Hub identity and securely save login",
   "liveUi.loginSavedChecking": "Account securely saved; checking login state",
+  "liveUi.officialSavePending": "The current login is verified, but its local copy has not finished saving. You can recheck identity; saving remains unconfirmed.",
+  "workbenchView.lastKnownLogin": "Last confirmed login: {p0} (awaiting background verification)",
   "liveUi.officialSaveFailed": "Official current account verified; automatic saving incomplete: {p0}",
   "liveUi.8e349f6760": "Login saved; restoring the original login",
   "liveUi.f922756e77": "Saved {p0}; restoring and automatically checking the original login",

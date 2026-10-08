@@ -4,6 +4,18 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC; see each release's notes for installation and validation scope.
 
+## [0.1.3](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.3) — 2026-10-08
+
+- Automatically verify the official login when a window reopens or the panel is rebuilt. A saved account on the same host can appear as the last confirmed login, explicitly pending background confirmation; it does not establish the current login or successful saving.
+- Extend the bounded startup identity wait to accommodate slow initialization. Repeated cached identities or errors no longer continually renew an exhausted retry budget.
+- Finish the identity-checking indicator as soon as official identity is confirmed. Wait separately for local saving; slow saves remain visibly unconfirmed while the underlying secure operation keeps its lock.
+- Rechecking identity supersedes the old wait and coalesces concurrent requests. Late responses after cancellation, window closure or identity changes cannot replace the new identity or complete an old save.
+- The formal GitHub Release VSIX pins documentation and image links to HTTPS URLs for its source commit and can be used directly for a manual Marketplace Update, without a separate package.
+
+Validation uses fictional identities, fake time and local mocks. The user's actual window, real accounts and image generation were not acceptance tests.
+
+[Release notes](docs/RELEASE_0.1.3.md#english) · [Validation scope](docs/VALIDATION_0.1.3.md)
+
 ## [0.1.2](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.2) — 2026-10-08
 
 - Password-encrypted account exports no longer require an actual POSIX permission mode or a filesystem whitelist. Save to local directories the operating system allows the extension to read and write, including Windows mounts in WSL, without changing mount or directory permissions.

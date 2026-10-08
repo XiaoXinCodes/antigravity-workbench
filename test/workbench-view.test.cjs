@@ -446,3 +446,14 @@ test('current suffix follows the verified account name once, with safe duplicate
  for(const extra of [{activeEmail:undefined},{pending:true},{accounts:[A,{...B,expectedEmail:A.expectedEmail}]},{accounts:[A,{...B,id:A.id}]},{accounts:[{...A,migrationState:'pending'},B]}])assert.doesNotMatch(body(extra),/current-badge/);
  const html=body({activeEmail:B.expectedEmail});const cards=html.match(/<article class="account(?: active)?">[\s\S]*?<\/article>/g);assert.doesNotMatch(cards[0],/current-badge/);assert.match(cards[1],/（当前登录）/);
 });
+
+test('last-known login is labeled unverified and never supplies current badge or saved state',()=>{
+ const remembered={...account,hostCurrent:true};const html=renderWorkbench(state({accounts:[remembered],lastKnownAccountId:account.id,identityChecking:true}),'nonce');
+ assert.match(html,/上次确认的登录：example@example.test（待后台确认）/);assert.doesNotMatch(html,/<span class="current-badge"|<p class="current-status verified"/);assert.match(html,/data-command="live.capture" class=[^>]*>保存当前账号/);
+ const foreign=renderWorkbench(state({accounts:[{...remembered,hostCurrent:false}],lastKnownAccountId:account.id}),'nonce');assert.doesNotMatch(foreign,/上次确认的登录/);
+ const current=renderWorkbench(state({accounts:[remembered],lastKnownAccountId:account.id,activeEmail:account.expectedEmail}),'nonce');assert.match(current,/<span class="current-badge"/);assert.doesNotMatch(current,/上次确认的登录/);
+});
+test('view resolution requests readiness once while ordinary repaints stay passive',()=>{
+ let ready=0;const provider=new WorkbenchView(()=>state(),()=>{ready++;});const view={webview:{options:{},html:'',onDidReceiveMessage:()=>({dispose(){}})},onDidDispose:()=>({dispose(){}})};
+ provider.resolveWebviewView(view);assert.equal(ready,1);provider.refresh();provider.refresh();assert.equal(ready,1);provider.resolveWebviewView(view);assert.equal(ready,2);provider.dispose();
+});
