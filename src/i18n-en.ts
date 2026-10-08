@@ -735,6 +735,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "liveUi.0c311f5ec7": "The path is unsafe or not a regular local file. Choose a regular file on this host; avoid links and network paths.",
   "liveUi.9ddd2f7c0f": "The migration file exceeds the safe size limit. Nothing imported. Export accounts in smaller batches through Workbench.",
   "liveUi.2277a87341": "The migration file changed while reading. Nothing imported. Wait for transfer to finish, then select again.",
+  "liveUi.exportFileChanged": "The export file or destination directory changed during writing. Export stopped. Choose the save location again; existing files will not be overwritten.",
   "liveUi.bd9b09b0b8": "The migration file contains duplicate accounts. Select one copy per email on its original host and export again.",
   "liveUi.9ef77d2bca": "The two saved credential slots are inconsistent and cannot be safely exported. Verify official login on the original host and save again.",
   "liveUi.a057120c2a": "Account migration incomplete. Confirm the file was exported by Workbench, the password is correct and this host can access it. Original copies and current official login are not replaced.",

@@ -360,6 +360,7 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     MIGRATION_PATH_UNSAFE: tr("liveUi.0c311f5ec7"),
     MIGRATION_ARCHIVE_TOO_LARGE: tr("liveUi.9ddd2f7c0f"),
     MIGRATION_FILE_CHANGED: tr("liveUi.2277a87341"),
+    MIGRATION_EXPORT_FILE_CHANGED: tr("liveUi.exportFileChanged"),
     MIGRATION_DUPLICATE_ACCOUNT: tr("liveUi.bd9b09b0b8"),
     MIGRATION_TOKEN_CONFLICT: tr("liveUi.9ef77d2bca"),
   };

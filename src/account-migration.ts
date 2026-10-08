@@ -211,10 +211,10 @@ async function checkDirectories(filename: string): Promise<DirectorySnapshot> {
   return snapshots;
 }
 function sameFile(a: Stats, b: Stats): boolean { return a.ino === b.ino && a.dev === b.dev; }
-async function verifyDirectories(before: DirectorySnapshot): Promise<void> {
+async function verifyDirectories(before: DirectorySnapshot, code = 'MIGRATION_FILE_CHANGED'): Promise<void> {
   for (const { name, stat } of before) {
     const current = await fs.lstat(name);
-    if (!current.isDirectory() || current.isSymbolicLink() || !sameFile(stat, current)) throw new LiveError('MIGRATION_FILE_CHANGED');
+    if (!current.isDirectory() || current.isSymbolicLink() || !sameFile(stat, current)) throw new LiveError(code);
   }
 }
 
@@ -262,15 +262,33 @@ export async function writeMigrationArchive(filename: string, data: Uint8Array):
       const existing = await fs.lstat(local);
       throw new LiveError(existing.isSymbolicLink() || !existing.isFile() ? 'MIGRATION_PATH_UNSAFE' : 'MIGRATION_FILE_EXISTS');
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    handle = await fs.open(local, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
+    // Request a private creation default where supported, without imposing a
+    // mode or filesystem policy on this password-encrypted portable artifact.
+    handle = await fs.open(local, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
     created = await handle.stat();
     if (!created.isFile()) throw new LiveError('MIGRATION_PATH_UNSAFE');
     await handle.writeFile(bytes);
     await handle.sync();
     const written = await handle.stat(), current = await fs.lstat(local);
-    if (!sameFile(created, current) || !current.isFile() || current.isSymbolicLink() || written.size !== bytes.length ||
-        process.platform !== 'win32' && (written.mode & 0o077) !== 0) throw new LiveError('MIGRATION_FILE_CHANGED');
-    await verifyDirectories(directories);
+    if (!written.isFile() || !sameFile(created, written) || !sameFile(created, current) || !current.isFile() || current.isSymbolicLink() ||
+        written.size !== bytes.length || current.size !== bytes.length) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    // Verify the exact ciphertext through the owned descriptor, never by
+    // opening a path that another process may have replaced. Bound the read
+    // even if the file grows, and detect same-length content corruption.
+    const readback = Buffer.alloc(bytes.length + 1);
+    let count = 0;
+    while (count < readback.length) {
+      const result = await handle.read(readback, count, readback.length - count, count);
+      if (result.bytesRead === 0) break;
+      count += result.bytesRead;
+    }
+    if (count !== bytes.length || !readback.subarray(0, count).equals(bytes)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    await verifyDirectories(directories, 'MIGRATION_EXPORT_FILE_CHANGED');
+    // Content and directory checks await filesystem work.
+    // Recheck the owned file afterwards; never accept a replacement during them.
+    const completed = await handle.stat(), final = await fs.lstat(local);
+    if (!completed.isFile() || !sameFile(created, completed) || !final.isFile() || final.isSymbolicLink() || !sameFile(created, final) ||
+        completed.size !== bytes.length || final.size !== bytes.length) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
     await handle.close(); handle = undefined;
     complete = true;
   } catch (error) {

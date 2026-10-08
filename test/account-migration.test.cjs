@@ -197,6 +197,122 @@ test('file helper owns a copy of the validated bytes before asynchronous filesys
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 
+// Real encrypted files with synthetic filesystem metadata. No user archives,
+// credential stores, mount settings or production permission checks are changed.
+async function exportFilesystemFixture(t, options = {}) {
+  const directory = await privateDirectory(), filename = path.join(directory, 'portable.agwenc');
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const bytes = await archive(), realOpen = fs.open.bind(fs), realReadFile = fs.readFile.bind(fs), realLstat = fs.lstat.bind(fs), realChmod = fs.chmod.bind(fs);
+  // Export must not inspect mount policy or modify inherited permissions.
+  t.mock.method(fs, 'readFile', async (name, ...args) => {
+    assert.notEqual(name, '/proc/self/mountinfo');
+    return realReadFile(name, ...args);
+  });
+  t.mock.method(fs, 'chmod', async () => { throw Error('export must not change permissions'); });
+  let descriptorStats = 0, directoryStats = 0;
+  t.mock.method(fs, 'lstat', async (name, ...args) => {
+    if (name === directory && ++directoryStats === 2 && options.beforeDirectoryCheck) await options.beforeDirectoryCheck(filename);
+    const stat = await realLstat(name, ...args);
+    if (name === directory && options.directoryChange && directoryStats === 2) stat.ino += 1;
+    return stat;
+  });
+  t.mock.method(fs, 'open', async (name, ...args) => {
+    if (name === filename && options.accessDenied) throw Object.assign(new Error('synthetic system denied access'), {code:'EACCES'});
+    const handle = await realOpen(name, ...args);
+    if (name !== filename) return handle;
+    const realStat = handle.stat.bind(handle), realWriteFile = handle.writeFile.bind(handle), realSync = handle.sync.bind(handle), realRead = handle.read.bind(handle);
+    handle.chmod = async () => { throw Error('export must not change permissions'); };
+    handle.stat = async (...args) => {
+      const stat = await realStat(...args);
+      descriptorStats++;
+      const mode = descriptorStats >= 3 ? options.finalMode ?? options.mode : options.mode;
+      if (descriptorStats >= 2 && mode !== undefined) stat.mode = (stat.mode & ~0o777) | mode;
+      return stat;
+    };
+    handle.writeFile = async data => {
+      if (options.partial || options.abortWrite) {
+        await handle.write(data.subarray(0, Math.floor(data.length / 2)));
+        if (options.abortWrite) throw Object.assign(new Error('synthetic cancelled'), {code:'ABORT_ERR'});
+      } else await realWriteFile(data);
+    };
+    handle.sync = async () => {
+      await realSync();
+      if (options.actualMode !== undefined) await realChmod(filename, options.actualMode);
+      if (options.corrupt) await handle.write(Buffer.from('X'), 0, 1, 0);
+      if (options.afterSync) await options.afterSync(filename);
+    };
+    handle.read = async (...args) => {
+      if (options.beforeRead) { const callback = options.beforeRead; options.beforeRead = undefined; await callback(filename); }
+      return realRead(...args);
+    };
+    return handle;
+  });
+  return {directory, filename, bytes, realReadFile, realLstat};
+}
+
+test('Linux encrypted export accepts actual broad permissions without mount probing or permission changes', {skip:process.platform!=='linux'}, async t => {
+  for (const mode of [0o644,0o666,0o777]) await t.test(mode.toString(8), async st => {
+    const f = await exportFilesystemFixture(st, {actualMode:mode});
+    await writeMigrationArchive(f.filename, f.bytes);
+    assert.equal((await f.realLstat(f.filename)).mode & 0o777, mode);
+    const written = await f.realReadFile(f.filename);
+    assert.deepEqual(written, f.bytes);
+    assert.deepEqual((await decryptAccountArchive(written,PASSWORD)).accounts,accounts);
+    assert.doesNotMatch(written.toString(), /synthetic-refresh-|a@example\.test|Synthetic private label/);
+    await assert.rejects(writeMigrationArchive(f.filename,f.bytes),failure('MIGRATION_FILE_EXISTS'));
+  });
+});
+
+test('encrypted export accepts broad and changing modes for Linux, Windows and macOS platform values', async t => {
+  for (const platform of ['linux','win32','darwin']) await t.test(platform, async st => {
+    const f = await exportFilesystemFixture(st,{mode:0o666,finalMode:0o777});
+    const descriptor = Object.getOwnPropertyDescriptor(process,'platform');
+    Object.defineProperty(process,'platform',{...descriptor,value:platform});
+    try { await writeMigrationArchive(f.filename,f.bytes); assert.deepEqual(await f.realReadFile(f.filename),f.bytes); }
+    finally { Object.defineProperty(process,'platform',descriptor); }
+  });
+});
+
+test('encrypted export respects operating-system access denial without changing permissions or retrying', async t => {
+  const f = await exportFilesystemFixture(t,{accessDenied:true});
+  await assert.rejects(writeMigrationArchive(f.filename,f.bytes),failure('MIGRATION_FILE_WRITE_FAILED'));
+  assert.equal(fs.open.mock.calls.length,1);
+  assert.equal(fs.chmod.mock.calls.length,0);
+  assert.deepEqual(await fs.readdir(f.directory),[]);
+});
+
+test('encrypted export detects incomplete writes, cancellation and parent directory changes, cleaning owned partial files', async t => {
+  for (const [name,options,code] of [['partial',{partial:true},'MIGRATION_EXPORT_FILE_CHANGED'],['same-length corruption',{corrupt:true},'MIGRATION_EXPORT_FILE_CHANGED'],['cancelled',{abortWrite:true},'MIGRATION_FILE_WRITE_FAILED'],['directory',{directoryChange:true},'MIGRATION_EXPORT_FILE_CHANGED']]) await t.test(name,async st=>{
+    const f=await exportFilesystemFixture(st,options);
+    await assert.rejects(writeMigrationArchive(f.filename,f.bytes),failure(code));
+    await assert.rejects(f.realLstat(f.filename),{code:'ENOENT'});
+  });
+});
+
+test('encrypted export never deletes a replacement installed during writing, readback or directory verification', async t => {
+  for(const phase of ['write','readback','directory']) await t.test(phase,async st=>{
+    const replacement=Buffer.from('synthetic unrelated replacement');
+    const replace=async filename=>{await fs.rename(filename,filename+'.owned');await fs.writeFile(filename,replacement);};
+    const f=await exportFilesystemFixture(st,phase==='write'?{afterSync:replace}:phase==='readback'?{beforeRead:replace}:{beforeDirectoryCheck:replace});
+    await assert.rejects(writeMigrationArchive(f.filename,f.bytes),failure('MIGRATION_EXPORT_FILE_CHANGED'));
+    assert.deepEqual(await f.realReadFile(f.filename),replacement);
+    assert.deepEqual(await f.realReadFile(f.filename+'.owned'),f.bytes);
+  });
+});
+
+test('encrypted export rejects a symlink installed after writing without removing its target', {skip:process.platform==='win32'}, async t=>{
+  const replacement=Buffer.from('synthetic unrelated target');
+  const f=await exportFilesystemFixture(t,{afterSync:async filename=>{
+    await fs.rename(filename,filename+'.owned');
+    await fs.writeFile(filename+'.target',replacement);
+    await fs.symlink(filename+'.target',filename);
+  }});
+  await assert.rejects(writeMigrationArchive(f.filename,f.bytes),failure('MIGRATION_EXPORT_FILE_CHANGED'));
+  assert.equal((await f.realLstat(f.filename)).isSymbolicLink(),true);
+  assert.deepEqual(await f.realReadFile(f.filename+'.target'),replacement);
+  assert.deepEqual(await f.realReadFile(f.filename+'.owned'),f.bytes);
+});
+
 test('file helpers reject relative, remote, directory, missing and oversized inputs with safe errors', async () => {
   const directory = await privateDirectory(), filename = path.join(directory, 'oversized.agm');
   try {

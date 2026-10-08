@@ -4,6 +4,16 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC; see each release's notes for installation and validation scope.
 
+## [0.1.2](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.2) — 2026-10-08
+
+- Password-encrypted account exports no longer require an actual POSIX permission mode or a filesystem whitelist. Save to local directories the operating system allows the extension to read and write, including Windows mounts in WSL, without changing mount or directory permissions.
+- Preserve password encryption, exclusive creation, no overwrite, and file and parent-directory identity checks. Read ciphertext back through the same owned descriptor and compare exact bytes; partial writes, same-length corruption and replacements stop the export, with cleanup limited to its own created file.
+- File or directory changes now receive accurate Chinese and English export messages instead of an import-while-reading error. Internal credential, plaintext and log permission protections remain unchanged; operating-system access denial still stops the operation.
+
+Regressions use fictional accounts and cloud files. An actual Windows directory on WSL / DrvFS and real-account migration have not been tested. Native three-platform release gates do not establish real DrvFS validation.
+
+[Release notes](docs/RELEASE_0.1.2.md#english) · [Validation scope](docs/VALIDATION_0.1.2.md)
+
 ## [0.1.1](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.1) — 2026-10-08
 
 - Automatically verify, display and save direct official logins on the same host, deduplicating identities while retaining IDs and labels. An old add transaction can restore only its confirmed full snapshot and cannot overwrite an independent official login.

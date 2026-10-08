@@ -213,4 +213,27 @@ test('every current migration core error has a specific safe UI explanation', ()
   const f = fixture(), fallback = f.api.liveErrorMessage('MIGRATION_UNRECOGNIZED'); assert.ok(codes.length >= 22);
   for (const code of codes) { const message = f.api.liveErrorMessage(code); assert.notEqual(message, fallback, `${code} needs a specific explanation`); assert.doesNotMatch(message, /MIGRATION_/); assert.match(message, /[\u4e00-\u9fff]/); }
   assert.match(f.api.liveErrorMessage('MIGRATION_TARGET_SIZE_LIMIT'), /存储大小限制.*当前登录尚未改动.*官方登录重新保存/);
+  for (const code of ['MIGRATION_EXPORT_FILE_CHANGED']) {
+    assert.match(f.api.liveErrorMessage(code), /导出/);
+    assert.doesNotMatch(f.api.liveErrorMessage(code), /未导入|读取中|传输完成/);
+  }
+});
+
+test('export write failures report export-specific bilingual messages without exposing credentials', async () => {
+  const i18n = require('../out/i18n');
+  try {
+    for (const language of ['zh-CN','en']) for (const code of ['MIGRATION_EXPORT_FILE_CHANGED']) {
+      i18n.setLanguage(language);
+      const f = fixture();
+      const before = JSON.stringify([...f.state].filter(([key])=>key===INDEX));
+      f.codec.writeMigrationArchive = async () => { throw new LiveError(code); };
+      await f.call('export');
+      const error = f.controller.getState().error;
+      assert.match(error,language==='en'?/Export stopped/:/导出已停止/);
+      assert.doesNotMatch(error,/未导入|Nothing imported|while reading|传输完成/);
+      assert.equal(JSON.stringify([...f.state].filter(([key])=>key===INDEX)),before);
+      assert.ok(!f.events.includes('import')&&!f.events.includes('install')&&!f.events.includes('lifecycle'));
+      noSecrets(f);
+    }
+  } finally {i18n.setLanguage('zh-CN');}
 });
