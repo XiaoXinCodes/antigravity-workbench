@@ -4,6 +4,17 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.4](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.4) — 2026-10-08
+
+Inspect and resolve a selected background process when another window or a leftover process blocks account switching.
+
+- Show conflicting processes with their PID, start time and ownership details, with a rescan action.
+- Confirm ending one verified process on Linux, or explicitly confirm force termination on Windows.
+- Check for remaining conflicts after exit and resume the originally selected account switch.
+- Explain unavailable checks or system capabilities and retain inspection and rescanning. macOS currently supports inspection and rescanning.
+
+[Release notes](docs/RELEASE_0.1.4.md) · [Validation scope](docs/VALIDATION_0.1.4.md)
+
 ## [0.1.3](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.3) — 2026-10-08
 
 Improve login display and verification when reopening a window.
