@@ -229,13 +229,13 @@ test('Windows system PowerShell compiles the shipped native adapter without touc
   }
 });
 
-test('Windows reads complete identity only from an isolated synthetic child, without sending a signal', { skip: process.platform !== 'win32' }, async t => {
+test('Windows validates synthetic child identity and force-ends only a separately created fixture child', { skip: process.platform !== 'win32' }, async t => {
   const fs = require('node:fs/promises'), path = require('node:path'), os = require('node:os'), { spawn } = require('node:child_process');
   const { runWindowsProcessHelper } = require('../out/official-process-recovery');
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'agw-win-process-fixture-'));
   const executable = path.join(home, '.gemini', 'bin', 'agy.exe'); await fs.mkdir(path.dirname(executable), { recursive: true }); await fs.copyFile(process.execPath, executable);
   t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
-  const inspectChild = async (profile, flags) => {
+  const inspectChild = async (profile, flags, endFixture=false) => {
     // libuv restores missing HOMEDRIVE/HOMEPATH from the parent on Windows.
     // Set the whole synthetic scope explicitly rather than mixing two homes.
     const child = spawn(executable, ['-e', 'setInterval(()=>{},1000)', '--', '--hub', '--app_data_dir=antigravity', ...flags], { env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: profile, HOMEDRIVE:home.slice(0,2),HOMEPATH:home.slice(2) }, stdio: 'ignore', windowsHide: true });
@@ -245,8 +245,14 @@ test('Windows reads complete identity only from an isolated synthetic child, wit
       const request = { operation: 'inspect', pid: child.pid, executable, home, ownerPid: process.pid, port: 32123, csrfToken: 'synthetic-current-capability' };
       const result = await runWindowsProcessHelper(request);
       assert.equal(child.exitCode, null, 'read-only fixture inspection must not terminate its target');
+      if(endFixture){
+        assert.equal(result.code,undefined,JSON.stringify({code:result.code,stage:result.stage}));
+        let checks=0;const ended=await runWindowsProcessHelper({...request,operation:'end',target:result},undefined,()=>{checks++;});
+        assert.deepEqual(ended,{result:'forced'});assert.ok(checks>0,'test host must authorize the force handshake');
+        await closed;assert.equal(child.exitCode,1,'held HANDLE termination completes before success');
+      }
       return { result, pid: child.pid };
-    } finally { child.kill(); await closed; } // Only our own synthetic Node child.
+    } finally { if(child.exitCode===null)child.kill(); await closed; } // Only our own synthetic Node child.
   };
   const normalFlags = ['--hub-port=32124', '--csrf_token=synthetic-foreign-capability'];
   let inspected = await inspectChild(home, normalFlags);
@@ -257,4 +263,5 @@ test('Windows reads complete identity only from an isolated synthetic child, wit
   for (const [profile, flags] of [['.', normalFlags], ['C:relative', normalFlags], [home, ['--hub-port=32124\n', normalFlags[1]]], [home, [normalFlags[0], '--csrf_token=synthetic-foreign-capability\n']], [home, [...normalFlags, '--hub']]]) {
     inspected = await inspectChild(profile, flags); assert.ok(inspected.result.code, 'relative scope and malformed argv must fail closed');
   }
+  await inspectChild(home,normalFlags,true);
 });

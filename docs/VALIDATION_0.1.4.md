@@ -2,7 +2,7 @@
 
 自动化回归使用合成账号、进程元数据和隔离 VS Code 宿主；不调用真实 Google 账号或图片服务，也不终止用户的官方后台。
 
-Linux 的 pidfd 路径覆盖 PID 复用、启动身份变化、确认取消、宿主修订变化、并发恢复及强制退出；目标进程始终通过已绑定的 pidfd 操作。Windows 使用同一个 HANDLE 检查与强制结束目标，检查当前用户 SID、启动时间、可执行文件、命令行和 HOME。Windows 原生 CI 单独编译系统 PowerShell / .NET helper，并检查隔离合成 Node 子进程的完整元数据；Linux 云端的 Windows 原生测试明确跳过。
+Linux 的 pidfd 路径覆盖 PID 复用、启动身份变化、确认取消、宿主修订变化、并发恢复及强制退出；目标进程始终通过已绑定的 pidfd 操作。Windows 使用同一个 HANDLE 检查与强制结束目标，检查当前用户 SID、启动时间、可执行文件、命令行和 HOME。Windows 原生 CI 单独编译系统 PowerShell / .NET helper，检查隔离合成 Node 子进程的完整元数据，并通过同一 HANDLE 结束自行创建的另一合成子进程；不操作用户的官方后台。Linux 云端的 Windows 原生测试明确跳过。
 
 Windows 不请求管理员权限；权限、编译能力或原生 64 位布局不可用时仅提供详情与重扫。macOS 的有限官方接口调查未找到可用于此流程且不需额外权限的可靠终止接口，维持只读。
 
