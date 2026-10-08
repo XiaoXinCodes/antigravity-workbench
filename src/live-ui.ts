@@ -294,7 +294,7 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED: tr("officialProcess.unverifiedOwner"),
     OFFICIAL_HUB_PROCESS_UNVERIFIED: tr("officialProcess.missingCurrentHub"),
     OFFICIAL_BACKEND_STOP_TIMEOUT: tr("officialProcess.stopTimeout"),
-    OFFICIAL_PROCESS_END_UNAVAILABLE: tr('officialProcess.helperUnavailable'),
+    OFFICIAL_PROCESS_END_UNAVAILABLE: tr(process.platform === 'win32' ? 'officialProcess.windowsHelperUnavailable' : 'officialProcess.helperUnavailable'),
     OFFICIAL_PROCESS_SELECTION_STALE: tr('officialProcess.stale'),
     OFFICIAL_PROCESS_END_CANCELLED: tr('officialProcess.cancelled'),
     OFFICIAL_PROCESS_END_DENIED: tr('officialProcess.denied'),
@@ -1368,10 +1368,11 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     const intent = blockedSwitch;
     if (intent && JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     const targetEmail = intent ? items().find(item => item.id === intent.id)!.expectedEmail : undefined;
-    const consent = tr('officialProcess.endConfirm');
-    const message = tr('officialProcess.endWarning', { pid: selected.pid, time: selected.startedAt ? new Date(selected.startedAt).toLocaleString() : tr('officialProcess.unknownTime'), next: targetEmail ? tr('officialProcess.switchNext', { account: targetEmail }) : tr('officialProcess.endOnly') });
+    const consent = tr(selected.endMode === 'force' ? 'officialProcess.forceConfirm' : 'officialProcess.endConfirm');
+    const message = tr(selected.endMode === 'force' ? 'officialProcess.forceWarning' : 'officialProcess.endWarning', { pid: selected.pid, time: selected.startedAt ? new Date(selected.startedAt).toLocaleString() : tr('officialProcess.unknownTime'), next: targetEmail ? tr('officialProcess.switchNext', { account: targetEmail }) : tr('officialProcess.endOnly') });
     if (await vscode.window.showWarningMessage(message, { modal: true }, consent) !== consent || disposed) return;
     if (blockedSwitch !== intent) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    if (intent && JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     const controller = new AbortController(); processAbort = controller;
     try {
       status = tr('officialProcess.ending', { pid: selected.pid }); dependencies.changed?.();

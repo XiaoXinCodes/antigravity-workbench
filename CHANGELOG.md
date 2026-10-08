@@ -4,6 +4,17 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.4](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.4) — 2026-10-08
+
+遇到其他窗口或遗留后台阻止切号时，可查看详情并处理所选后台。
+
+- 展示冲突后台的 PID、启动时间和归属提示，支持重新扫描。
+- Linux 可确认结束一个已核实的后台；Windows 明确确认后强制结束所选后台。
+- 后台退出后重新检查冲突，并接续原先选择的切号操作。
+- 无法安全核实身份或缺少系统能力时，说明原因并保留详情与重扫；macOS 当前提供查看与重扫。
+
+[Release notes](docs/RELEASE_0.1.4.md) · [Validation scope](docs/VALIDATION_0.1.4.md)
+
 ## [0.1.3](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.3) — 2026-10-08
 
 改善窗口重开后的登录显示与核验体验。

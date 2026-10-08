@@ -6,18 +6,20 @@ import { generation, hasOfficialHubApi } from './live-hub';
 import { inspectWslProcesses } from './official-process';
 import { LiveError, runPrivate } from './live-storage';
 import { LINUX_PROCESS_HELPER } from './official-process-helper';
+import { WINDOWS_PROCESS_BOOTSTRAP, WINDOWS_PROCESS_HELPER } from './official-process-windows';
 
 export interface ProcessConflict {
   id: string; pid: number; parentPid?: number; startedAt?: string;
   owner: 'current' | 'other' | 'detached' | 'unknown';
   parentState: 'alive' | 'gone' | 'unknown'; taskState: 'unknown'; canEnd: boolean;
+  endMode?: 'force';
 }
 export interface ProcessConflictState {
   phase: 'blocked' | 'clear'; processes: ProcessConflict[];
-  limitation?: 'platform' | 'helper'; canContinue: boolean;
+  limitation?: 'platform' | 'helper' | 'windows-helper'; canContinue: boolean;
 }
 interface Target {
-  pid: number; parentPid: number; startTicks: string; bootId: string; commandHash: string;
+  pid: number; parentPid: number; startTicks?: string; bootId?: string; commandHash?: string; platform?: 'win32';
   kind: 'current-hub' | 'unowned-hub' | 'unverified';
   parentState: 'alive' | 'gone' | 'unknown'; startedAt?: string; canEnd: boolean;
 }
@@ -32,9 +34,21 @@ export interface ProcessRecoveryRuntime {
 /** The only subprocess we may cancel here is the helper we created. Target
  * signals happen exclusively through its validated, held pidfd. */
 export function runProcessHelper(request: HelperRequest, signal?: AbortSignal, authorize?: () => void): Promise<unknown> {
+  return runHelper('/usr/bin/python3', ['-I', '-c', LINUX_PROCESS_HELPER], request, signal, authorize);
+}
+export function windowsPowerShell(): string {
+  const system = process.arch === 'ia32' && process.env.PROCESSOR_ARCHITEW6432 ? 'Sysnative' : 'System32';
+  return path.win32.join(process.env.SystemRoot || 'C:\\Windows', system, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+export function runWindowsProcessHelper(request: HelperRequest, signal?: AbortSignal, authorize?: () => void): Promise<unknown> {
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH']) if (process.env[name]) env[name] = process.env[name];
+  return runHelper(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_PROCESS_BOOTSTRAP, 'utf16le').toString('base64')], request, signal, authorize, { stages: ['force'], prefix: `${Buffer.from(WINDOWS_PROCESS_HELPER).toString('base64')}\n`, env, timeout: 20_000 });
+}
+function runHelper(executable: string, args: string[], request: HelperRequest, signal?: AbortSignal, authorize?: () => void, options: { stages?: string[]; prefix?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {}): Promise<unknown> {
   if (signal?.aborted) return Promise.reject(new LiveError('OFFICIAL_PROCESS_END_CANCELLED'));
   return new Promise((resolve, reject) => {
-    const child = spawn('/usr/bin/python3', ['-I', '-c', LINUX_PROCESS_HELPER], { stdio: ['pipe', 'pipe', 'pipe'], env: {}, windowsHide: true });
+    const child = spawn(executable, args, { shell: false, stdio: ['pipe', 'pipe', 'pipe'], env: options.env ?? {}, windowsHide: true });
     let output = '', totalBytes = 0, settled = false, result: unknown, resultSeen = false, stage = 0;
     const finish = (error?: LiveError, value?: unknown): void => {
       if (settled) return; settled = true; clearTimeout(timer); clearInterval(watchdog); signal?.removeEventListener('abort', abort);
@@ -42,7 +56,7 @@ export function runProcessHelper(request: HelperRequest, signal?: AbortSignal, a
       if (error) reject(error); else resolve(value);
     };
     const abort = (): void => finish(new LiveError('OFFICIAL_PROCESS_END_CANCELLED'));
-    const timer = setTimeout(() => finish(new LiveError('OFFICIAL_BACKEND_STOP_TIMEOUT')), 12_000);
+    const timer = setTimeout(() => finish(new LiveError('OFFICIAL_BACKEND_STOP_TIMEOUT')), options.timeout ?? 12_000);
     const check = (): boolean => {
       try { authorize?.(); return true; }
       catch (error) { finish(error instanceof LiveError ? error : new LiveError('PROCESS_CHECK_FAILED')); return false; }
@@ -59,7 +73,7 @@ export function runProcessHelper(request: HelperRequest, signal?: AbortSignal, a
         try {
           const message = object(JSON.parse(line));
           if ('authorize' in message) {
-            if (request.operation !== 'end' || !authorize || resultSeen || Object.keys(message).length !== 1 || message.authorize !== (stage === 0 ? 'term' : stage === 1 ? 'force' : undefined)) throw new LiveError('PROCESS_CHECK_FAILED');
+            if (request.operation !== 'end' || !authorize || resultSeen || Object.keys(message).length !== 1 || message.authorize !== (options.stages ?? ['term', 'force'])[stage]) throw new LiveError('PROCESS_CHECK_FAILED');
             if (!check()) return;
             ++stage; child.stdin.write('continue\n');
           } else {
@@ -81,7 +95,7 @@ export function runProcessHelper(request: HelperRequest, signal?: AbortSignal, a
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) { abort(); return; }
     // Keep stdin open: EOF is cancellation, including an extension-host crash.
-    child.stdin.write(`${JSON.stringify(request)}\n`);
+    child.stdin.write(`${options.prefix ?? ''}${JSON.stringify(request)}\n`);
   });
 }
 function object(value: unknown): Record<string, unknown> {
@@ -90,12 +104,13 @@ function object(value: unknown): Record<string, unknown> {
 }
 const integer = (value: unknown): value is number => Number.isSafeInteger(value) && typeof value === 'number' && value > 0;
 const iso = (value: unknown): value is string => typeof value === 'string' && value.length <= 40 && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
-function target(value: unknown): Target {
+function target(value: unknown, platform: NodeJS.Platform): Target {
   const row = object(value);
-  if (!integer(row.pid) || !integer(row.parentPid) || typeof row.startTicks !== 'string' || !/^\d{1,30}$/.test(row.startTicks) ||
-    typeof row.bootId !== 'string' || !/^[a-f0-9-]{36}$/.test(row.bootId) || typeof row.commandHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.commandHash) ||
+  if (!integer(row.pid) || typeof row.parentPid !== 'number' || !Number.isSafeInteger(row.parentPid) || row.parentPid < 0 ||
     !['current-hub', 'unowned-hub', 'unverified'].includes(String(row.kind)) || !['alive', 'gone', 'unknown'].includes(String(row.parentState)) || typeof row.canEnd !== 'boolean') throw new LiveError('PROCESS_CHECK_FAILED');
-  return { pid: row.pid, parentPid: row.parentPid, startTicks: row.startTicks, bootId: row.bootId, commandHash: row.commandHash,
+  if (row.kind !== 'unverified' && (typeof row.startTicks !== 'string' || !/^\d{1,30}$/.test(row.startTicks) || typeof row.commandHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.commandHash) || (platform === 'win32' ? row.platform !== 'win32' || row.bootId !== undefined : typeof row.bootId !== 'string' || !/^[a-f0-9-]{36}$/.test(row.bootId)))) throw new LiveError('PROCESS_CHECK_FAILED');
+  return { pid: row.pid, parentPid: row.parentPid,
+    ...(typeof row.startTicks === 'string' ? { startTicks: row.startTicks } : {}), ...(typeof row.bootId === 'string' ? { bootId: row.bootId } : {}), ...(typeof row.commandHash === 'string' ? { commandHash: row.commandHash } : {}), ...(platform === 'win32' ? { platform: 'win32' } : {}),
     kind: row.kind as Target['kind'], parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub', ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
 }
 /** Selection IDs and complete process proof live only in the host. No UI message
@@ -116,26 +131,37 @@ export class OfficialProcessRecovery {
     return { operation, executable: this.executable, home: os.homedir(), ownerPid: this.runtime.ownerPid ?? process.pid, ...(hasOfficialHubApi(api) ? { port: api.port, csrfToken: api.csrfToken } : {}) };
   }
   private currentGeneration(): string { const api = this.runtime.api(); return hasOfficialHubApi(api) ? generation(api) : 'stopped'; }
+  private helper(): NonNullable<ProcessRecoveryRuntime['helper']> { return this.runtime.helper ?? (this.platform === 'win32' ? runWindowsProcessHelper : runProcessHelper); }
   invalidate(): void { ++this.revision; this.targets.clear(); this.selectedGeneration = undefined; }
   async scan(): Promise<ProcessConflictState> {
     if (this.ending) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     this.invalidate(); this.runtime.assertCurrent();
     const revision = this.revision;
     const before = this.currentGeneration();
-    let rows: Target[] = [], fallback: ProcessConflict[] = [], limitation: ProcessConflictState['limitation'];
-    if (this.platform === 'linux') {
+    let rows: Target[] = [], fallback: ProcessConflict[] = [], limitation: ProcessConflictState['limitation'], inspected = true;
+    if (this.platform === 'linux' || this.platform === 'win32') {
       try {
-        const value = object(await (this.runtime.helper ?? runProcessHelper)(this.request('scan')));
+        const value = object(await this.helper()(this.request('scan')));
+        if (value.code === 'OFFICIAL_PROCESS_END_UNAVAILABLE') throw new LiveError('OFFICIAL_PROCESS_END_UNAVAILABLE');
         if (!Array.isArray(value.processes) || value.processes.length > 1024) throw new LiveError('PROCESS_CHECK_FAILED');
-        rows = value.processes.map(target);
-        if (value.supported !== true || rows.some(row => row.kind === 'unowned-hub' && !row.canEnd)) limitation = 'helper';
+        rows = value.processes.map(row => target(row, this.platform));
+        if (value.supported !== true || rows.some(row => row.kind !== 'current-hub' && !row.canEnd)) limitation = this.platform === 'win32' ? 'windows-helper' : 'helper';
+        if (value.supported !== true) rows = rows.map(row => ({ ...row, canEnd: false }));
       } catch (error) {
         if (!(error instanceof LiveError) || error.code !== 'OFFICIAL_PROCESS_END_UNAVAILABLE') throw error;
-        const api = this.runtime.api();
-        const value = await (this.runtime.inspect ?? inspectWslProcesses)(this.executable, hasOfficialHubApi(api) ? api : undefined, this.runtime.ownerPid ?? process.pid);
-        fallback = value.processes.map(row => ({ id: randomUUID(), pid: row.pid, parentPid: row.parentPid,
-          owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unowned-hub' ? 'other' : 'unknown', parentState: 'unknown', taskState: 'unknown', canEnd: false }));
-        limitation = 'helper';
+        if (this.platform === 'win32') {
+          limitation = 'windows-helper';
+          try { fallback = await this.nativeSnapshot(); } catch { inspected = false; }
+        }
+        else {
+          const api = this.runtime.api();
+          limitation = 'helper';
+          try {
+            const value = await (this.runtime.inspect ?? inspectWslProcesses)(this.executable, hasOfficialHubApi(api) ? api : undefined, this.runtime.ownerPid ?? process.pid);
+            fallback = value.processes.map(row => ({ id: randomUUID(), pid: row.pid, parentPid: row.parentPid,
+              owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unowned-hub' ? 'other' : 'unknown', parentState: 'unknown', taskState: 'unknown', canEnd: false }));
+          } catch { inspected = false; }
+        }
       }
     } else {
       fallback = await this.nativeSnapshot(); limitation = 'platform';
@@ -148,11 +174,12 @@ export class OfficialProcessRecovery {
       const id = randomUUID(); if (row.canEnd) this.targets.set(id, row);
       return { id, pid: row.pid, parentPid: row.parentPid, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
         owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' ? 'unknown' : row.parentPid === 1 ? 'detached' : 'other',
-        parentState: row.parentState, taskState: 'unknown', canEnd: row.canEnd };
+        parentState: row.parentState, taskState: 'unknown', canEnd: row.canEnd, ...(this.platform === 'win32' && row.canEnd ? { endMode: 'force' as const } : {}) };
     }) : fallback;
     this.selectedGeneration = before;
-    const conflicts = this.platform === 'linux' ? processes.filter(row => row.owner !== 'current') : processes.length > (before === 'stopped' ? 0 : 1) ? processes : [];
-    const ready = !conflicts.length && (this.platform !== 'linux' || (before === 'stopped' ? processes.length === 0 : processes.some(row => row.owner === 'current')));
+    const verifiedPlatform = this.platform === 'linux' || this.platform === 'win32';
+    const conflicts = verifiedPlatform ? processes.filter(row => row.owner !== 'current') : processes.length > (before === 'stopped' ? 0 : 1) ? processes : [];
+    const ready = inspected && !conflicts.length && (!verifiedPlatform || (before === 'stopped' ? processes.length === 0 : processes.some(row => row.owner === 'current')));
     return { phase: ready ? 'clear' : 'blocked', processes: conflicts, canContinue: ready, ...(limitation ? { limitation } : {}) };
   }
   async end(id: unknown, signal: AbortSignal): Promise<'exited' | 'forced' | 'gone'> {
@@ -169,7 +196,7 @@ export class OfficialProcessRecovery {
         if (revision !== this.revision) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
         if (expected !== this.currentGeneration()) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
       };
-      const result = object(await (this.runtime.helper ?? runProcessHelper)({ ...this.request('end'), target: selected }, signal, authorize));
+      const result = object(await this.helper()({ ...this.request('end'), target: selected }, signal, authorize));
       authorize();
       const codes = ['OFFICIAL_PROCESS_END_UNAVAILABLE', 'OFFICIAL_PROCESS_SELECTION_STALE', 'OFFICIAL_PROCESS_END_CANCELLED', 'OFFICIAL_PROCESS_END_DENIED', 'OFFICIAL_BACKEND_STOP_TIMEOUT', 'PROCESS_CHECK_FAILED'];
       if (typeof result.code === 'string' && codes.includes(result.code)) throw new LiveError(result.code);

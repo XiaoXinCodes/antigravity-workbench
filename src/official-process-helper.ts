@@ -43,7 +43,8 @@ def inspect(pid, request, boot_id):
     official = uid == os.getuid() and executable == request['executable'] and args.count('--hub') == 1 and len([a for a in args if a.split('=')[0] == '--hub']) == 1 and value('--app_data_dir') == 'antigravity' and port is not None and re.fullmatch(r'[1-9][0-9]{0,4}', port) and int(port) <= 65535 and csrf is not None and re.fullmatch(r'[A-Za-z0-9_-]{16,128}', csrf)
     process_home = home(pid) if official else None
     official = official and process_home == request.get('home') and process_home is not None
-    current = official and port == str(request.get('port')) and csrf == request.get('csrfToken') and before[0] == request['ownerPid']
+    advertised = official and port == str(request.get('port')) and csrf == request.get('csrfToken')
+    current = advertised and before[0] == request['ownerPid']
     parent_state = 'unknown'
     try:
         stat(before[0]); parent_state = 'alive'
@@ -59,7 +60,7 @@ def inspect(pid, request, boot_id):
     with open(base + '/cmdline', 'rb') as f: after = f.read(131073)
     if before != stat(pid) or uid != os.stat(base).st_uid or executable != os.readlink(base + '/exe') or raw != after or boot_id != boot() or process_home is not None and home(pid) != process_home: raise ValueError()
     proof_hash = hashlib.sha256(raw + b'\0HOME=' + (process_home or '').encode('utf-8')).hexdigest()
-    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official else 'unverified', 'parentState': parent_state, 'startedAt': started}
+    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official and not advertised else 'unverified', 'parentState': parent_state, 'startedAt': started}
 
 def bind(target, request):
     fd = os.pidfd_open(target['pid'], 0)

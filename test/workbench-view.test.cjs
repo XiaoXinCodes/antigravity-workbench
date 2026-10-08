@@ -19,6 +19,16 @@ test('conflict list shows PID, birth, ownership uncertainty and the intended swi
  html=renderWorkbench(state({processConflicts:{...processConflicts,limitation:'platform',processes:[{...processConflicts.processes[0],canEnd:false}]}}),'nonce');assert.match(html,/暂不支持安全结束/);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection" disabled/);
  html=renderWorkbench(state({processConflicts:{phase:'clear',canContinue:true,processes:[]},processSwitchTarget:'target@example.test'}),'nonce');assert.match(html,/data-command="live.processContinue"/);
 });
+test('conflict actions explain Windows force and unavailable platform dependencies',()=>{
+ const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,endMode:'force'}]};
+ let html=renderWorkbench(state({processConflicts}),'nonce');
+ assert.match(html,/强制结束此后台/);
+ html=renderWorkbench(state({processConflicts,processSwitchTarget:'target@example.test'}),'nonce');assert.match(html,/强制结束此后台并切号/);
+ for(const [limitation,explanation] of [['windows-helper',/系统 PowerShell/],['helper',/python3/]]){
+  html=renderWorkbench(state({processConflicts:{...processConflicts,limitation,processes:[{...processConflicts.processes[0],canEnd:false}]}}),'nonce');
+  assert.match(html,explanation);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection" disabled/);
+ }
+});
 test('capture shares the add toolbar and saved is disabled only for a verified unique host identity',()=>{
  const base={accounts:[{...account,hostCurrent:true}],activeEmail:account.expectedEmail,activeVerifiedAt:new Date().toISOString(),currentLoginSave:'saved'};
  let html=renderWorkbench(state(base),'nonce');assert.match(html,/<div class="account-toolbar"[^>]*>[^]*?data-command="live.login"[^]*?data-command="live.capture" disabled[^]*?已保存[^]*?<\/div>/);

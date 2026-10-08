@@ -950,3 +950,15 @@ test('production copy exception rejects external or unidentified operation and r
   assert.equal(f.diag.getState().activeEmail,mode==='uncertain-operation'?'cold@example.test':undefined);assert.equal(f.diag.getState().pending,true);assert.equal(x.proofs(),1);assert.equal(x.captures(),1);assert.equal((await inspect()).state,'active');assert.ok(!f.events.includes('late-save'));
  });
 });
+
+test('Windows force mode gets one explicit forced-termination consent, without a normal-exit promise',async t=>{
+ const f=processRecoveryFixture(t),{t:tr}=require('../out/i18n');f.setRows(f.rows().map(row=>({...row,endMode:'force'})));
+ await f.call('switch',f.account.id);f.ui.answer=tr('officialProcess.forceConfirm');await f.call('processEnd','synthetic-process-selection');
+ assert.deepEqual(f.ends,['synthetic-process-selection']);assert.equal(f.events.filter(x=>x==='install').length,1);
+ const modal=f.warnings.filter(text=>/任务状态未知/.test(text));assert.equal(modal.length,1);assert.match(modal[0],/Windows.*直接强制结束/);assert.match(modal[0],/不会请求正常退出/);assert.doesNotMatch(modal[0],/四秒/);assert.match(modal[0],/target@example.test/);
+});
+test('account replacement during termination confirmation invalidates the consent before ending',async t=>{
+ const f=processRecoveryFixture(t),{t:tr}=require('../out/i18n');await f.call('switch',f.account.id);
+ Object.defineProperty(f.ui,'answer',{get(){f.state.set('live-switch.accounts.v1',[{...f.account,expectedEmail:'replaced-during-confirmation@example.test'}]);return tr('officialProcess.endConfirm');}});
+ await f.call('processEnd','synthetic-process-selection');assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
+});

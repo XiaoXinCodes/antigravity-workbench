@@ -53,8 +53,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - run: npm run package
-      - run: python scripts/verify-release.py artifacts/antigravity-workbench-0.1.3.vsix
-      - run: node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.3.vsix
+      - run: python scripts/verify-release.py artifacts/antigravity-workbench-0.1.4.vsix
+      - run: node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.4.vsix
       - uses: actions/upload-artifact@v4
         with:
           name: antigravity-workbench-vsix-${{ runner.os }}

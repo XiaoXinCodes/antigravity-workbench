@@ -17,6 +17,7 @@ raw = ('\0'.join(args) + '\0').encode()
 target = dict(pid=pid, parentPid=parent, startTicks=birth, bootId=boot_id, commandHash=hashlib.sha256(raw + b'\0HOME=/synthetic-home').hexdigest(), kind='unowned-hub', parentState='alive', canEnd=True)
 request = dict(operation='scan' if case == 'scan' else 'end', executable=args[0], home='/synthetic-home', ownerPid=701, port=32123, csrfToken='synthetic-current-capability', target=target)
 if case == 'hash-changed': target['commandHash'] = 'f'*64
+if case == 'current-capability-wrong-parent': request['port'], request['csrfToken'] = 32124, 'synthetic-only-capability'
 sent, closed, opened, attempts, clock, reused, acknowledgements = [], [], [], [], [0.0], [False], [0]
 def open_fake(filename, mode='r', *a, **kw):
     if filename == '/proc/sys/kernel/random/boot_id': return io.StringIO(boot_id + '\n')
@@ -89,7 +90,7 @@ test('normal exit uses only TERM on the held pidfd; timeout escalation uses that
   let r = run('normal'); assert.equal(r.result.result, 'exited'); assert.deepEqual(r.signals, [15]); assert.deepEqual(r.closed, [200]);
   r = run('force'); assert.equal(r.result.result, 'forced'); assert.deepEqual(r.signals, [15, 9]); assert.deepEqual(r.closed, [200]); assert.deepEqual(r.stages, ['term', 'force']);
 });
-for (const name of ['reused-at-bind', 'hash-changed', 'duplicate-flag', 'wrong-uid', 'wrong-executable', 'different-home', 'home-inaccessible', 'home-missing', 'home-duplicate', 'home-oversized']) test(`${name} never sends a signal`, { skip: !available }, () => {
+for (const name of ['reused-at-bind', 'hash-changed', 'duplicate-flag', 'wrong-uid', 'wrong-executable', 'different-home', 'home-inaccessible', 'home-missing', 'home-duplicate', 'home-oversized', 'current-capability-wrong-parent']) test(`${name} never sends a signal`, { skip: !available }, () => {
   const r = run(name); assert.equal(r.result.code, 'OFFICIAL_PROCESS_SELECTION_STALE'); assert.deepEqual(r.signals, []); assert.deepEqual(r.closed, [200]);
 });
 test('already exited target is benign; permission and timeout are precise failures', { skip: !available }, () => {
