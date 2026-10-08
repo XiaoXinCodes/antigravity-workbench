@@ -17,7 +17,7 @@ raw = ('\0'.join(args) + '\0').encode()
 target = dict(pid=pid, parentPid=parent, startTicks=birth, bootId=boot_id, commandHash=hashlib.sha256(raw + b'\0HOME=/synthetic-home').hexdigest(), kind='unowned-hub', parentState='alive', canEnd=True)
 request = dict(operation='scan' if case == 'scan' else 'end', executable=args[0], home='/synthetic-home', ownerPid=701, port=32123, csrfToken='synthetic-current-capability', target=target)
 if case == 'hash-changed': target['commandHash'] = 'f'*64
-sent, closed, clock, reused, acknowledged = [], [], [0.0], [False], [False]
+sent, closed, opened, attempts, clock, reused, acknowledgements = [], [], [], [], [0.0], [False], [0]
 def open_fake(filename, mode='r', *a, **kw):
     if filename == '/proc/sys/kernel/random/boot_id': return io.StringIO(boot_id + '\n')
     if filename == '/proc/stat': return io.StringIO('btime 1700000000\n')
@@ -41,36 +41,45 @@ def open_fake(filename, mode='r', *a, **kw):
     raise AssertionError('unexpected filesystem read')
 def pidfd_fake(pid_value, flags):
     assert pid_value == pid and flags == 0
+    opened.append(pid_value)
     if case == 'gone': raise ProcessLookupError()
     if case == 'reused-at-bind': reused[0] = True
     return 200
 def select_fake(read, write, error, timeout):
-    if 200 not in read: return ([sys.stdin] if case == 'cancel-before' or case == 'cancel-after-ack' and acknowledged[0] else [], [], [])
+    if 200 not in read:
+        # Transition after the final /proc inspection, immediately before send.
+        if case == 'reused-before-term-signal' and acknowledgements[0] == 1 or case == 'reused-before-force-signal' and acknowledgements[0] == 2: reused[0] = True
+        return ([sys.stdin] if case == 'cancel-before' or case == 'cancel-after-ack' and acknowledgements[0] else [], [], [])
     if case == 'cancel-before' and sys.stdin in read: return ([sys.stdin], [], [])
     if case == 'cancel-after-term' and sent and sys.stdin in read: return ([sys.stdin], [], [])
     exited = sent and (case in ('normal', 'scan') or sent[-1] == int(signal.SIGKILL)) and case != 'timeout'
     return ([200] if exited else [], [], [])
 def send_fake(fd, sig):
     assert fd == 200
+    attempts.append([fd, int(sig)])
+    # Kernel pidfd semantics: the held fd still refers to the exited original,
+    # even though /proc/<numeric PID> now names its replacement.
+    if reused[0]: raise ProcessLookupError()
     if case == 'denied': raise PermissionError()
     sent.append(int(sig))
+def numeric_kill_forbidden(*a): raise AssertionError('numeric PID signal is forbidden')
 def now_fake(): clock[0] += 1; return clock[0]
 class HostInput(io.StringIO):
     def readline(self, size=-1):
         value = super().readline(size)
-        if value == 'continue\n': acknowledged[0] = True
+        if value == 'continue\n': acknowledgements[0] += 1
         return value
 stdin = HostInput(json.dumps(request) + '\n' + ('' if case == 'no-authorization' else 'continue\ncontinue\n'))
-with patch('builtins.open', open_fake), patch('os.stat', lambda p: types.SimpleNamespace(st_uid=1000 if case != 'wrong-uid' else 1001)), patch('os.getuid', lambda: 1000), patch('os.readlink', lambda p: request['executable'] if case != 'wrong-executable' else '/other/agy'), patch('os.listdir', lambda p: ['710']), patch('os.sysconf', lambda k: 100), patch('os.pidfd_open', pidfd_fake, create=True), patch('os.close', lambda fd: closed.append(fd)), patch('signal.pidfd_send_signal', send_fake, create=True), patch('select.select', select_fake), patch('time.monotonic', now_fake), patch('sys.stdin', stdin):
+with patch('builtins.open', open_fake), patch('os.stat', lambda p: types.SimpleNamespace(st_uid=1000 if case != 'wrong-uid' else 1001)), patch('os.getuid', lambda: 1000), patch('os.readlink', lambda p: request['executable'] if case != 'wrong-executable' else '/other/agy'), patch('os.listdir', lambda p: ['710']), patch('os.sysconf', lambda k: 100), patch('os.pidfd_open', pidfd_fake, create=True), patch('os.close', lambda fd: closed.append(fd)), patch('os.kill', numeric_kill_forbidden), patch('signal.pidfd_send_signal', send_fake, create=True), patch('select.select', select_fake), patch('time.monotonic', now_fake), patch('sys.stdin', stdin):
     exec(source, {})
-print(json.dumps({'signals': sent, 'closed': closed}))
+print(json.dumps({'signals': sent, 'closed': closed, 'opened': opened, 'attempts': attempts}))
 `;
 function run(caseName) {
   const result = spawnSync('/usr/bin/python3', ['-I', '-c', harness], { input: JSON.stringify([LINUX_PROCESS_HELPER, caseName]), encoding: 'utf8', timeout: 5000 });
   assert.equal(result.status, 0, result.stderr);
   const values = result.stdout.trim().split('\n').map(line => JSON.parse(line));
   const metadata = values.pop(); const stages = values.filter(value => value.authorize).map(value => value.authorize);
-  return { result: values.find(value => !value.authorize), stages, signals: metadata.signals, closed: metadata.closed, output: result.stdout };
+  return { result: values.find(value => !value.authorize), stages, ...metadata, output: result.stdout };
 }
 test('shipped helper scans and verifies a foreign Hub without exposing argv or capability', { skip: !available }, () => {
   const r = run('scan'); assert.equal(r.result.processes[0].kind, 'unowned-hub'); assert.equal(r.result.processes[0].canEnd, true); assert.equal(r.result.processes[0].parentState, 'alive');
@@ -101,4 +110,16 @@ test('missing host authorization sends no signal; changed HOME before force stop
 
 test('host cancellation after acknowledgement and before signal still prevents termination', { skip: !available }, () => {
   const r = run('cancel-after-ack'); assert.equal(r.result.code, 'OFFICIAL_PROCESS_END_CANCELLED'); assert.deepEqual(r.signals, []);
+});
+
+for (const [name, attempts, delivered] of [
+  ['reused-before-term-signal', [[200, 15]], []],
+  ['reused-before-force-signal', [[200, 15], [200, 9]], [15]],
+]) test(`${name} cannot signal the replacement or reopen its PID`, { skip: !available }, () => {
+  const r = run(name);
+  assert.equal(r.result.result, 'gone');
+  assert.deepEqual(r.opened, [710], 'termination binds once, never again for force');
+  assert.deepEqual(r.attempts, attempts, 'both stages use the identical fd');
+  assert.deepEqual(r.signals, delivered, 'replacement receives no signal');
+  assert.deepEqual(r.closed, [200]);
 });
