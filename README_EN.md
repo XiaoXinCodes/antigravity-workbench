@@ -11,7 +11,7 @@
 <p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README.md">简体中文</a> · English</p>
 
 <p align="center">
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">Download and install</a> ·
+  <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">Install from Marketplace</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/docs/GETTING_STARTED.en.md">Getting started</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/CHANGELOG_EN.md">Changelog</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">Report an issue</a>
@@ -27,13 +27,22 @@ This project is independently developed and is not affiliated with, authorized b
 
 **Before installing:** VS Code 1.95 or later, with an available Google Antigravity extension and login. Both extensions must run on the same local or WSL host.
 
-1. Open the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) and download the `.vsix` attachment.
-2. In the target VS Code window, run **Extensions: Install from VSIX…** from the Command Palette and select the downloaded file.
-3. Reload when prompted and open **Antigravity Workbench** in the activity bar. With WSL, install into the host where Google Antigravity runs.
+1. Search for **Antigravity Workbench** in VS Code's Extensions view. Verify publisher **XiaoXinCodes** and extension ID `xiaoxincodes.antigravity-account-manager`.
+2. Select **Install**. You can also open the [VS Code Marketplace listing](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) and select **Install** to install in VS Code.
+3. Reload when prompted and open **Antigravity Workbench** in the activity bar.
+
+**WSL workspaces:** In a VS Code window connected to WSL, check where Google Antigravity actually runs. If the official extension runs in WSL, select **Install in WSL: &lt;distribution&gt;** on the extension page to install Workbench on that same remote host. If the official extension runs locally, keep both extensions on the local host.
 
 Installation and upgrades do not require clearing saved accounts, official login files, sessions or images. Release notes, source and checksum files are in the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest); see the [changelog](CHANGELOG_EN.md) for version changes.
 
 Windows, macOS and Linux local extension hosts and WSL Linux workspace hosts are supported. SSH and container hosts have not been verified. Three-platform automated checks do not establish that every real-account scenario works; see [compatibility](docs/COMPATIBILITY.md) (Chinese).
+
+<details>
+<summary>Offline alternative: install from VSIX</summary>
+
+If Marketplace is unavailable, download the `.vsix` attachment from the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest). In the target VS Code window, run **Extensions: Install from VSIX…** from the Command Palette, select the file and reload when prompted. With WSL, still check the actual installation host.
+
+</details>
 
 ## What you can do
 
@@ -67,7 +76,7 @@ Drafts and task cards stay on the current host and return after reload. Use reco
 
 ## Feature walkthrough
 
-Screenshots show actual Chromium / VS Code rendering with fictional accounts, mock quota and local demonstration images. No real account login or image-generation request was made. They illustrate the source interface; installable packages are available from the latest Release.
+Screenshots show actual Chromium / VS Code rendering with fictional accounts, mock quota and local demonstration images. No real account login or image-generation request was made. They illustrate the source interface; use Marketplace for everyday installation and updates.
 
 ### Accounts and quota
 
@@ -103,7 +112,8 @@ Command Palette entries, view titles and settings descriptions are static contri
 | Does selecting another image account switch the official login? | No. Independent selection affects the image task only; confirmation fixes the selected account and model. |
 | What if switching is unavailable or WSL cannot find my accounts? | Check both extensions' hosts and any pending recovery operation, then follow the recovery prompt. Storage is separate per host. See [troubleshooting](docs/TROUBLESHOOTING.md) (Chinese). |
 | Will generation resume automatically after reload? | No. Drafts and task cards return, but interrupted tasks retain their status. Resubmission requires your explicit action. |
-| Can I install from Marketplace? | Download the VSIX from the latest Release link above, then choose Install from VSIX... in VS Code. Marketplace installation depends on the listing's actual availability. |
+| How do I install and update? | Search for Antigravity Workbench in VS Code's Extensions view, verify publisher XiaoXinCodes and extension ID `xiaoxincodes.antigravity-account-manager`, then select Install. You can also open the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager). Use the Extensions view for updates; no manual VSIX download is needed. |
+| Why does the Marketplace description differ from the repository README? | The Marketplace description updates with the uploaded VSIX. Committing the repository README does not automatically update that description. |
 
 ## Privacy and usage boundaries
 

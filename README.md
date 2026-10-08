@@ -11,7 +11,7 @@
 <p align="center">简体中文 · <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README_EN.md">English</a></p>
 
 <p align="center">
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">下载安装</a> ·
+  <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">从扩展市场安装</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/docs/README.md">使用文档</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/CHANGELOG.md">更新日志</a> ·
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">提交问题</a>
@@ -27,13 +27,22 @@ Workbench 把多账号管理、服务端额度查询和图片工作室放进同�
 
 **准备：** VS Code 1.95 或更高版本，以及可用的 Google Antigravity 扩展和登录。两个扩展应运行在同一本机或 WSL 宿主。
 
-1. 打开 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)，从附件中下载 `.vsix` 安装包。
-2. 在目标 VS Code 窗口的命令面板执行 **Extensions: Install from VSIX…**，选择下载的文件。
-3. 按提示重载，在活动栏打开 **Antigravity Workbench**。WSL 用户请确认安装到 Google Antigravity 所在的 WSL 宿主。
+1. 在 VS Code 扩展面板搜索 **Antigravity Workbench**，核对发布者 **XiaoXinCodes**、扩展 ID `xiaoxincodes.antigravity-account-manager`。
+2. 点击 **安装**；也可以打开 [VS Code Marketplace 页面](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager)，点击 **Install** 在 VS Code 中安装。
+3. 按提示重载，在活动栏打开 **Antigravity Workbench**。
+
+**WSL 工作区：** 在连接 WSL 的 VS Code 窗口中，核对 Google Antigravity 的实际运行宿主。官方扩展运行于 WSL 时，在扩展页面选择 **安装到 WSL:〈发行版〉**，将 Workbench 安装到同一远程宿主；官方扩展运行于本机时，两者均保留在本机。
 
 安装与升级不要求清空已有账号、官方登录文件、会话或图片。发行说明、源码和校验文件均在 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)，版本变化见 [更新日志](CHANGELOG.md)。
 
 适配 Windows、macOS、Linux 本机扩展宿主与 WSL Linux 工作区宿主。SSH 和容器宿主尚未核验；三平台自动化检查不代表所有真实账号场景均已验证，详见 [兼容性](docs/COMPATIBILITY.md)。
+
+<details>
+<summary>离线备用：从 VSIX 安装</summary>
+
+无法使用扩展市场时，可从 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) 下载 `.vsix` 附件，在目标 VS Code 窗口的命令面板执行 **Extensions: Install from VSIX…**，选择文件并按提示重载。WSL 用户仍需核对实际安装宿主。
+
+</details>
 
 ## 可以做什么
 
@@ -67,7 +76,7 @@ Workbench 把多账号管理、服务端额度查询和图片工作室放进同�
 
 ## 功能演示
 
-截图来自实际 Chromium / VS Code 渲染，使用虚构账号、模拟额度和本地演示图；没有登录真实账号或发送生图请求。截图展示源码中的界面，安装包以最新 Release 为准。
+截图来自实际 Chromium / VS Code 渲染，使用虚构账号、模拟额度和本地演示图；没有登录真实账号或发送生图请求。截图展示源码中的界面，日常安装与更新请使用扩展市场。
 
 ### 账号与额度
 
@@ -103,7 +112,8 @@ Workbench 把多账号管理、服务端额度查询和图片工作室放进同�
 | 选择另一生图账号会切换官方登录吗？ | 不会。图片页独立选择只影响该图片任务，确认时固定所选账号与模型。 |
 | 切换不可用或 WSL 找不到账号怎么办？ | 先核对两个扩展的宿主和是否有待恢复操作；按界面恢复提示处理。保存位置按宿主独立。见 [故障排查](docs/TROUBLESHOOTING.md)。 |
 | 重载后会自动继续生图吗？ | 不会。草稿与任务卡会恢复，中断任务保留状态，重新提交需你明确操作。 |
-| 可以从 Marketplace 安装吗？ | 可以使用上方“最新 Release”下载 VSIX，在 VS Code 中选择“从 VSIX 安装…”进行安装。Marketplace 安装以实际页面可用性为准。 |
+| 如何安装和更新？ | 在 VS Code 扩展面板搜索 Antigravity Workbench，核对发布者 XiaoXinCodes 和扩展 ID `xiaoxincodes.antigravity-account-manager`，点击安装；也可打开 [Marketplace 页面](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager)。后续在扩展面板更新，无需手动下载 VSIX。 |
+| 为什么市场页面的介绍与仓库 README 不同？ | Marketplace 介绍随上传的 VSIX 更新；提交仓库 README 不会自动更新市场介绍。 |
 
 ## 隐私与使用边界
 
