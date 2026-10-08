@@ -213,7 +213,8 @@ async function exportFilesystemFixture(t, options = {}) {
   t.mock.method(fs, 'lstat', async (name, ...args) => {
     if (name === directory && ++directoryStats === 2 && options.beforeDirectoryCheck) await options.beforeDirectoryCheck(filename);
     const stat = await realLstat(name, ...args);
-    if (name === directory && options.directoryChange && directoryStats === 2) stat.ino += 1;
+    // Windows inode values may exceed Number's integer precision; +1 can be unchanged.
+    if (name === directory && options.directoryChange && directoryStats === 2) stat.ino = stat.ino === 0 ? 1 : 0;
     return stat;
   });
   t.mock.method(fs, 'open', async (name, ...args) => {
