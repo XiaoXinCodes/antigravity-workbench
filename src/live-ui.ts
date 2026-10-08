@@ -10,7 +10,7 @@ import { realpathSync, constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { LiveLocks } from './live-lock';
-import { querySavedAccountQuota, type SavedAccountQuotaOptions } from './account-quota';
+import { querySavedAccountQuota, type SavedAccountQuotaOptions, type ImportedAccountQuota } from './account-quota';
 import { createConsumerRefreshProvider } from './account-quota-client';
 import { acceptanceEvents, acceptanceReport, type AcceptanceAction } from './acceptance-report';
 import { createRequire } from 'node:module';
@@ -360,6 +360,7 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     MIGRATION_TARGET_SIZE_LIMIT: tr("liveUi.d7730e63bf"),
     MIGRATION_RECOVERY_INVALID: tr("liveUi.90fd73fbf6"),
     MIGRATION_ROLLBACK_REQUIRED: tr("liveUi.1aed0f848c"),
+    MIGRATION_TARGET_REQUIRED: tr('liveUi.importTargetRequired'),
     MIGRATION_INDEX_CHANGED: tr("liveUi.231981ec3f"),
     MIGRATION_IMPORT_FAILED: tr("liveUi.b48e1462eb"),
     MIGRATION_FILE_READ_FAILED: tr("liveUi.142875b26c"),
@@ -422,7 +423,7 @@ function migrationPasswordError(value: string): string | null {
   return Array.from(value).length >= 12 && Buffer.byteLength(value, 'utf8') <= 1024 ? null : tr("liveUi.7376751be7");
 }
 type LifecycleResolver = (requireRunning?: boolean, startForLogin?: boolean) => Promise<LoginLifecycle>;
-export interface LiveUiDependencies { service?: LiveSwitchService; locks?: LiveLocks; lifecycle?: LifecycleResolver; processCount?: typeof processCount; changed?: () => void; savedQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<HubProof>; currentQuota?: (expectedEmail: string, signal?: AbortSignal) => Promise<HubProof>; currentIdentity?: (signal?: AbortSignal) => Promise<HubProof | undefined>; verificationClock?: VerificationClock; processRecovery?: Pick<OfficialProcessRecovery, 'scan' | 'end' | 'invalidate'> }
+export interface LiveUiDependencies { service?: LiveSwitchService; locks?: LiveLocks; lifecycle?: LifecycleResolver; processCount?: typeof processCount; changed?: () => void; savedQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<HubProof>; importQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<ImportedAccountQuota>; currentQuota?: (expectedEmail: string, signal?: AbortSignal) => Promise<HubProof>; currentIdentity?: (signal?: AbortSignal) => Promise<HubProof | undefined>; verificationClock?: VerificationClock; processRecovery?: Pick<OfficialProcessRecovery, 'scan' | 'end' | 'invalidate'> }
 /** Quota stays in memory and is attached only to the returned identity on this host. */
 export interface LiveQuotaSnapshot { email: string; observedAt: string; source: 'server' | 'hub-status'; buckets: HubProof['buckets'] }
 export interface LiveQuotaState { phase: 'loading' | 'ready' | 'error' | 'mismatch'; snapshot?: LiveQuotaSnapshot; message?: string }
@@ -562,8 +563,9 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : undefined;
   };
   const identityHash = (email: string): string => createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
+  let importAbort: AbortController | undefined;
   let quotaAbort: AbortController | undefined;
-  context.subscriptions.push({ dispose: () => { disposed = true; verification.dispose(); clearTimeout(identityTimer); identityAbort?.abort(); loginAbort?.abort(); quotaAbort?.abort(); processAbort?.abort(); processRecovery?.invalidate(); blockedSwitch = undefined; } });
+  context.subscriptions.push({ dispose: () => { disposed = true; verification.dispose(); clearTimeout(identityTimer); identityAbort?.abort(); loginAbort?.abort(); quotaAbort?.abort(); importAbort?.abort(); processAbort?.abort(); processRecovery?.invalidate(); blockedSwitch = undefined; } });
   const items = (): SavedLogin[] => validIndex(context.globalState.get(INDEX, []));
   const index = { read: items, write: async (accounts: SavedLogin[]): Promise<void> => { await context.globalState.update(INDEX, accounts); } };
   const recoveryDescription = (): string => {
@@ -1007,7 +1009,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         if (officialActivationPending) throw new LiveError('OFFICIAL_HUB_NOT_READY');
         if (unlocked) { try { completed = await fn(argument) === true; } finally { if (!disposed) await refreshRecovery(false, diagnostic); } } else await locks.withOperation(async () => {
           // Finish or roll back a crashed import before another credential operation.
-          if (name !== 'quota') {
+          if (name !== 'quota' && name !== 'export') {
             const journal = await service!.journal();
             if (['processEnd', 'processContinue'].includes(name) && (journal || await locks.hasRecovery())) throw new LiveError('RECOVERY_PENDING');
             await locks.reconcileRecovery?.(journal?.id ?? null);
@@ -1015,14 +1017,15 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
             await service!.recoverLogin?.(index);
           }
           try { completed = await fn(argument) === true; }
-          finally { if (name !== 'quota' && !disposed) await refreshRecovery(false, diagnostic); }
+          finally { if (name !== 'quota' && name !== 'export' && !disposed) await refreshRecovery(false, diagnostic); }
         }); diagnostic?.end(completed ? 'completed' : 'cancelled'); }
       catch (e) {
         if ((name === 'processEnd' || processErrors.has(debugErrorCode(e))) && !disposed) { try { await scanProcesses(); } catch { /* Keep the primary transaction/termination failure. */ } }
         await rememberFailure(e);
         const debugData = debugErrorData(e); diagnostic?.end(debugFailureOutcome(debugData.code), debugData);
         const code = e instanceof LiveError ? e.code : 'LOCAL_OPERATION_FAILED';
-        errorMessage = liveErrorMessage(code, nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName));
+        errorMessage = name === 'import' && code === 'ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN' ? tr('liveUi.importUnknown') : liveErrorMessage(code, nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName));
+        if (name === 'import' && ['ACCOUNT_QUOTA_REFRESH_PENDING', 'ACCOUNT_QUOTA_SECURE_SAVE_FAILED', 'ACCOUNT_QUOTA_REFRESH_SAVE_FAILED'].includes(code)) errorMessage += ' ' + tr('liveUi.importRetry');
         const retainedFailure = readLastAccountFailure(operationFailure);
         if (retainedFailure) errorMessage += `（${retainedFailure.code}）`;
         if (name === 'quota') {
@@ -1042,7 +1045,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       } finally {
       await finishRequestedRestart();
       scheduleVerification();
-      releaseAccountChange?.(); diagnostic?.end('cancelled'); if (debugSpan === diagnostic) debugSpan = undefined; if (name === 'quota') quotaAbort = undefined; busy = false; if (!disposed) { await refreshCurrentLoginSave(); if (!activeEmail) scheduleIdentity(); dependencies.changed?.(); }
+      releaseAccountChange?.(); diagnostic?.end('cancelled'); if (debugSpan === diagnostic) debugSpan = undefined; if (name === 'quota') quotaAbort = undefined; if (name === 'import') importAbort = undefined; busy = false; if (!disposed) { await refreshCurrentLoginSave(); if (!activeEmail) scheduleIdentity(); dependencies.changed?.(); }
       }
     }));
   };
@@ -1093,20 +1096,52 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     const positions = [...new Set(selected.map(item => item.position))];
     if (positions.some(position => !Number.isInteger(position) || position < 0 || position >= archive.accounts.length)) throw new LiveError('MIGRATION_ARCHIVE_INVALID');
     let accounts = positions.map(position => archive.accounts[position]!);
-    const currentEmails = new Set(items().filter(account => service!.hostIsCurrent(account)).map(account => account.expectedEmail.trim().toLowerCase()));
-    const conflictCount = accounts.filter(account => currentEmails.has(account.expectedEmail.trim().toLowerCase())).length;
+    const sameEmail = (email: string): SavedLogin[] => items().filter(account => service!.hostIsCurrent(account) && account.expectedEmail.trim().toLowerCase() === email.trim().toLowerCase());
+    const conflictCount = accounts.filter(account => sameEmail(account.expectedEmail).length).length;
+    const replace: Record<string, string> = {};
     if (conflictCount) {
-      const resolution = await vscode.window.showQuickPick([{ label: tr("liveUi.08e57d9e36"), description: tr("liveUi.aa62025fd7"), policy: 'skip' }, { label: tr("liveUi.8d05233cdb"), description: tr("liveUi.e70c56d75f"), policy: 'copy' }], { title: tr("liveUi.416aa9a482", { p0: conflictCount }), placeHolder: tr("liveUi.c57ab9795f"), ignoreFocusOut: true });
+      const resolution = await vscode.window.showQuickPick([{ label: tr("liveUi.08e57d9e36"), description: tr("liveUi.aa62025fd7"), policy: 'skip' }, { label: tr("liveUi.8d05233cdb"), description: tr("liveUi.e70c56d75f"), policy: 'replace' }], { title: tr("liveUi.416aa9a482", { p0: conflictCount }), placeHolder: tr("liveUi.c57ab9795f"), ignoreFocusOut: true });
       if (!resolution) return;
-      if (resolution.policy === 'skip') accounts = accounts.filter(account => !currentEmails.has(account.expectedEmail.trim().toLowerCase()));
-      else if (resolution.policy !== 'copy') throw new LiveError('MIGRATION_ARCHIVE_INVALID');
+      if (resolution.policy === 'skip') accounts = accounts.filter(account => !sameEmail(account.expectedEmail).length);
+      else if (resolution.policy === 'replace') {
+        for (const account of accounts) {
+          const matches = sameEmail(account.expectedEmail);
+          if (!matches.length) continue;
+          let target = matches[0]!;
+          if (matches.length > 1) {
+            const selectedTarget = await vscode.window.showQuickPick(matches.map(item => ({ label: item.label, description: item.expectedEmail, detail: `${item.capturedAt} · ${item.id}`, id: item.id })), { title: tr('liveUi.importTarget', { p0: account.expectedEmail }), ignoreFocusOut: true });
+            if (!selectedTarget) return;
+            const exact = matches.find(item => item.id === selectedTarget.id); if (!exact) throw new LiveError('MIGRATION_TARGET_REQUIRED'); target = exact;
+          }
+          replace[account.expectedEmail.trim().toLowerCase()] = target.id;
+        }
+      } else throw new LiveError('MIGRATION_ARCHIVE_INVALID');
     }
     if (!accounts.length) { void vscode.window.showInformationMessage(tr("liveUi.70b1915749")); return; }
-    if (items().length + accounts.length > 50) throw new LiveError('SAVED_ACCOUNT_LIMIT');
+    if (items().length + accounts.filter(account => !replace[account.expectedEmail.trim().toLowerCase()]).length > 50) throw new LiveError('SAVED_ACCOUNT_LIMIT');
     const consent = tr("liveUi.2b8bbc024d", { p0: accounts.length });
     if (await vscode.window.showWarningMessage(tr("liveUi.e5cb5a521a", { p0: hostLabel(context, vscode.env.remoteName), p1: accounts.length }), { modal: true }, consent) !== consent) return;
-    assertNativeHost(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName);
-    const imported = await service!.importAccounts(accounts, index);
+    const assertCurrent = async (): Promise<void> => {
+      if (disposed || importAbort?.signal.aborted) throw new LiveError('QUOTA_QUERY_CANCELLED');
+      assertNativeHost(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName);
+    };
+    importAbort = new AbortController();
+    await assertCurrent();
+    for (const id of Object.values(replace)) quotas.delete(id);
+    const imported = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: tr('liveUi.importChecking'), cancellable: true }, async (_progress, token) => {
+      const cancel = token.onCancellationRequested(() => importAbort?.abort());
+      try {
+        if (token.isCancellationRequested) importAbort!.abort();
+        return await service!.importAccounts(accounts, index, { replace, signal: importAbort!.signal, assertCurrent,
+          ...(dependencies.importQuota ? { query: dependencies.importQuota } : {}),
+          phase: phase => { if (disposed) return; status = phase === 'refreshing' ? tr("liveUi.3902f9e3d5") : phase === 'saving' ? tr("liveUi.a7f79e9176") : tr('liveUi.importChecking'); dependencies.changed?.(); },
+          quota: (account, result) => {
+            if (disposed) return;
+            quotas.set(account.id, result.quotaError ? { phase: 'error', message: liveErrorMessage(result.quotaError) } : { phase: 'ready', snapshot: { email: result.proof.email, observedAt: result.proof.observedAt, source: 'server', buckets: result.proof.buckets.map(bucket => ({ ...bucket })) } });
+          },
+        });
+      } finally { cancel.dispose(); }
+    });
     status = tr("liveUi.3aa3e74b6e", { p0: imported.length });
     void vscode.window.showInformationMessage(status);
     return true;
@@ -1254,7 +1289,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   const switchAccount = async (argument: unknown, alreadyConfirmed = false, fingerprint?: string): Promise<boolean | void> => {
     if (!alreadyConfirmed) blockedSwitch = undefined;
     const direct = accountArgument(argument, items());
-    const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: account.label, description: account.expectedEmail, detail: tr("liveUi.3e646493ab", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.8f858aa51c") : account.identitySource === 'hub' ? tr("liveUi.ca7dd652b2") : tr("liveUi.905e17f65c") }), account })), { title: tr("liveUi.13e45587a6") });
+    const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: account.label, description: account.expectedEmail, detail: tr("liveUi.3e646493ab", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.8f858aa51c") : account.migrationState === 'verified' ? tr('workbenchView.77a1864d31') : account.identitySource === 'hub' ? tr("liveUi.ca7dd652b2") : tr("liveUi.905e17f65c") }), account })), { title: tr("liveUi.13e45587a6") });
     if (!selected) { if (!items().length) void vscode.window.showInformationMessage(tr("liveUi.2fdb70d003")); return; }
     const switchConsent = tr("liveUi.e0351ba254");
     if (!alreadyConfirmed && await vscode.window.showWarningMessage(tr("liveUi.9dc41427e9", { p0: selected.account.expectedEmail, p1: selected.account.migrationState === 'pending' ? tr("liveUi.61d34541c9") : '' }), { modal: true }, switchConsent) !== switchConsent) return;
@@ -1498,7 +1533,8 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       // official identity remains logged in. A later identity change clears it.
       await context.globalState.update(removedIdentityKey(), replacement ? undefined : identityHash(selected.account.expectedEmail));
     }
-    const secretKeys = [`live-switch.account.v1.${selected.account.id}`, `live-switch.quota-refresh.v1.${selected.account.id}`, `live-switch.quota-pending.v1.${selected.account.id}`];
+    await service!.removeImportCandidates?.(selected.account.id);
+    const secretKeys = [`live-switch.account.v1.${selected.account.id}`, `live-switch.quota-refresh.v1.${selected.account.id}`, `live-switch.quota-pending.v1.${selected.account.id}`, `live-switch.quota-unknown.v1.${selected.account.id}`];
     for (const key of secretKeys) await context.secrets.delete(key);
     for (const key of secretKeys) if (await context.secrets.get(key) !== undefined) throw new LiveError('SECURE_REMOVE_NOT_VERIFIED');
     await context.globalState.update(INDEX, items().filter(a => a.id !== selected.account.id));

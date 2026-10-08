@@ -378,7 +378,7 @@ test('WSL capture exports a scope-free encrypted archive that imports, switches 
     const targetSlots=await createOfficialTokenSlots(targetHome,'linux',targetMode==='file'?{WSL_DISTRO_NAME:'synthetic'}:{},{readKernelRelease:async()=> '6.8-generic',fileOnlyGuard:async()=>true,createKeyring:targetMode==='file'?noKeyring:()=>({read:async()=>native,write:async value=>{writes++;native=value}})},'mutation');
     const original=await targetSlots.read(),target=new LiveSwitchService(vault(),targetSlots,`synthetic-${targetMode}-host`);
     const targetIndex={read:()=>index,write:async value=>{index=value}};
-    const imported=await target.importAccounts(decrypted.accounts,targetIndex);assert.equal(writes,0);assert.deepEqual(await targetSlots.read(),original);
+    const imported=await target.importAccounts(decrypted.accounts,targetIndex,{query:async account=>({subject:'synthetic-subject',proof:{email:account.expectedEmail,authValid:true,quotaSource:'server',generation:'synthetic',observedAt:new Date().toISOString(),buckets:[]}})});assert.equal(writes,0);assert.deepEqual(await targetSlots.read(),original);
     let reloads=0;const lifecycle={generation:'old',stop:async()=>{},reload:async()=>{lifecycle.generation='new-'+(++reloads)},proof:async()=>({authValid:true,generation:lifecycle.generation,email:(await targetSlots.read()).keyring===raw||(await targetSlots.read()).file===raw?email:'original@example.test',quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]}),signedOutProof:async()=>({generation:lifecycle.generation,authValid:false})};
     await target.install(imported[0].id,lifecycle);
     assert.deepEqual(await targetSlots.read(),targetMode==='file'?{keyring:null,file:raw,keyringState:'unobserved'}:{keyring:raw,file:raw});

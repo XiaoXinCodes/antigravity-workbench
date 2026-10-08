@@ -14,7 +14,7 @@ Workbench and Google Antigravity must run on the same host. In WSL, install the 
 
 Adding and switching are separate operations. Switching interrupts active tasks in the official component; finish those tasks first. Incomplete operations retain recovery actions and backups. Do not manually delete credentials or internal locks. Closing an authorization page does not revoke authorization you already granted to Google.
 
-Use **Export accounts / Import accounts** with a separate strong password to migrate saved logins. Import does not replace the current login; imported copies require verification after their first switch. Further technical details are available in [encrypted migration](ACCOUNT_MIGRATION.md).
+Use **Export accounts / Import accounts** with a separate strong password to migrate saved logins. Import verifies candidate identity and quota automatically. Matching saved accounts can be replaced or skipped; the current official login stays unchanged. Further technical details are available in [encrypted migration](ACCOUNT_MIGRATION.md).
 
 ## Images
 

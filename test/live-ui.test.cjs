@@ -336,7 +336,7 @@ test('per-account remove requires confirmation, deletes only selected SecretStor
  const f=setup(),deleted=[];f.context.secrets.delete=async key=>deleted.push(key);f.state.set('live-switch.accounts.v1',[saved]);
  await f.commands.get('antigravityAccounts.live.remove')(saved.id);assert.deepEqual(deleted,[]);
  f.ui.answer='删除保存副本';await f.commands.get('antigravityAccounts.live.remove')(saved.id);
- assert.deepEqual(deleted,['live-switch.account.v1.'+saved.id,'live-switch.quota-refresh.v1.'+saved.id,'live-switch.quota-pending.v1.'+saved.id]);assert.deepEqual(f.diag.getAccounts(),[]);assert.match(f.diag.getState().status,/已删除/);
+ assert.deepEqual(deleted,['live-switch.account.v1.'+saved.id,'live-switch.quota-refresh.v1.'+saved.id,'live-switch.quota-pending.v1.'+saved.id,'live-switch.quota-unknown.v1.'+saved.id]);assert.deepEqual(f.diag.getAccounts(),[]);assert.match(f.diag.getState().status,/已删除/);
 });
 test('structured busy state spans confirmation and clears after dismissal',async()=>{
  const f=setup();let release;f.locks.withOperation=async fn=>{await new Promise(r=>release=r);return fn()};
@@ -407,7 +407,7 @@ test('passive readiness reports missing dependency and remote official host with
 });
 test('saved-copy removal remains possible with no official extension installed',async()=>{
  const f=setup();assert.equal(f.diag.getState().official.available,false);f.state.set('live-switch.accounts.v1',[saved]);let deleted;
- f.context.secrets.delete=async key=>{deleted=key};f.ui.answer='删除保存副本';await f.commands.get('antigravityAccounts.live.remove')(saved.id);assert.equal(deleted,'live-switch.quota-pending.v1.'+saved.id);
+ f.context.secrets.delete=async key=>{deleted=key};f.ui.answer='删除保存副本';await f.commands.get('antigravityAccounts.live.remove')(saved.id);assert.equal(deleted,'live-switch.quota-unknown.v1.'+saved.id);
 });
 test('entrypoint validation permits changed code and unknown releases while bounding local paths',async t=>{
  const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),contract=require('../out/official-contract');

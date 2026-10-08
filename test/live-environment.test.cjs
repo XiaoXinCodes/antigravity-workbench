@@ -349,7 +349,7 @@ test('file-scoped login cancellation, reload restore, import switching and histo
   const saved = await service.captureLogin({label:'B',expectedEmail:'b@example.test',identitySource:'hub'}); await service.installLogin(saved.id, life);
   service = create(); await service.finishVerified(life);
   assert.equal(await fs.readFile(filename, 'utf8'), raw('A'));
-  let index = []; const imported = await service.importAccounts([{ label: 'C', expectedEmail: 'c@example.test', capturedAt: new Date().toISOString(), token: raw('C') }], {read:()=>index,write:async value=>{index=value;}});
+  let index = []; const imported = await service.importAccounts([{ label: 'C', expectedEmail: 'c@example.test', capturedAt: new Date().toISOString(), token: raw('C') }], {read:()=>index,write:async value=>{index=value;}},{query:async account=>({subject:'synthetic-subject',proof:{email:account.expectedEmail,authValid:true,quotaSource:'server',generation:'synthetic',observedAt:new Date().toISOString(),buckets:[]}})});
   await service.install(imported[0].id, life); assert.equal(await fs.readFile(filename,'utf8'),raw('C')); await service.restore(life);
   assert.equal(await fs.readFile(filename,'utf8'),raw('A')); assert.equal(await fs.readFile(history,'utf8'),'synthetic-original-history'); assert.ok(stopped>=4); assert.ok(reloads>=4);
 });
@@ -372,7 +372,7 @@ test('large imported tokens use only proven WSL file scope and do not inherit na
   const root=await home(t),data=new Map(),token=JSON.stringify({token:{refresh_token:'synthetic-'+ 'x'.repeat(9000)}});let index=[];
   const vault={get:async k=>data.get(k),store:async(k,v)=>data.set(k,v),delete:async k=>data.delete(k)};
   const slots=new EnvironmentTokenSlots(root,'linux',{WSL_DISTRO_NAME:'synthetic'},{createKeyring:forbiddenKeyring,fileOnlyGuard:async()=>true},'mutation');
-  const service=new LiveSwitchService(vault,slots),entries=await service.importAccounts([{label:'large',expectedEmail:'large@example.test',capturedAt:new Date().toISOString(),token}],{read:()=>index,write:async v=>{index=v}});
+  const service=new LiveSwitchService(vault,slots),entries=await service.importAccounts([{label:'large',expectedEmail:'large@example.test',capturedAt:new Date().toISOString(),token}],{read:()=>index,write:async v=>{index=v}},{query:async account=>({subject:'synthetic-subject',proof:{email:account.expectedEmail,authValid:true,quotaSource:'server',generation:'synthetic',observedAt:new Date().toISOString(),buckets:[]}})});
   await service.install(entries[0].id,{generation:'old',stop:async()=>{},reload:async()=>{},signedOutProof:async()=>({generation:'old',authValid:false})});
   assert.deepEqual(await slots.read(),fileScope(token));
 });

@@ -22,9 +22,9 @@ function fixture(options = {}) {
     async writeMigrationArchive(filename, bytes) { events.push('write-file'); writes.push({ filename, bytes }); }
   };
   const vscode = {
-    Uri: { file: filename => uri({ fsPath: filename }) }, UIKind: { Desktop: 1 }, env: { uiKind: 1, remoteName: options.remoteName }, extensions: { getExtension() {} },
+    ProgressLocation: { Notification: 1 }, Uri: { file: filename => uri({ fsPath: filename }) }, UIKind: { Desktop: 1 }, env: { uiKind: 1, remoteName: options.remoteName }, extensions: { getExtension(id) { return id==='google.google-antigravity'?options.official:undefined; } },
     commands: { registerCommand(name, handler) { commands.set(name, handler); return { dispose() {} }; }, async executeCommand(name) { events.push(name); } },
-    workspace: { get isTrusted() { return ui.trusted; }, async openTextDocument(value) { messages.push(value.content); return {}; } },
+    workspace: { getConfiguration: () => ({get: () => undefined}), get isTrusted() { return ui.trusted; }, async openTextDocument(value) { messages.push(value.content); return {}; } },
     window: {
       async showWarningMessage(message, options, consent) { messages.push(message); events.push(options?.modal ? 'confirm' : 'warning'); return ui.consent ? consent : undefined; },
       async showInformationMessage(message, options, consent) { messages.push(message); return options?.modal && ui.consent ? consent : undefined; },
@@ -32,6 +32,7 @@ function fixture(options = {}) {
       async showSaveDialog(options) { dialogs.push(options); events.push('save-dialog'); return ui.save; },
       async showOpenDialog(options) { dialogs.push(options); events.push('open-dialog'); return ui.open; },
       async showInputBox(options) { inputs.push(options); events.push('password'); return ui.inputAnswers.shift(); },
+      async withProgress(_options, run) { return run({}, { isCancellationRequested: !!options.cancelProgress, onCancellationRequested: () => ({ dispose() {} }) }); },
       async showTextDocument() {},
     }
   };
@@ -43,14 +44,14 @@ function fixture(options = {}) {
   let service = {
     async recoverImport() { events.push('recover-import'); }, async journal() { return null; }, hostIsCurrent: account => account.hostId === 'this-host',
     async exportAccounts(ids) { events.push('export'); service.exported = ids; return ids.map(id => { const value = state.get(INDEX).find(account => account.id === id); return { label: value.label, expectedEmail: value.expectedEmail, capturedAt: value.capturedAt, token }; }); },
-    async importAccounts(accounts, index) { events.push('import'); service.imported = accounts; const imported = accounts.map((account, n) => ({ ...saved(n + 20), label: account.label, expectedEmail: account.expectedEmail, capturedAt: account.capturedAt, identitySource: 'user', migrationState: 'pending' })); await index.write([...index.read(), ...imported]); return imported; },
+    async importAccounts(accounts, index, options) { events.push('import'); service.imported = accounts; const imported = accounts.map((account, n) => ({ ...saved(n + 20), label: account.label, expectedEmail: account.expectedEmail, capturedAt: account.capturedAt, identitySource: 'user', migrationState: 'verified', verifiedSubject: 'synthetic-'+n, id: options.replace?.[account.expectedEmail.trim().toLowerCase()] ?? saved(n+20).id })); await index.write(index.read().map(row=>imported.find(item=>item.id===row.id)??row).concat(imported.filter(item=>!index.read().some(row=>row.id===item.id)))); for(const account of imported) options.quota?.(account,{subject:account.verifiedSubject,proof:{email:account.expectedEmail,observedAt:new Date().toISOString(),authValid:true,quotaSource:'server',buckets:[]}}); return imported; },
     async install() { events.push('install'); }, async verify() { events.push('verify'); return { email: 'account1@example.test', observedAt: '2026-10-01T00:00:00.000Z', buckets: [] }; },
     async markImportedVerified() { events.push('mark-verified'); }, async finish() { events.push('finish'); }
   };
   if (options.serviceFactory) service = options.serviceFactory({ context, state, events });
   const locks = { async withOperation(fn) { events.push('lock'); try { return await fn(); } finally { events.push('unlock'); } }, async hasRecovery() { return false; }, async beginRecovery() { events.push('recovery'); }, async clearRecovery() { events.push('clear-recovery'); }, async assertRecovery() {} };
   const lifecycle = async () => { events.push('lifecycle'); return { generation: 'old' }; };
-  const controller = api.registerLiveUi(context, { service, locks, lifecycle });
+  const controller = api.registerLiveUi(context, { service, locks, lifecycle, ...(options.currentIdentity?{currentIdentity:options.currentIdentity}:{}), ...(options.currentQuota?{currentQuota:options.currentQuota}:{}), importQuota: options.importQuota ?? (async account=>({subject:'synthetic',proof:{email:account.expectedEmail,observedAt:new Date().toISOString(),authValid:true,quotaSource:'server',buckets:[]}})) });
   return { ui, commands, events, messages, picks, inputs, dialogs, writes, state, context, service, locks, codec, controller, api, archive, call: (name, argument) => commands.get(`antigravityAccounts.live.${name}`)(argument) };
 }
 function noMutation(f) { assert.ok(!f.events.some(event => ['write-file', 'import', 'index-write', 'install', 'lifecycle', 'recovery'].includes(event))); assert.equal(f.writes.length, 0); }
@@ -100,8 +101,8 @@ test('import preview contains metadata only, defaults to all, and can select a n
   const f = fixture(); f.ui.pickAnswers = [choices => [choices[2]]]; await f.call('import');
   assert.equal(f.picks[0].options.canPickMany, true); assert.equal(f.picks[0].choices.length, 3); assert.ok(f.picks[0].choices.every(choice => choice.picked));
   assert.deepEqual(f.service.imported.map(account => account.expectedEmail), ['account3@example.test']);
-  assert.ok(f.messages.some(message => /VS Code SecretStorage.*不替换原副本.*不改变当前官方登录/.test(message)));
-  assert.ok(f.messages.some(message => /不会自动登录、切换或重载/.test(message))); assert.equal(f.controller.getAccounts().at(-1).migrationState, 'pending');
+  assert.ok(f.messages.some(message => /VS Code SecretStorage.*当前官方登录保持不变/.test(message)));
+  assert.ok(f.messages.some(message => /自动查询服务器身份和额度/.test(message))); assert.equal(f.controller.getAccounts().at(-1).migrationState, 'verified');
   assert.equal(f.state.get(PENDING), undefined); assert.ok(!f.events.includes('lifecycle')); assert.ok(!f.events.includes('install')); noSecrets(f);
 });
 test('import wrong password or corrupt archive never previews or changes any account', async () => {
@@ -121,10 +122,10 @@ test('conflict matching normalizes email, considers only this host, and safe fir
   assert.equal(f.picks.length, 2); assert.match(f.picks[1].choices[0].label, /跳过.*推荐/);
   assert.deepEqual(f.service.imported.map(account => account.expectedEmail), ['account3@example.test']); assert.deepEqual(f.state.get(INDEX).slice(0, before.length), before); noSecrets(f);
 });
-test('keep-both conflicts create additional copies without replacing original IDs', async () => {
+test('replace conflicts retain original IDs and create only nonconflicting accounts', async () => {
   const f = fixture(), before = structuredClone(f.state.get(INDEX)); f.ui.pickAnswers = [choices => choices, choices => choices[1]]; await f.call('import');
-  assert.equal(f.service.imported.length, 3); assert.equal(f.state.get(INDEX).length, 6); assert.deepEqual(f.state.get(INDEX).slice(0, before.length), before);
-  const ids = f.state.get(INDEX).map(account => account.id); assert.equal(new Set(ids).size, 6); noSecrets(f);
+  assert.equal(f.service.imported.length, 3); assert.equal(f.state.get(INDEX).length, 4); assert.equal(f.state.get(INDEX)[0].id,before[0].id); assert.equal(f.state.get(INDEX)[1].id,before[1].id); assert.deepEqual(f.state.get(INDEX)[2],before[2]);
+  const ids = f.state.get(INDEX).map(account => account.id); assert.equal(new Set(ids).size, 4); noSecrets(f);
 });
 test('skipping all selected conflicts is a clean no-op without final consent', async () => {
   const f = fixture(); f.ui.pickAnswers = [choices => choices.slice(0, 2)]; await f.call('import'); noMutation(f); assert.ok(!f.events.includes('confirm')); assert.match(f.messages.at(-1), /没有导入或修改/);
@@ -195,7 +196,7 @@ test('WSL workspace-host migration accepts only current-host file URIs and never
   assert.equal(f.writes.length, 1); assert.equal(f.writes[0].filename, '/home/synthetic-user/migration.agwenc');
   assert.match(f.dialogs[0].title, /WSL · Linux/); assert.equal(vault.size, 2);
   f.ui.inputAnswers = [password]; await f.call('import');
-  const imported = f.state.get(INDEX).filter(account => account.migrationState === 'pending');
+  const imported = f.state.get(INDEX).filter(account => account.migrationState === 'verified');
   assert.equal(imported.length, 1); assert.equal(imported[0].expectedEmail, 'account3@example.test'); assert.equal(imported[0].hostId, 'this-host');
   assert.equal(vault.size, 3); assert.equal(officialReads, 0); assert.equal(officialWrites, 0); assert.ok(!f.events.includes('lifecycle')); assert.equal(f.state.get(PENDING), undefined);
   assert.match(f.messages.at(-1), /当前官方登录未改变/); noSecrets(f);
@@ -236,4 +237,45 @@ test('export write failures report export-specific bilingual messages without ex
       noSecrets(f);
     }
   } finally {i18n.setLanguage('zh-CN');}
+});
+
+test('multiple legacy same-email records offer an explicit target, with cancellation preserving all copies',async()=>{
+  for(const cancel of [false,true]){
+    const f=fixture(),duplicate=saved(8,{expectedEmail:saved(1).expectedEmail,label:'Exact target'});const rows=[saved(1),duplicate,saved(2)];f.state.set(INDEX,rows);
+    f.ui.pickAnswers=[choices=>[choices[0]],choices=>choices[1],cancel?'cancel':choices=>choices[1]];await f.call('import');
+    assert.equal(f.picks.length,3);assert.match(f.picks[2].options.title,/选择覆盖/);assert.ok(f.picks[2].choices.every(choice=>choice.id));
+    if(cancel){noMutation(f);assert.deepEqual(f.state.get(INDEX),rows);}else{assert.deepEqual(f.state.get(INDEX).map(row=>row.id),rows.map(row=>row.id));assert.deepEqual(f.state.get(INDEX)[0],rows[0]);assert.equal(f.state.get(INDEX)[1].label,'Imported 1');}
+    assert.ok(f.picks[1].choices.every(choice=>!['copy','keep-both'].includes(choice.policy)));noSecrets(f);
+  }
+});
+test('UI capacity only counts new records so replacing at 50 works',async()=>{
+  const f=fixture();f.state.set(INDEX,Array.from({length:50},(_,n)=>saved(n+1)));f.ui.pickAnswers=[choices=>[choices[0]],choices=>choices[1]];await f.call('import');assert.equal(f.service.imported.length,1);assert.equal(f.state.get(INDEX).length,50);assert.equal(f.state.get(INDEX)[0].id,saved(1).id);noSecrets(f);
+});
+test('export never invokes import/login recovery or repairs saved state',async()=>{
+  const f=fixture();f.service.recoverImport=async()=>{throw Error('export must not recover imports');};f.service.recoverLogin=async()=>{throw Error('export must not repair logins');};const rows=structuredClone(f.state.get(INDEX));await f.call('export');assert.deepEqual(f.state.get(INDEX),rows);assert.equal(f.writes.length,1);assert.ok(!f.events.includes('recover-import'));noSecrets(f);
+});
+function candidateUi(options={}){
+  const data=new Map(),official={id:'google.google-antigravity',extensionKind:1,extensionPath:'/synthetic/official',extensionUri:{scheme:'file',authority:'',toString:()=> 'file:///synthetic/official'},packageJSON:{main:'extension.js',version:'fixture'},isActive:true,exports:{port:1234,csrfToken:'synthetic-csrf-capability-value'}};
+  const generation=require('../out/live-hub').generation(official.exports);let currentCalls=0,checked=0;
+  const currentProof={email:saved(1).expectedEmail,authValid:true,quotaSource:'server',generation,observedAt:new Date().toISOString(),buckets:[{label:'old quota',remaining:.99,resetAt:null}]};
+  const f=fixture({...options,official,currentIdentity:async()=>currentProof,currentQuota:async()=>{currentCalls++;return currentProof;},importQuota:async(account,signal)=>{checked++;assert.equal(account.slots.file,token);assert.notEqual(account.slots.file,JSON.parse(data.get(ACCOUNT_PREFIX+saved(1).id)).slots.file);if(options.query)return options.query(account,signal);return {subject:'subject-a',proof:{...currentProof,buckets:[{label:'candidate quota',remaining:.25,resetAt:null}]}};},serviceFactory({context}){
+    const old={...saved(1),slots:{file:JSON.stringify({token:{refresh_token:'synthetic-old-grant'}}),keyring:null}};data.set(ACCOUNT_PREFIX+old.id,JSON.stringify(old));context.secrets={get:async key=>data.get(key),store:async(key,raw)=>data.set(key,raw),delete:async key=>data.delete(key)};
+    const real=new LiveSwitchService(context.secrets,{read:async()=>{throw Error('official slots must stay untouched');},write:async()=>{throw Error('official slots must stay untouched');}},'this-host');
+    // Disable unrelated automatic capture in this fixture; all import/quota methods are real.
+    return Object.fromEntries(['journal','hostIsCurrent','recoverImport','importAccounts','account','exportAccounts'].map(name=>[name,real[name].bind(real)]));
+  }});
+  return {...f,data,checked:()=>checked,currentCalls:()=>currentCalls};
+}
+test('active same-email import verifies the candidate directly, refreshes only its quota cache and preserves active identity',async()=>{
+  const f=candidateUi();await f.controller.refresh();assert.equal(f.controller.getState().activeEmail,saved(1).expectedEmail);await f.call('quota',saved(1).id);assert.equal(f.currentCalls(),1);assert.equal(f.controller.getAccounts()[0].quota.snapshot.buckets[0].remaining,.99);
+  f.ui.pickAnswers=[choices=>[choices[0]],choices=>choices[1]];await f.call('import');assert.equal(f.checked(),1);assert.equal(f.currentCalls(),1);assert.equal(f.controller.getAccounts()[0].quota.snapshot.buckets[0].remaining,.25);assert.equal(f.controller.getState().activeEmail,saved(1).expectedEmail);assert.equal(f.state.get(PENDING),undefined);assert.ok(!f.events.includes('lifecycle')&&!f.events.includes('install'));noSecrets(f);
+  f.context.subscriptions.forEach(sub=>sub.dispose());
+});
+test('failed candidate import invalidates old saved quota without changing current official identity',async()=>{
+  const f=candidateUi({query:async()=>{throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');}});await f.controller.refresh();await f.call('quota',saved(1).id);const before=f.data.get(ACCOUNT_PREFIX+saved(1).id);
+  f.ui.pickAnswers=[choices=>[choices[0]],choices=>choices[1]];await f.call('import');assert.equal(f.data.get(ACCOUNT_PREFIX+saved(1).id),before);assert.equal(f.controller.getAccounts()[0].quota,undefined);assert.equal(f.controller.getState().activeEmail,saved(1).expectedEmail);assert.equal(f.currentCalls(),1);noSecrets(f);f.context.subscriptions.forEach(sub=>sub.dispose());
+});
+test('dispose during import discards late verification and repeated commands remain coalesced',async()=>{
+  let release;const f=candidateUi({query:async()=>new Promise(resolve=>{release=resolve;})});await f.controller.refresh();f.ui.pickAnswers=[choices=>[choices[0]],choices=>choices[1]];const before=f.data.get(ACCOUNT_PREFIX+saved(1).id),work=f.call('import');while(!release)await new Promise(setImmediate);
+  await f.call('export');assert.equal(f.dialogs.length,1);f.context.subscriptions.forEach(sub=>sub.dispose());release({subject:'subject-a',proof:{email:saved(1).expectedEmail,authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]}});await work;assert.equal(f.data.get(ACCOUNT_PREFIX+saved(1).id),before);assert.equal(f.controller.getAccounts()[0].migrationState,undefined);noSecrets(f);
 });

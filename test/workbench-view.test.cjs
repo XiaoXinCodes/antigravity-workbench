@@ -218,7 +218,7 @@ test('migration actions are visible, native-host scoped and independent of the o
 });
 test('imported cards retain a distinct verification warning regardless of label or claimed identity', () => {
  const html = renderWorkbench(state({ accounts: [{ ...account, label: '已验证账户', identitySource: 'hub', hostCurrent: true, migrationState: 'pending' }] }), 'nonce');
- assert.match(html, /class="account-migration-warning">导入待核验：首次切换自动核验/);
+ assert.match(html, /class="account-migration-warning">旧版导入账号尚未核验，可重新导入以查询身份和额度/);
  assert.match(html, new RegExp(`data-command="live.switch" data-id="${account.id}" class`));
  const verified = renderWorkbench(state({ accounts: [{ ...account, migrationState: 'verified', hostCurrent: true }] }), 'nonce'); assert.match(verified, /已在此运行位置核验（导入）/);
 });

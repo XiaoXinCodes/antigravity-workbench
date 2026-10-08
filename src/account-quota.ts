@@ -39,7 +39,7 @@ function knownAudience(stored: ObjectValue): boolean {
     return audiences.length === 1 && typeof audiences[0] === 'string' && createHash('sha256').update(audiences[0]).digest('hex') === CONSUMER_CLIENT_ID_SHA256;
   } catch { return false; }
 }
-function refreshedSlots(expected: TokenSlots, value: unknown, now: number): TokenSlots {
+export function refreshedSlots(expected: TokenSlots, value: unknown, now: number): TokenSlots {
   const response = object(value);
   if (!validBearerToken(response.access_token) || response.token_type !== undefined && (typeof response.token_type !== 'string' || response.token_type.toLowerCase() !== 'bearer') ||
       !Number.isSafeInteger(response.expires_in) || (response.expires_in as number) < 1 || (response.expires_in as number) > 31_536_000 ||
@@ -136,6 +136,7 @@ export class SavedAccountQuotaClient {
     let released = false;
     return () => { if (released) return; released = true; const next = this.waiting.shift(); if (next) next(); else this.active--; };
   }
+  quotaResponse(access: SavedAccountBearer, signal: AbortSignal): Promise<unknown> { return this.transport({ endpoint: 'quota', accessToken: access.accessToken, signal, ...(access.projectId ? { projectId: access.projectId } : {}) }); }
   async query(account: LiveAccount, signal?: AbortSignal, options: SavedAccountQuotaOptions = {}): Promise<HubProof> {
     return this.withAccess(account, signal, options, async (access, requestSignal) => {
       const response = await this.transport({ endpoint: 'quota', accessToken: access.accessToken, signal: requestSignal,
@@ -170,7 +171,7 @@ export class SavedAccountQuotaClient {
     if (signal?.aborted) abort();
     const phase = (value: 'refreshing' | 'saving' | 'querying'): void => { try { options.phase?.(value); } catch { /* Rendering cannot interrupt credential durability. */ } };
     const assertIdentity = (identity: { email: string; subject: string }): void => {
-      if (identity.email !== saved.email || originalSubject !== undefined && identity.subject !== originalSubject) throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');
+      if (identity.email !== saved.email || originalSubject !== undefined && identity.subject !== originalSubject || pinned.verifiedSubject !== undefined && identity.subject !== pinned.verifiedSubject) throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');
     };
     const performRefresh = async (pending?: TokenSlots): Promise<void> => {
       const hooks = options.refresh;
@@ -257,4 +258,34 @@ const localQuotaClient = new SavedAccountQuotaClient();
 /** Caller must receive an explicit user quota action before loading a saved login from SecretStorage. */
 export function querySavedAccountQuota(account: LiveAccount, signal?: AbortSignal, options: SavedAccountQuotaOptions = {}): Promise<HubProof> {
   return localQuotaClient.query(account, signal, options);
+}
+
+export interface ImportedAccountQuota { proof: HubProof; subject: string; quotaError?: string }
+const IMPORT_QUOTA_ERRORS = new Set(['ACCOUNT_QUOTA_EMPTY', 'ACCOUNT_QUOTA_FORBIDDEN', 'ACCOUNT_QUOTA_RATE_LIMITED', 'ACCOUNT_QUOTA_REQUEST_FAILED', 'ACCOUNT_QUOTA_TIMEOUT']);
+/** Identity → quota → identity on the candidate bearer, including valid accounts
+ * without quota/eligibility. Never consult the current official Hub. */
+export async function queryImportedAccountQuota(account: LiveAccount, signal?: AbortSignal, options: SavedAccountQuotaOptions = {}, client = localQuotaClient): Promise<ImportedAccountQuota> {
+  return client.withAccess(account, signal, options, async (access, requestSignal) => {
+    let buckets: HubProof['buckets'] = [], quotaError: string | undefined;
+    try {
+      const response = await client.quotaResponse(access, requestSignal);
+      access.assertPublicResponse(response);
+      try { buckets = parseFreshQuota({ response }); }
+      catch (error) { throw new LiveError(error instanceof LiveError && error.code === 'HUB_QUOTA_EMPTY' ? 'ACCOUNT_QUOTA_EMPTY' : 'ACCOUNT_QUOTA_RESPONSE_INVALID'); }
+    } catch (error) {
+      if (!(error instanceof LiveError) || !IMPORT_QUOTA_ERRORS.has(error.code)) throw error;
+      quotaError = error.code;
+    }
+    return { proof: { email: access.email, generation: `import-candidate:${account.id}`, observedAt: new Date().toISOString(), authValid: true, quotaSource: 'server', buckets }, subject: access.subject, ...(quotaError ? { quotaError } : {}) };
+  });
+}
+/** Rebase only returned OAuth fields, preserving each saved copy's native metadata. */
+export function rebaseRefreshedSlots(original: TokenSlots, refreshed: TokenSlots): TokenSlots {
+  const next = object(JSON.parse(refreshed.keyring ?? refreshed.file!));
+  const update = (raw: string | null): string | null => {
+    if (raw === null) return null;
+    const stored = object(JSON.parse(raw));
+    return JSON.stringify({ ...stored, token: { ...object(stored.token), ...object(next.token) }, ...(next.id_token === undefined ? {} : { id_token: next.id_token }) });
+  };
+  return { ...original, keyring: update(original.keyring), file: update(original.file) };
 }

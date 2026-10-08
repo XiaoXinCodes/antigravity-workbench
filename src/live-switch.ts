@@ -5,10 +5,14 @@ import { LiveError, equalSlots, validateSlots, validateStoredToken, assertSlotId
 import { portableToken, validateMigrationAccounts, type MigrationAccount } from './account-migration';
 import { AccountImportTransaction, type AccountIndex } from './account-import';
 import { RecoveryStore, type RecoveryStoreOptions } from './recovery-store';
-import { savedLoginLocallyUsable } from './account-quota';
+import { savedLoginLocallyUsable, queryImportedAccountQuota, rebaseRefreshedSlots, type ImportedAccountQuota, type SavedAccountQuotaOptions } from './account-quota';
+import { ImportCandidateStore } from './account-import-candidate';
+import { createConsumerRefreshProvider, type ConsumerRefreshProvider } from './account-quota-client';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 export interface SecretVault { get(key: string): Thenable<string | undefined> | Promise<string | undefined>; store(key: string, value: string): Thenable<void> | Promise<void>; delete(key: string): Thenable<void> | Promise<void>; onDidChange?(listener: (event: { key: string }) => void): { dispose(): void } }
-export interface SavedLogin { id: string; label: string; expectedEmail: string; capturedAt: string; identitySource: 'hub' | 'user'; hostId?: string; migrationState?: 'pending' | 'verified' }
+export interface SavedLogin { id: string; label: string; expectedEmail: string; capturedAt: string; identitySource: 'hub' | 'user'; hostId?: string; migrationState?: 'pending' | 'verified'; verifiedSubject?: string }
 export interface LiveAccount extends SavedLogin { slots: TokenSlots }
 export interface VerificationState { state: 'pending' | 'retry' | 'verified'; attempts: number; checkedAt?: string; code?: string }
 export interface Journal { schema: 1; id: string; revision?: number; writeId?: string; phase: 'authorizing' | 'prepared' | 'installed' | 'restored'; operation?: 'login'; backup: TokenSlots; loginCurrent?: TokenSlots; target: SavedLogin; oldGeneration: string; hostId?: string; loginMode?: 'save-only'; original?: { email: string | null }; restoreGeneration?: string; verification?: VerificationState }
@@ -20,6 +24,7 @@ export const JOURNAL_KEY = 'live-switch.recovery.v1';
 export const ACCOUNT_PREFIX = 'live-switch.account.v1.';
 export const QUOTA_REFRESH_PREFIX = 'live-switch.quota-refresh.v1.';
 export const QUOTA_PENDING_PREFIX = 'live-switch.quota-pending.v1.';
+export const QUOTA_UNKNOWN_PREFIX = 'live-switch.quota-unknown.v1.';
 export type LiveInstallStage = 'preflight' | 'stop' | 'backup' | 'credential-write' | 'credential-readback' | 'journal-installed' | 'reconnect';
 // Verification errors cross the UI/persistence boundary. Never store an adapter's
 // arbitrary message/code, even if it happens to be wrapped in our Error class.
@@ -87,6 +92,7 @@ export function parseJournal(raw: string): Journal {
   } catch { throw new LiveError('RECOVERY_RECORD_INVALID'); }
 }
 export class LiveSwitchService {
+  private importing = false;
   private captureQueue: Promise<unknown> = Promise.resolve();
   // SecretStorage may be shared by local and remote extension hosts. The optional
   // constructor argument exists for isolated fixtures; production supplies its
@@ -111,13 +117,15 @@ export class LiveSwitchService {
   }
   private hostBinding(): { hostId?: string } { return this.hostId === undefined ? {} : { hostId: this.hostId }; }
   private importTransaction(): AccountImportTransaction { return new AccountImportTransaction(this.vault, this.hostId); }
+  async removeImportCandidates(id: string): Promise<void> { await ImportCandidateStore.removeOwner(this.vault, this.hostId, id); }
   async recoverImport(index: AccountIndex): Promise<void> { await this.importTransaction().recover(index); }
   async exportAccounts(ids: string[]): Promise<MigrationAccount[]> {
     if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || new Set(ids).size !== ids.length) throw new LiveError('MIGRATION_ACCOUNT_SELECTION_INVALID');
     const result: MigrationAccount[] = [];
     for (const id of ids) {
-      const account = await this.account(id);
+      if (await this.vault.get(QUOTA_REFRESH_PREFIX + id) || await this.vault.get(QUOTA_PENDING_PREFIX + id) || await this.vault.get(QUOTA_UNKNOWN_PREFIX + id)) throw new LiveError('CAPTURE_CREDENTIAL_RECOVERY_REQUIRED');
+      const account = await this.readAccount(id);
       // Browser login historically used the full email as its display label, which
       // can exceed the normal 80-code-unit label limit. Preserve the full identity
       // but bound only this portable display label without splitting a surrogate.
@@ -127,16 +135,107 @@ export class LiveSwitchService {
     }
     return validateMigrationAccounts(result);
   }
-  async importAccounts(entries: MigrationAccount[], index: AccountIndex): Promise<SavedLogin[]> {
-    if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
-    const accounts = validateMigrationAccounts(entries).map(entry => ({
-      id: randomUUID(), label: entry.label, expectedEmail: entry.expectedEmail, capturedAt: entry.capturedAt,
-      identitySource: 'user' as const, migrationState: 'pending' as const, ...this.hostBinding(),
-      // Import does not touch either official slot or claim authentication. Size and native
-      // store readiness are checked again on the explicitly confirmed first switch.
-      slots: { keyring: entry.token, file: entry.token },
-    }));
-    return this.importTransaction().commit(accounts, index);
+  /** Caller holds the host operation lock. No official credential or lifecycle access. */
+  async importAccounts(entries: MigrationAccount[], index: AccountIndex, options: AccountImportOptions = {}): Promise<SavedLogin[]> {
+    if (this.importing) throw new LiveError('ACCOUNT_QUOTA_ALREADY_RUNNING');
+    this.importing = true;
+    try {
+      if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
+      await this.recoverImport(index);
+      const source = validateMigrationAccounts(entries), before = index.read();
+      const plans = source.map(entry => {
+        const matches = before.filter(item => item.hostId === this.hostId && item.expectedEmail.trim().toLowerCase() === entry.expectedEmail);
+        const target = options.replace?.[entry.expectedEmail];
+        if (matches.length && !target || target && !matches.some(item => item.id === target) || target && before.filter(item => item.id === target).length !== 1) throw new LiveError('MIGRATION_TARGET_REQUIRED');
+        return { entry, target };
+      });
+      if (before.length + plans.filter(plan => !plan.target).length > 50) throw new LiveError('SAVED_ACCOUNT_LIMIT');
+      const targetSnapshots = new Map<string, string>();
+      for (const plan of plans) if (plan.target) {
+        const selected = await this.account(plan.target), raw = await this.vault.get(ACCOUNT_PREFIX + plan.target);
+        if (!raw || !equalSlots((JSON.parse(raw) as LiveAccount).slots, selected.slots)) throw new LiveError('MIGRATION_INDEX_CHANGED');
+        targetSnapshots.set(plan.target, raw);
+      }
+      const assertHostCurrent = async (): Promise<void> => {
+        if (options.signal?.aborted) throw new LiveError('QUOTA_QUERY_CANCELLED');
+        await options.assertCurrent?.();
+        if (JSON.stringify(index.read()) !== JSON.stringify(before)) throw new LiveError('MIGRATION_INDEX_CHANGED');
+      };
+      const assertCurrent = async (): Promise<void> => {
+        await assertHostCurrent();
+        for (const [id, raw] of targetSnapshots) if (await this.vault.get(ACCOUNT_PREFIX + id) !== raw) throw new LiveError('MIGRATION_INDEX_CHANGED');
+      };
+      await assertCurrent();
+      const results: { account: LiveAccount; quota: ImportedAccountQuota; store: ImportCandidateStore }[] = [];
+      for (const { entry, target } of plans) {
+        await assertCurrent();
+        const previous = target ? await this.account(target) : undefined;
+        const candidate = new ImportCandidateStore(this.vault, { id: randomUUID(), label: entry.label, expectedEmail: entry.expectedEmail, capturedAt: entry.capturedAt, identitySource: 'user', ...this.hostBinding(), slots: { keyring: entry.token, file: entry.token } }, entry.token, target);
+        const saved = await candidate.account();
+        // Pin the server subject previously verified for this copy (or constrain a
+        // legacy copy's subject hint); the new subject is always established online.
+        const expectedSubject = previous?.verifiedSubject ?? (previous ? tokenAccountHint(previous.slots.keyring ?? previous.slots.file!).subject : undefined);
+        const pinned = { ...saved, ...(expectedSubject ? { verifiedSubject: expectedSubject } : {}) };
+        const grant = tokenAccountHint(entry.token).refresh;
+        const linked: LiveAccount[] = [];
+        for (const row of before.filter(item => item.hostId === this.hostId && item.expectedEmail.trim().toLowerCase() === entry.expectedEmail)) {
+          const old = await this.account(row.id);
+          if (tokenAccountHint(old.slots.keyring ?? old.slots.file!).refresh === grant) linked.push(old);
+        }
+        const stageLinked = async (next: TokenSlots): Promise<void> => {
+          for (const old of linked) {
+            const prior = await this.vault.get(QUOTA_PENDING_PREFIX + old.id) === undefined ? undefined : await this.pendingQuotaRefresh(old.id, old.slots);
+            await this.stageQuotaRefresh(old.id, old.slots, rebaseRefreshedSlots(old.slots, next), prior);
+          }
+        };
+        const provider = options.provider ?? createConsumerRefreshProvider(path.join(os.homedir(), '.gemini', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy'));
+        const queryOptions: SavedAccountQuotaOptions = { refresh: {
+          provider: { clientIdSha256: provider.clientIdSha256, exchange: async (token, signal) => {
+            for (const old of linked) {
+              const key = QUOTA_UNKNOWN_PREFIX + old.id, raw = JSON.stringify({ schema: 1, expected: old.slots, hostId: old.hostId });
+              await this.vault.store(key, raw);
+              if (await this.vault.get(key) !== raw) throw new LiveError('ACCOUNT_QUOTA_SECURE_SAVE_FAILED');
+            }
+            return candidate.exchange(saved.slots, async () => {
+              try { return await provider.exchange(token, signal); }
+              catch (error) {
+                if (error instanceof LiveError && ['ACCOUNT_QUOTA_REAUTH_REQUIRED', 'ACCOUNT_QUOTA_CLIENT_UNVERIFIED', 'ACCOUNT_QUOTA_FORBIDDEN', 'ACCOUNT_QUOTA_RATE_LIMITED'].includes(error.code)) {
+                  for (const old of linked) {
+                    await this.vault.delete(QUOTA_UNKNOWN_PREFIX + old.id);
+                    if (await this.vault.get(QUOTA_UNKNOWN_PREFIX + old.id) !== undefined) throw new LiveError('ACCOUNT_QUOTA_SECURE_SAVE_FAILED');
+                  }
+                }
+                throw error;
+              }
+            });
+          } },
+          loadPending: async expected => { const next = await candidate.pending(expected); if (next) await stageLinked(next); return next; },
+          stage: async (expected, next) => { await candidate.stage(expected, next); await stageLinked(next); },
+          commit: async (expected, next) => {
+            for (const old of linked) {
+              const committed = await this.commitQuotaRefresh(old.id, old.slots, rebaseRefreshedSlots(old.slots, next));
+              if (targetSnapshots.has(old.id)) targetSnapshots.set(old.id, JSON.stringify(committed));
+            }
+            await candidate.commit(expected, next);
+          },
+        }, ...(options.phase ? { phase: options.phase } : {}) };
+        const quota = await (options.query ?? queryImportedAccountQuota)(pinned, options.signal, queryOptions);
+        await assertCurrent();
+        if (!quota.proof.authValid || quota.proof.quotaSource !== 'server' || quota.proof.email.toLowerCase() !== entry.expectedEmail || !/^[a-zA-Z0-9_-]{1,255}$/.test(quota.subject) || expectedSubject && quota.subject !== expectedSubject) throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');
+        const current = await candidate.account();
+        const account: LiveAccount = { ...current, id: target ?? current.id, label: entry.label, capturedAt: entry.capturedAt, identitySource: 'user', migrationState: 'verified', verifiedSubject: quota.subject };
+        results.push({ account, quota, store: candidate });
+      }
+      await assertCurrent();
+      const accounts = await this.importTransaction().commitChanges(results.map(result => result.account), index, assertHostCurrent, targetSnapshots);
+      for (let n = 0; n < results.length; n++) {
+        const result = results[n]!;
+        options.quota?.(accounts[n]!, result.quota);
+        // Cleanup failure must not report rollback: verified accounts are already committed.
+        try { await result.store.clear(); } catch { /* Retry uses the securely retained latest candidate. */ }
+      }
+      return accounts;
+    } finally { this.importing = false; }
   }
   async capture(metadata: CaptureMetadata): Promise<SavedLogin> {
     if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
@@ -148,7 +247,7 @@ export class LiveSwitchService {
   /** Passive local check. Never reads official storage, refreshes OAuth, or repairs records. */
   async savedLoginUsable(summary: SavedLogin): Promise<boolean> {
     if (!this.hostIsCurrent(summary) || summary.migrationState === 'pending') return false;
-    if (await this.vault.get(QUOTA_REFRESH_PREFIX + summary.id) || await this.vault.get(QUOTA_PENDING_PREFIX + summary.id)) return false;
+    if (await this.vault.get(QUOTA_REFRESH_PREFIX + summary.id) || await this.vault.get(QUOTA_PENDING_PREFIX + summary.id) || await this.vault.get(QUOTA_UNKNOWN_PREFIX + summary.id)) return false;
     const raw = await this.vault.get(ACCOUNT_PREFIX + summary.id);
     if (!raw) return false;
     try {
@@ -185,7 +284,7 @@ export class LiveSwitchService {
       if (!allowWrite) throw new LiveError('CAPTURE_CREDENTIAL_CHANGED');
       if (!previous && index.read().length >= 50) throw new LiveError('SAVED_ACCOUNT_LIMIT');
       const id = previous?.id ?? randomUUID(), key = ACCOUNT_PREFIX + id;
-      if (await this.vault.get(QUOTA_REFRESH_PREFIX + id) || await this.vault.get(QUOTA_PENDING_PREFIX + id)) throw new LiveError('CAPTURE_CREDENTIAL_RECOVERY_REQUIRED');
+      if (await this.vault.get(QUOTA_REFRESH_PREFIX + id) || await this.vault.get(QUOTA_PENDING_PREFIX + id) || await this.vault.get(QUOTA_UNKNOWN_PREFIX + id)) throw new LiveError('CAPTURE_CREDENTIAL_RECOVERY_REQUIRED');
       const before = await this.vault.get(key);
       // Never replace a credential bound to another host or identity, even if its index is corrupt.
       if (before !== undefined) {
@@ -314,16 +413,23 @@ export class LiveSwitchService {
     const key = QUOTA_PENDING_PREFIX + id, existingRaw = await this.vault.get(key);
     if (existingRaw !== undefined) {
       const existing = await this.pendingQuotaRefresh(id, expected);
-      if (existing && equalSlots(existing, next)) return;
+      if (existing && equalSlots(existing, next)) {
+        await this.vault.delete(QUOTA_UNKNOWN_PREFIX + id);
+        if (await this.vault.get(QUOTA_UNKNOWN_PREFIX + id) !== undefined) throw new LiveError('ACCOUNT_QUOTA_REFRESH_SAVE_FAILED');
+        return;
+      }
       if (!existing || !previousPending || !equalSlots(existing, previousPending)) throw new LiveError('ACCOUNT_QUOTA_REFRESH_CONFLICT');
       if (await this.vault.get(key) !== existingRaw) throw new LiveError('ACCOUNT_QUOTA_REFRESH_CONFLICT');
     }
     await this.vault.store(key, record);
     if (await this.vault.get(key) !== record) throw new LiveError('ACCOUNT_QUOTA_REFRESH_SAVE_FAILED');
+    await this.vault.delete(QUOTA_UNKNOWN_PREFIX + id);
+    if (await this.vault.get(QUOTA_UNKNOWN_PREFIX + id) !== undefined) throw new LiveError('ACCOUNT_QUOTA_REFRESH_SAVE_FAILED');
   }
   /** Caller must revalidate this candidate with Google before commitQuotaRefresh. */
   async pendingQuotaRefresh(id: string, expected: TokenSlots): Promise<TokenSlots | undefined> {
     const account = await this.account(id), raw = await this.vault.get(QUOTA_PENDING_PREFIX + id);
+    if (raw === undefined && await this.vault.get(QUOTA_UNKNOWN_PREFIX + id) !== undefined) throw new LiveError('ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN');
     if (raw === undefined) return undefined;
     let record: { schema: number; accountId: string; expectedEmail: string; hostId?: string; expected: TokenSlots; next: TokenSlots };
     try {
@@ -358,6 +464,9 @@ export class LiveSwitchService {
       await this.vault.store(accountKey, saved.after);
       if (await this.vault.get(accountKey) !== saved.after) throw new LiveError('ACCOUNT_QUOTA_REFRESH_SAVE_FAILED');
     }
+    await ImportCandidateStore.syncOwner(this.vault, this.hostId, id, before.slots, after.slots);
+    await this.vault.delete(QUOTA_UNKNOWN_PREFIX + id);
+    if (await this.vault.get(QUOTA_UNKNOWN_PREFIX + id) !== undefined) throw new LiveError('ACCOUNT_QUOTA_REFRESH_SAVE_FAILED');
     await this.vault.delete(QUOTA_PENDING_PREFIX + id);
     if (await this.vault.get(QUOTA_PENDING_PREFIX + id) !== undefined) throw new LiveError('ACCOUNT_QUOTA_REFRESH_SAVE_FAILED');
     await this.vault.delete(key);
@@ -383,12 +492,16 @@ export class LiveSwitchService {
   async account(id: string): Promise<LiveAccount> {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new LiveError('ACCOUNT_ID_INVALID');
     await this.recoverQuotaRefresh(id);
+    return this.readAccount(id);
+  }
+  private async readAccount(id: string): Promise<LiveAccount> {
+    if (!/^[a-f0-9-]{36}$/.test(id)) throw new LiveError('ACCOUNT_ID_INVALID');
     const raw = await this.vault.get(ACCOUNT_PREFIX + id);
     if (!raw) throw new LiveError('SECURE_LOGIN_MISSING');
     let account: LiveAccount;
     try {
       account = JSON.parse(raw) as LiveAccount;
-      if (account.id !== id || !account.expectedEmail || !account.slots || account.hostId !== undefined && !validHostId(account.hostId) || account.migrationState !== undefined && !['pending', 'verified'].includes(account.migrationState)) throw 0;
+      if (account.id !== id || !account.expectedEmail || !account.slots || account.hostId !== undefined && !validHostId(account.hostId) || account.migrationState !== undefined && !['pending', 'verified'].includes(account.migrationState) || account.verifiedSubject !== undefined && !/^[a-zA-Z0-9_-]{1,255}$/.test(account.verifiedSubject)) throw 0;
     } catch { throw new LiveError('SECURE_LOGIN_INVALID'); }
     this.assertHost(account, 'ACCOUNT');
     try { validateSlots(account.slots); } catch { throw new LiveError('SECURE_LOGIN_INVALID'); }
@@ -436,6 +549,8 @@ export class LiveSwitchService {
     stage?.('preflight');
     if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
     const target = await this.account(id);
+    if (await this.vault.get(QUOTA_UNKNOWN_PREFIX + id)) throw new LiveError('ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN');
+    if (await this.vault.get(QUOTA_PENDING_PREFIX + id)) throw new LiveError('ACCOUNT_QUOTA_REFRESH_PENDING');
     // Resolve the real scope and validate native size before stopping a healthy hub.
     const preflight = await this.slots.read();
     if (target.migrationState !== undefined) {
@@ -712,4 +827,14 @@ export class LiveSwitchService {
     await this.recoveryStore.remove(record.key, this.snapshots.get(record.journal)!.raw);
     if (this.unconfirmedInstall?.id === record.journal.id) this.unconfirmedInstall = undefined;
   }
+}
+
+export interface AccountImportOptions {
+  replace?: Record<string, string>;
+  signal?: AbortSignal;
+  provider?: ConsumerRefreshProvider;
+  query?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<ImportedAccountQuota>;
+  phase?: SavedAccountQuotaOptions['phase'];
+  quota?: (account: SavedLogin, result: ImportedAccountQuota) => void;
+  assertCurrent?: () => Promise<void>;
 }
