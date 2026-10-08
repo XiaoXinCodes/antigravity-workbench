@@ -2,19 +2,18 @@
 
 [简体中文](CHANGELOG.md) · English
 
-User-visible features and fixes in this repository's formal releases. Release dates use UTC; see each release's notes for installation and validation scope.
+User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
 ## [0.1.3](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.3) — 2026-10-08
 
-- Automatically verify the official login when a window reopens or the panel is rebuilt. A saved account on the same host can appear as the last confirmed login, explicitly pending background confirmation; it does not establish the current login or successful saving.
-- Extend the bounded startup identity wait to accommodate slow initialization. Repeated cached identities or errors no longer continually renew an exhausted retry budget.
-- Finish the identity-checking indicator as soon as official identity is confirmed. Wait separately for local saving; slow saves remain visibly unconfirmed while the underlying secure operation keeps its lock.
-- Rechecking identity supersedes the old wait and coalesces concurrent requests. Late responses after cancellation, window closure or identity changes cannot replace the new identity or complete an old save.
-- The formal GitHub Release VSIX pins documentation and image links to HTTPS URLs for its source commit and can be used directly for a manual Marketplace Update, without a separate package.
+Improve login display and verification when reopening a window.
 
-Validation uses fictional identities, fake time and local mocks. The user's actual window, real accounts and image generation were not acceptance tests.
+- A reopened window can show the last confirmed login, marked as pending background confirmation.
+- Allow more time for slow startup and finish the checking indicator promptly after identity is confirmed.
+- Show a clear unfinished-save message when saving a local copy takes longer.
+- Resume verification when the panel reopens. Rechecking starts a new check, and older responses cannot replace the latest login state.
 
-[Release notes](docs/RELEASE_0.1.3.md#english) · [Validation scope](docs/VALIDATION_0.1.3.md)
+[Release notes](docs/RELEASE_0.1.3.md#english)
 
 ## [0.1.2](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.2) — 2026-10-08
 

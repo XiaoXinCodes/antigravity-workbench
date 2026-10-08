@@ -47,4 +47,12 @@ python scripts/verify-release.py artifacts/antigravity-workbench-0.1.0.vsix
 
 提交前检查相对链接、版本、固定错误码与打包内容。CI 对精确 PR 提交运行 Linux、Windows、macOS 检查；检查通过后由维护者审阅并决定是否合并。版本发布在 main 通过同一矩阵后执行；发布脚本遇到已有版本会跳过，拒绝覆盖已发布 Release、标签或附件。草稿更新必须符合发布脚本的固定身份和资产校验。正式发布前必须下载核对资产。
 
+## 发行说明写法 / Release notes
+
+发布脚本将 `docs/RELEASE_<版本>.md` 原样作为 GitHub Release 正文。中英文各用一句概述和 3–5 条简短更新，说明用户在什么场景下会看到什么变化；CHANGELOG 保持相同的用户视角。
+
+仅在确有不兼容变更或用户必须执行升级操作时增加注意事项。不要例行附加安装教程、ID 保留、同宿主要求、CI/mock 过程、打包参数、Marketplace 上传操作、哈希或验证免责声明。技术证据保留在 `docs/VALIDATION_<版本>.md`、开发记录和发布资产中；文案也不得声称未验证的效果，或将局部修复描述为所有场景均已解决。
+
+The publishing script uses `docs/RELEASE_<version>.md` verbatim. For each language, write one overview sentence and 3–5 short changes describing what users will notice. Keep changelogs equally readable. Include upgrade instructions only for actual breaking changes or required user actions. Keep routine installation, CI/mock, packaging, Marketplace-upload, hash and validation details in development records and assets, and make claims only as broad as the implemented behavior supports.
+
 问题反馈见 [故障排查](docs/TROUBLESHOOTING.md)。不要提交登录文件、账号包、私人提示词、图片、本机原始日志或内部取证文件；示例与测试使用合成账号、路径和数据。
