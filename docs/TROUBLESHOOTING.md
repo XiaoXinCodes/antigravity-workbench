@@ -9,6 +9,9 @@
 | 账号列表仍在，但切换不可用 | 查看是否有待恢复操作、另一窗口占用、存储能力不足或宿主不一致；按恢复入口处理 |
 | `OFFICIAL_COMPONENT_RESTART_UNAVAILABLE` | 官方组件没有可用的受支持重启能力；检查扩展是否激活及其兼容性，收集版本与错误码 |
 | `CLOSE_OTHER_AGY_PROCESSES` | 结束其他相关任务或窗口后重新检查；不要随意终止身份不明的进程 |
+| `OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN` | WSL 中发现不属于当前扩展宿主的官方 Hub，可能来自另一窗口或已退出的宿主；任务状态未知，扩展不会自动终止它。确认其任务已结束或可以放弃后，仅处理已核实的那个后台，再重新检查 |
+| `OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED` / `OFFICIAL_HUB_PROCESS_UNVERIFIED` | 无法核实 agy 归属或当前 Hub 进程；等官方启动完成后重新检查，必要时核对宿主与相关 CLI。不能据此断定存在另一窗口 |
+| `OFFICIAL_BACKEND_STOP_TIMEOUT` | 官方停机返回后，后台仍未在十秒内完成退出；未继续写入切号凭据。先检查当前后台与恢复状态，不按进程名批量结束任务 |
 | 账号来自另一宿主 | 回到原保存位置，或通过加密导入迁移，不直接复制存储数据库 |
 | 配额显示“上次结果”或要求重新授权 | 先查看同步时间和卡片错误；旧结果不是刚刚成功查询。需要时通过 OAuth 重新授权 |
 | `IMAGE_DIRECT_AUTH_REQUIRED` / `IMAGE_DIRECT_MODEL_UNVERIFIED` | 检查当前官方登录、保存账号与图片模型是否一致且可用 |

@@ -27,6 +27,7 @@ import { matchesOfficialExtension, pinOfficialExtension } from './official-exten
 import { canRestartOfficialComponent, restartOfficialComponent } from './official-restart';
 import { enterAccountChange } from './image-activity';
 import { RecoveryVerification, type VerificationClock, type VerificationLease } from './recovery-verification';
+import { inspectWslProcesses, assertWslProcessExclusivity, sameOfficialProcess, waitForOfficialBackendStop, type OfficialProcessIdentity } from './official-process';
 
 const INDEX = 'live-switch.accounts.v1', PENDING = 'live-switch.pending.v1';
 const OFFICIAL_ID = 'google.google-antigravity';
@@ -142,10 +143,20 @@ export async function resolveOfficialLifecycle(context: vscode.ExtensionContext,
     if (!extension.isActive || !matchesOfficialExtension(pinnedExtension, officialExtensionForHost(context))) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
   };
   const currentGeneration = (): string => hasOfficialHubApi(extension.exports) ? generation(extension.exports) : 'stopped';
-  const count = await processCount();
+  const wsl = await resolveOfficialStorageMode() === 'wsl-file';
+  const initialProcesses = wsl ? await inspectWslProcesses(executable, hasOfficialHubApi(api) ? api : undefined) : undefined;
+  if (initialProcesses) assertWslProcessExclusivity(initialProcesses, port !== undefined);
+  let pinnedProcess: OfficialProcessIdentity | undefined = initialProcesses?.current;
+  const scopedCount = async (capability = extension.exports): Promise<number> => {
+    if (!wsl) return processCount();
+    const snapshot = await inspectWslProcesses(executable, hasOfficialHubApi(capability) ? capability : undefined);
+    assertWslProcessExclusivity(snapshot, false);
+    return snapshot.processes.length;
+  };
+  const count = initialProcesses ? initialProcesses.processes.length : await processCount();
   if (count !== (port ? 1 : 0)) throw new LiveError('CLOSE_OTHER_AGY_PROCESSES');
   if (currentGeneration() !== initialGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
-  const fileGuard = await resolveOfficialStorageMode() === 'wsl-file' ? createWslFileGuard(os.homedir(), executable, () => extension.exports, processCount) : undefined;
+  const fileGuard = wsl ? createWslFileGuard(os.homedir(), executable, () => extension.exports, scopedCount) : undefined;
   let fileScopeUsed = false;
   if (currentGeneration() !== initialGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
   return {
@@ -155,21 +166,48 @@ export async function resolveOfficialLifecycle(context: vscode.ExtensionContext,
     restartMode: componentRestart ? 'component' : 'unavailable',
     async stop() {
       // Cancellation/recovery can follow an already completed stop. Never stop a newer hub.
-      if (!extension.exports?.port && await processCount() === 0 && !extension.exports?.port) return;
+      if (!extension.exports?.port && await scopedCount() === 0 && !extension.exports?.port) return;
       if (currentGeneration() !== expectedGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
       assertSameExtension();
-      if (await processCount() !== 1) throw new LiveError('CLOSE_OTHER_AGY_PROCESSES');
+      if (wsl) {
+        const snapshot = await inspectWslProcesses(executable, extension.exports);
+        assertWslProcessExclusivity(snapshot, true);
+        if (pinnedProcess && !sameOfficialProcess(pinnedProcess, snapshot.current!)) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+        pinnedProcess = snapshot.current;
+      } else if (await processCount() !== 1) throw new LiveError('CLOSE_OTHER_AGY_PROCESSES');
       if (currentGeneration() !== expectedGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+      const stoppedApi = { port: extension.exports.port, csrfToken: extension.exports.csrfToken };
       await stop();
-      const stoppedCount = await processCount();
-      if (extension.exports?.port !== undefined || stoppedCount !== 0) throw new LiveError('OFFICIAL_BACKEND_NOT_STOPPED');
+      await waitForOfficialBackendStop({
+        assertCurrent: () => {
+          assertSameExtension();
+          if (hasOfficialHubApi(extension.exports) && generation(extension.exports) !== expectedGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+        },
+        stopped: async () => {
+          let remaining: number;
+          if (wsl) {
+            const snapshot = await inspectWslProcesses(executable, stoppedApi);
+            assertWslProcessExclusivity(snapshot, false);
+            if (snapshot.current && (!pinnedProcess || !sameOfficialProcess(pinnedProcess, snapshot.current))) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+            remaining = snapshot.processes.length;
+          } else remaining = await processCount();
+          return remaining === 0 && extension.exports?.port === undefined;
+        },
+      });
     },
     async reload() {
       if (!componentRestart) throw new LiveError('OFFICIAL_COMPONENT_RESTART_UNAVAILABLE');
       expectedGeneration = await restartOfficialComponent(expectedGeneration, {
-        api: () => extension.exports, assertCurrent: assertSameExtension, processCount,
+        api: () => extension.exports, assertCurrent: assertSameExtension, processCount: scopedCount,
         execute: command => vscode.commands.executeCommand(command),
       });
+      if (wsl) {
+        const snapshot = await inspectWslProcesses(executable, extension.exports);
+        assertSameExtension();
+        if (currentGeneration() !== expectedGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+        assertWslProcessExclusivity(snapshot, true);
+        pinnedProcess = snapshot.current;
+      }
     },
     async login(signal) {
       if (generation(extension.exports) !== initialGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
@@ -249,6 +287,10 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     OFFICIAL_HUB_API_UNAVAILABLE: tr("liveUi.7570ca6121"),
     OVERRIDE_OR_REMOTE_AUTH_UNSUPPORTED: tr("liveUi.63bdd7b18a"),
     CLOSE_OTHER_AGY_PROCESSES: tr("liveUi.3d351cd7df"),
+    OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN: tr("officialProcess.unownedHub"),
+    OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED: tr("officialProcess.unverifiedOwner"),
+    OFFICIAL_HUB_PROCESS_UNVERIFIED: tr("officialProcess.missingCurrentHub"),
+    OFFICIAL_BACKEND_STOP_TIMEOUT: tr("officialProcess.stopTimeout"),
     CLOSE_ALL_AGY_PROCESSES: tr("liveUi.a2212b3cf0"),
     PROCESS_CHECK_FAILED: tr("liveUi.48b983ce10"),
     OFFICIAL_BACKEND_NOT_STOPPED: tr("liveUi.117b4a7721"),

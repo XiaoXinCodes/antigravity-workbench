@@ -326,7 +326,10 @@ test('WSL workspace host accepts same-host official runtime and never chooses Wi
  f.ui.remoteName='wsl';f.context.extension.extensionKind=2;official.extensionKind=2;
  const main=path.join(official.extensionPath,'extension.js'),previousCache=require.cache[main],previousRun=storage.runPrivate,previousContract=contract.assertOfficialEntrypoint,previousStat=fs.stat,previousAccess=fs.access;
  contract.assertOfficialEntrypoint=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};
- let stopped=false;const calls=[];
+ let stopped=false,birth=1;const calls=[];
+ const processes=require('../out/official-process'),oldInspect=processes.inspectWslProcesses;
+ processes.inspectWslProcesses=async()=>{if(stopped)return{processes:[]};const current={pid:710,parentPid:process.pid,startTicks:String(birth),kind:'current-hub',taskState:'unknown'};return{processes:[current],current};};
+ t.after(()=>{processes.inspectWslProcesses=oldInspect});
  require.cache[main]={loaded:true,exports:{async deactivate(){stopped=true;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'}}}};
  storage.runPrivate=async(executable,args)=>{calls.push({executable,args});return{code:0,stdout:args[0]==='--version'?'agy version 1.2.14':stopped?'':'agy\n',stderr:''}};
  t.after(()=>{contract.assertOfficialEntrypoint=previousContract;fs.stat=previousStat;fs.access=previousAccess;storage.runPrivate=previousRun;if(previousCache)require.cache[main]=previousCache;else delete require.cache[main]});
@@ -335,14 +338,57 @@ test('WSL workspace host accepts same-host official runtime and never chooses Wi
  assert.equal(calls.find(x=>x.args[0]==='--version').executable,path.join(require('node:os').homedir(),'.gemini','bin','agy'));
  assert.ok(!calls.some(x=>/\.exe$/i.test(x.executable)));
  assert.equal(backend.restartMode,'unavailable');await backend.stop();await assert.rejects(backend.reload(),/OFFICIAL_COMPONENT_RESTART_UNAVAILABLE/);assert.ok(!f.events.includes('workbench.action.reloadWindow'));
- f.ui.commandIds=['antigravity.reconnect','antigravity.panel.focus'];f.ui.execute=async command=>{if(command==='antigravity.panel.focus'){stopped=false;official.exports={port:45679,csrfToken:'synthetic-official-csrf'};}};
+ f.ui.commandIds=['antigravity.reconnect','antigravity.panel.focus'];f.ui.execute=async command=>{if(command==='antigravity.panel.focus'){stopped=false;birth++;official.exports={port:45679,csrfToken:'synthetic-official-csrf'};}};
  const restart=await f.api.resolveOfficialLifecycle(f.context,false);await restart.reload();assert.notEqual(restart.generation,'stopped');assert.deepEqual(f.events.slice(-2),f.ui.commandIds);
+ await restart.stop();await restart.reload();await restart.stop();assert.equal(stopped,true,'controlled restart repins the new process birth');
 });
 test('credential host fingerprint isolates WSL from native but remains stable across workspace windows',()=>{
  const {credentialHostId}=require('../out/native-host'),f=setup();
  const native=credentialHostId(f.context);assert.match(native,/^[a-f0-9]{64}$/);
  assert.equal(credentialHostId(f.context,'wsl'),native);
  f.context.extension.extensionKind=2;assert.equal(credentialHostId(f.context),native);assert.notEqual(credentialHostId(f.context,'wsl'),native);
+});
+
+test('WSL orphan preflight blocks before mutation, rejects reused PID before stop and recovers after explicit external exit',async t=>{
+ if(process.platform!=='linux'){t.skip('WSL lifecycle executes on Linux');return;}
+ const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage'),contract=require('../out/official-contract'),environment=require('../out/live-environment'),fs=require('node:fs/promises'),processes=require('../out/official-process');
+ official.isActive=true;const main=path.join(official.extensionPath,'extension.js'),oldCache=require.cache[main],oldRun=storage.runPrivate,oldContract=contract.assertOfficialEntrypoint,oldMode=environment.resolveOfficialStorageMode,oldHash=environment.assertWslBackendExecutable,oldStat=fs.stat,oldAccess=fs.access,oldInspect=processes.inspectWslProcesses;
+ contract.assertOfficialEntrypoint=async()=>{};environment.resolveOfficialStorageMode=async()=> 'wsl-file';environment.assertWslBackendExecutable=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};
+ let peer=true,deactivated=0,stopping=false,exitPolls=0,birth='123';
+ const current={pid:710,parentPid:process.pid,startTicks:'123',kind:'current-hub',taskState:'unknown'},orphan={pid:711,parentPid:702,startTicks:'100',kind:'unowned-hub',taskState:'unknown'};
+ processes.inspectWslProcesses=async()=>{if(stopping&&++exitPolls>=3)return{processes:[]};const owned={...current,startTicks:birth};return{processes:peer?[owned,orphan]:[owned],current:owned};};
+ require.cache[main]={loaded:true,exports:{async deactivate(){deactivated++;stopping=true;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};}}};
+ storage.runPrivate=async(_exe,args)=>{assert.equal(args[0],'--version','WSL process proof must not use global name-only count');return{code:0,stdout:'agy version 1.3.1',stderr:''};};
+ t.after(()=>{contract.assertOfficialEntrypoint=oldContract;environment.resolveOfficialStorageMode=oldMode;environment.assertWslBackendExecutable=oldHash;fs.stat=oldStat;fs.access=oldAccess;storage.runPrivate=oldRun;processes.inspectWslProcesses=oldInspect;if(oldCache)require.cache[main]=oldCache;else delete require.cache[main]});
+ let credentialReads=0;f.context.secrets.get=async()=>{credentialReads++;throw Error('must not read')};
+ await assert.rejects(f.api.resolveOfficialLifecycle(f.context),/OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN/);assert.equal(deactivated,0);assert.equal(credentialReads,0);assert.deepEqual(f.events,[]);assert.equal(f.diag.getState().pending,false);
+ assert.match(f.api.liveErrorMessage('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN'),/任务状态无法确认/);
+ peer=false;const backend=await f.api.resolveOfficialLifecycle(f.context);
+ birth='124';await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION/);assert.equal(deactivated,0,'same PID and Hub API with a new birth must not be stopped');assert.equal(credentialReads,0);
+ birth='123';await backend.stop();assert.equal(deactivated,1);assert.ok(exitPolls>=4,'hook completion alone does not prove child exit');assert.equal(credentialReads,0);
+});
+
+for(const platform of ['darwin','win32']) test(`${platform} native lifecycle preserves exclusivity, waits for exit and restarts without proc access`,async t=>{
+ const originalPlatform=Object.getOwnPropertyDescriptor(process,'platform');Object.defineProperty(process,'platform',{...originalPlatform,value:platform});
+ const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage'),contract=require('../out/official-contract'),environment=require('../out/live-environment'),fs=require('node:fs/promises'),processes=require('../out/official-process');
+ official.isActive=true;const main=path.join(official.extensionPath,'extension.js'),oldCache=require.cache[main],oldRun=storage.runPrivate,oldContract=contract.assertOfficialEntrypoint,oldHash=environment.assertWslBackendExecutable,oldStat=fs.stat,oldAccess=fs.access,oldInspect=processes.inspectWslProcesses;
+ t.after(()=>{Object.defineProperty(process,'platform',originalPlatform);contract.assertOfficialEntrypoint=oldContract;environment.assertWslBackendExecutable=oldHash;fs.stat=oldStat;fs.access=oldAccess;storage.runPrivate=oldRun;processes.inspectWslProcesses=oldInspect;if(oldCache)require.cache[main]=oldCache;else delete require.cache[main]});
+ contract.assertOfficialEntrypoint=async()=>{};environment.assertWslBackendExecutable=async()=>{throw Error('native must not inspect WSL executable')};processes.inspectWslProcesses=async()=>{throw Error('native must not access proc')};
+ fs.stat=async filename=>{assert.equal(path.basename(filename),platform==='win32'?'agy.exe':'agy');return{isFile:()=>true}};fs.access=async(_filename,mode)=>{assert.equal(mode,platform==='win32'?require('node:fs').constants.F_OK:require('node:fs').constants.X_OK)};
+ let count=2,stopping=false,polls=0,deactivated=0,epoch=0;const observed=[];
+ storage.runPrivate=async(executable,args)=>{
+  if(args[0]==='--version')return{code:0,stdout:'agy version 1.3.1',stderr:''};observed.push({executable,args});
+  if(platform==='win32'){assert.equal(executable,path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','tasklist.exe'));assert.deepEqual(args,['/FO','CSV','/NH','/FI','IMAGENAME eq agy.exe']);}
+  else{assert.equal(executable,'/bin/ps');assert.deepEqual(args,['-A','-o','comm=']);}
+  if(stopping&&++polls>=3)count=0;
+  return{code:0,stdout:Array.from({length:count},()=>platform==='win32'?'"agy.exe","710"':'agy').join('\n'),stderr:''};
+ };
+ require.cache[main]={loaded:true,exports:{async deactivate(){deactivated++;stopping=true;polls=0;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};}}};
+ f.ui.commandIds=['antigravity.reconnect','antigravity.panel.focus'];f.ui.execute=async command=>{if(command==='antigravity.panel.focus'){stopping=false;count=1;epoch++;official.exports={port:45678,csrfToken:'synthetic-native-csrf-'+epoch};}};
+ await assert.rejects(f.api.resolveOfficialLifecycle(f.context),/CLOSE_OTHER_AGY_PROCESSES/);assert.equal(deactivated,0);
+ count=1;const backend=await f.api.resolveOfficialLifecycle(f.context);assert.equal(backend.fileOnlyGuard,undefined);
+ await backend.stop();assert.ok(polls>=4);await backend.reload();const first=backend.generation;await backend.stop();await backend.reload();assert.notEqual(backend.generation,first);assert.equal(deactivated,2);
+ assert.ok(observed.length>0);assert.ok(!f.events.includes('workbench.action.reloadWindow'));
 });
 
 
@@ -404,6 +450,9 @@ test('Login rechecks generation after awaited file proof and sends no RPC to a r
  const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage'),contract=require('../out/official-contract'),fs=require('node:fs/promises'),environment=require('../out/live-environment'),proof=require('../out/live-wsl-proof'),hub=require('../out/live-hub');
  official.isActive=true;const main=path.join(official.extensionPath,'extension.js'),oldCache=require.cache[main],oldRun=storage.runPrivate,oldContract=contract.assertOfficialEntrypoint,oldStat=fs.stat,oldAccess=fs.access,oldMode=environment.resolveOfficialStorageMode,oldHash=environment.assertWslBackendExecutable,oldGuard=proof.createWslFileGuard,oldLogin=hub.loginWithOfficialHub;
  contract.assertOfficialEntrypoint=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};environment.resolveOfficialStorageMode=async()=> 'wsl-file';environment.assertWslBackendExecutable=async()=>{};
+ const processes=require('../out/official-process'),oldInspect=processes.inspectWslProcesses;
+ processes.inspectWslProcesses=async()=>{const current={pid:710,parentPid:process.pid,startTicks:'123',kind:'current-hub',taskState:'unknown'};return{processes:[current],current};};
+ t.after(()=>{processes.inspectWslProcesses=oldInspect});
  let drift=false,logins=0;proof.createWslFileGuard=()=>async()=>{if(drift)official.exports={port:45678,csrfToken:'synthetic-new-generation'};return true};hub.loginWithOfficialHub=async()=>{logins++};
  require.cache[main]={loaded:true,exports:{deactivate:async()=>{}}};storage.runPrivate=async(_executable,args)=>({code:0,stdout:args[0]==='--version'?'agy version 1.2.14':process.platform==='win32'?'"agy.exe","321"':'agy\n',stderr:''});
  t.after(()=>{contract.assertOfficialEntrypoint=oldContract;fs.stat=oldStat;fs.access=oldAccess;storage.runPrivate=oldRun;environment.resolveOfficialStorageMode=oldMode;environment.assertWslBackendExecutable=oldHash;proof.createWslFileGuard=oldGuard;hub.loginWithOfficialHub=oldLogin;if(oldCache)require.cache[main]=oldCache;else delete require.cache[main]});

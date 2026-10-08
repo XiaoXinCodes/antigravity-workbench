@@ -4,6 +4,16 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC; see each release's notes for installation and validation scope.
 
+## [0.1.1](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.1) — 2026-10-08
+
+- WSL switching verifies the current Hub's executable, host, port and process start identity. An external or leftover Hub with unknown task activity blocks switching with a specific explanation; no process is automatically terminated.
+- After the official stop hook returns, wait up to ten seconds to observe actual backend exit before continuing. Controlled restarts rebind process identity so consecutive operations do not reuse the old process proof.
+- Preserve existing process exclusivity and credential protections. Add regressions for PID reuse, changed start identity, delayed exit, consecutive restarts and macOS / Windows fallback paths.
+
+This update does not change the official component's startup cancellation or claim to prevent all leftover Hubs after host exit. Complete switching with a real account and real image calls were not acceptance tests for this version. Manually stopping a previously identified backend is not live validation of the patch.
+
+[Release notes](docs/RELEASE_0.1.1.md#english) · [Validation scope](docs/VALIDATION_0.1.1.md) (Chinese)
+
 ## [0.1.0](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.0) — 2026-10-08
 
 First release in this repository.
