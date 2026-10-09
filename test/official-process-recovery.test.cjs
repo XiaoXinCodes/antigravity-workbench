@@ -346,16 +346,25 @@ test('Windows validates synthetic child identity and force-ends only a separatel
   const compile = `$ErrorActionPreference='Stop'; Add-Type -TypeDefinition '${source}' -Language CSharp -OutputType ConsoleApplication -OutputAssembly '${executable.replace(/'/g, "''")}'`;
   const compiled = await require('../out/live-storage').runPrivate(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(compile, 'utf16le').toString('base64')], '', 8192);
   assert.equal(compiled.code, 0, 'system PowerShell must compile the inert synthetic fixture');
-  const inspectChild = async (profile, flags, endFixture=false) => {
+  const inspectChild = async (profile, flags, { endFixture = false, rejectEnd = false, extraEnv = {} } = {}) => {
     // libuv restores missing HOMEDRIVE/HOMEPATH from the parent on Windows.
     // Set the whole synthetic scope explicitly rather than mixing two homes.
-    const child = spawn(executable, ['--hub', '--app_data_dir=antigravity', ...flags], { env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: profile, HOMEDRIVE:home.slice(0,2),HOMEPATH:home.slice(2) }, stdio: 'ignore', windowsHide: true });
+    const child = spawn(executable, ['--hub', '--app_data_dir=antigravity', ...flags], { env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: profile, HOMEDRIVE:home.slice(0,2),HOMEPATH:home.slice(2), ...extraEnv }, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     const closed = new Promise(resolve => child.once('close', resolve));
     try {
       const request = { operation: 'inspect', pid: child.pid, executable, home, ownerPid: process.pid, port: 32123, csrfToken: 'synthetic-current-capability' };
       const result = await runWindowsProcessHelper(request);
       assert.equal(child.exitCode, null, 'read-only fixture inspection must not terminate its target');
+      if (rejectEnd) {
+        assert.equal(result.code, undefined);
+        assert.equal(result.credentialScopeVerified, false);
+        let checks = 0;
+        const ended = await runWindowsProcessHelper({ ...request, operation: 'end', target: result }, undefined, () => { checks++; });
+        assert.equal(ended.code, 'OFFICIAL_PROCESS_SELECTION_STALE');
+        assert.equal(checks, 0, 'unsupported credential scope must reject before host authorization');
+        assert.equal(child.exitCode, null, 'unsupported fixture must remain alive after rejected termination');
+      }
       if(endFixture){
         assert.equal(result.code,undefined,JSON.stringify({code:result.code,stage:result.stage}));
         assert.equal(result.credentialScopeVerified, true);
@@ -376,5 +385,27 @@ test('Windows validates synthetic child identity and force-ends only a separatel
   for (const [profile, flags] of [['.', normalFlags], ['C:relative', normalFlags], [home, ['--hub-port=32124\n', normalFlags[1]]], [home, [normalFlags[0], '--csrf_token=synthetic-foreign-capability\n']], [home, [...normalFlags, '--hub']]]) {
     inspected = await inspectChild(profile, flags); assert.ok(inspected.result.code || inspected.result.credentialScopeVerified === false, 'relative scope and malformed argv must fail closed');
   }
-  await inspectChild(home,normalFlags,true);
+  await inspectChild(home, normalFlags, { endFixture: true });
+  const officialEnv = {
+    HOME: home, AGY_ENABLE_HUB: '1', ANTIGRAVITY_VSCODE_HOST: '1', ANTIGRAVITY_AUTH_SUCCESS_APP: 'vscode-insiders',
+    APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+    HTTP_PROXY: 'http://synthetic-proxy.example.test:8080', NODE_EXTRA_CA_CERTS: path.join(home, 'synthetic-ca.pem'),
+  };
+  const officialFlags = [...normalFlags, `--add-dir=${path.join(path.dirname(home), 'synthetic workspace outside HOME')}`, `--add-dir=${path.join(home, 'workspace=one')}`];
+  inspected = await inspectChild(home, officialFlags, { extraEnv: officialEnv, endFixture: true });
+  assert.equal(inspected.result.credentialScopeVerified, true, 'official markers and multi-root argv must pass native PEB and CommandLineToArgvW parsing');
+  assert.equal(inspected.result.credentialScopeReason, 'verified');
+  assert.doesNotMatch(JSON.stringify(inspected.result), /synthetic workspace|workspace=one|AGY_ENABLE_HUB|NODE_EXTRA_CA_CERTS|synthetic-foreign-capability/);
+  for (const [label, extraEnv, flags, reason] of [
+    ['empty auth override', { GOOGLE_API_KEY: '' }, officialFlags, 'auth-environment-override'],
+    ['empty service override', { ANTIGRAVITY_SERVER_URL: '' }, officialFlags, 'config-environment-override'],
+    ['empty CDE marker', { ANTIGRAVITY_CDE: '' }, officialFlags, 'config-environment-override'],
+    ['invalid callback marker', { ANTIGRAVITY_AUTH_SUCCESS_APP: 'vscode://' }, officialFlags, 'config-environment-override'],
+    ['unknown custom server argument', {}, [...officialFlags, '--synthetic-unsupported=synthetic-private-value'], 'unsupported-launch-flags'],
+    ['empty workspace argument', {}, [...officialFlags, '--add-dir='], 'unsupported-launch-flags'],
+  ]) {
+    inspected = await inspectChild(home, flags, { extraEnv: { ...officialEnv, ...extraEnv }, rejectEnd: true });
+    assert.equal(inspected.result.credentialScopeReason, reason, label);
+    assert.doesNotMatch(JSON.stringify(inspected.result), /synthetic-private-value|synthetic-foreign-capability|GOOGLE_API_KEY|ANTIGRAVITY_SERVER_URL/);
+  }
 });
