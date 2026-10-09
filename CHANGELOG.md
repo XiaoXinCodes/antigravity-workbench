@@ -4,6 +4,17 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.5](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.5) — 2026-10-09
+
+导入账号后立即核验服务器身份并查询额度，重复账号可选择覆盖或跳过。
+
+- 自动核验导入凭证并显示额度结果，无需先切换账号。
+- 同账号可覆盖原副本或跳过；存在多个旧副本时明确选择覆盖目标，保留原位置。
+- 改善取消、保存失败与恢复时的凭证保全，并清理已删除副本的导入候选。
+- 导入保持当前官方登录；导出不会更改账号状态。
+
+[Release notes](docs/RELEASE_0.1.5.md) · [Validation scope](docs/VALIDATION_0.1.5.md)
+
 ## [0.1.4](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.4) — 2026-10-08
 
 遇到其他窗口或遗留后台阻止切号时，可查看详情并处理所选后台。
