@@ -55,6 +55,14 @@ test('persistent state has atomic disk claims across independent stores and reje
   const link=path.join(root,'link');await fs.symlink(directory,link);await assert.rejects(new PrivateState(link,parseWakeState,initialWakeState).read(),/UNSAFE/);
  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
+test('persistent incomplete lock is bounded, remains intact and cannot write state',async()=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ag-automation-incomplete-lock-')));try{
+  const directory=path.join(root,'private'),lock=path.join(directory,'.agm-operation.lock');await fs.mkdir(directory,{mode:0o700});await fs.mkdir(lock,{mode:0o700});
+  const before=await fs.lstat(lock),store=new PrivateState(directory,parseWakeState,initialWakeState);let entered=false;
+  await assert.rejects(store.transaction(()=>{entered=true}),/LOCK_RECORD_REQUIRES_MANUAL_CHECK/);assert.equal(entered,false);
+  const after=await fs.lstat(lock);assert.equal(after.ino,before.ino);assert.equal(after.dev,before.dev);assert.deepEqual(await fs.readdir(lock),[]);await assert.rejects(fs.lstat(path.join(directory,'state.json')),{code:'ENOENT'});
+ }finally{await fs.rm(root,{recursive:true,force:true})}
+});
 test('protocol has positive output budget, fixed endpoint, final stream proof and separate actual usage',async()=>{
  const binding={token:'synthetic-bearer',projectId:'synthetic-project',modelId:'synthetic-model-a',endpoint:'daily',verify:async()=>{}};for(const budget of [0,-1,65,NaN])assert.throws(()=>wakeRequestBody(binding,budget),/INVALID/);
  let sent=false,options,body;const transport=(opts,receive)=>{assert.equal(sent,true);options=opts;const req=new EventEmitter();req.destroy=()=>{};req.end=text=>{body=JSON.parse(text);const res=new EventEmitter();res.statusCode=200;receive(res);res.emit('data',Buffer.from('data: {"response":{"candidates":[{"finishReason":"MAX_TOKENS"}],"usageMetadata":{"candidatesTokenCount":8,"totalTokenCount":23}}}\n\n'));res.emit('end')};return req};

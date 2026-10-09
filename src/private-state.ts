@@ -51,11 +51,12 @@ export class PrivateState<T> implements LocalState<T> {
         return result;
       });
       // Another window may briefly write between claim and sent marker. Wait
-      // only for a reported live lock conflict; never infer staleness from age.
+      // only for a live conflict or an incomplete marker. Every retry acquires
+      // through LiveLocks again; uncertain records are never removed or used.
       const deadline = Date.now() + 2000;
       for (;;) {
         try { return await transaction(); }
-        catch (e) { if (!(e instanceof LiveError) || e.code !== 'LIVE_OPERATION_OR_RECOVERY_LOCKED' || Date.now() >= deadline) throw e; }
+        catch (e) { if (!(e instanceof LiveError) || !['LIVE_OPERATION_OR_RECOVERY_LOCKED', 'LOCK_RECORD_REQUIRES_MANUAL_CHECK'].includes(e.code) || Date.now() >= deadline) throw e; }
         await new Promise(resolve => setTimeout(resolve, 20));
       }
     });
