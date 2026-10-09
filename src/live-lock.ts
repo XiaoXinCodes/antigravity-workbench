@@ -10,6 +10,18 @@ export interface LockOwner { schema: 1 | 2; owner: string; id: string; pid: numb
 export type ProcessIdentity = { state: 'alive'; startIdentity: string } | { state: 'dead' } | { state: 'unknown' };
 export type ProcessProbe = (pid: number) => Promise<ProcessIdentity>;
 export interface LockInspection { state: 'absent' | 'active' | 'stale' | 'uncertain'; reason?: string; owner?: LockOwner }
+export interface LockActivity extends LockInspection {
+  kind: 'image' | 'account' | 'recovery' | 'unknown';
+  scope: 'this-process' | 'other-process' | 'other-profile' | 'unknown';
+}
+/** Captured at the failed acquisition, before a different task can replace it.
+ * Classification is informational; it never authorizes process termination. */
+export class LockConflictError extends LiveError {
+  readonly activity: LockActivity;
+  constructor(code: string, activity: LockActivity) {
+    super(code); this.activity = structuredClone(activity);
+  }
+}
 export interface LiveLockOptions { probe?: ProcessProbe; pid?: number; purpose?: 'image' }
 export interface ProcessProbeRuntime {
   platform?: NodeJS.Platform;
@@ -122,12 +134,39 @@ export class LiveLocks {
     catch (error) { return { state: 'uncertain', reason: error instanceof LiveError ? error.code : 'LOCK_PROCESS_STATUS_UNKNOWN' }; }
   }
   async inspectOperation(): Promise<LockInspection> { return this.inspect(this.operation); }
+  private activity(inspection: LockInspection, location: 'operation' | 'recovery'): LockActivity {
+    const owner = inspection.owner;
+    if (inspection.state === 'active' && owner?.schema === 2 && owner.startIdentity) {
+      return { ...inspection, kind: location === 'recovery' ? 'recovery' : owner.purpose === 'image' ? 'image' : 'account',
+        scope: owner.pid === this.pid ? 'this-process' : 'other-process' };
+    }
+    return { ...inspection, kind: 'unknown', scope: inspection.reason === 'LOCK_BELONGS_TO_OTHER_PROFILE' ? 'other-profile' : 'unknown' };
+  }
+  /** Read-only hints. The subsequent atomic acquisition remains mandatory. */
+  async inspectOperationActivity(): Promise<LockActivity> { return this.activity(await this.inspectOperation(), 'operation'); }
+  async inspectRecoveryActivity(): Promise<LockActivity> { return this.activity(await this.inspectRecovery(), 'recovery'); }
+  private sameOwner(a: LockOwner | undefined, b: LockOwner | undefined): boolean {
+    return !!a && !!b && a.schema === 2 && b.schema === 2 && !!a.startIdentity && !!b.startIdentity &&
+      a.owner === b.owner && a.id === b.id && a.pid === b.pid && a.nonce === b.nonce &&
+      a.startIdentity === b.startIdentity && a.purpose === b.purpose;
+  }
+  /** A confirmation for a completed image must not cancel a later image. */
+  async isOperationCurrent(expected: LockInspection): Promise<boolean> {
+    if (expected.state !== 'active') return false;
+    const current = await this.inspectOperation();
+    return current.state === 'active' && this.sameOwner(expected.owner, current.owner);
+  }
   /** Recognize only this instance's currently held, fully identified operation. */
   ownsOperation(inspection: LockInspection): boolean {
-    const owner = inspection.owner, held = this.heldOperation;
-    return inspection.state === 'active' && !!owner && !!held && owner.schema === 2 && !!owner.startIdentity &&
-      owner.schema === held.schema && owner.owner === held.owner && owner.id === held.id && owner.pid === held.pid &&
-      owner.nonce === held.nonce && owner.startIdentity === held.startIdentity && owner.purpose === held.purpose;
+    return inspection.state === 'active' && this.sameOwner(inspection.owner, this.heldOperation);
+  }
+  /** Recheck inside sensitive callbacks and immediately before commit. No repair,
+   * cancellation, acquisition or release is performed by this guard. */
+  async assertOperationHeld(): Promise<void> {
+    if (!this.heldOperation) throw new LiveError('LOCK_OPERATION_REQUIRED');
+    const current = await this.inspectOperation();
+    if (this.ownsOperation(current)) return;
+    throw new LiveError(current.state === 'uncertain' ? current.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN' : 'LOCK_OWNERSHIP_CHANGED');
   }
   async inspectRecovery(): Promise<LockInspection> { return this.inspect(this.recovery); }
   private async create(location: string, id: string): Promise<LockOwner> {
@@ -262,7 +301,7 @@ export class LiveLocks {
   private async recover(location: string): Promise<boolean> {
     const snapshot = await this.read(location); if (!snapshot) return false;
     const status = await this.classify(snapshot);
-    if (status.state !== 'stale') throw new LiveError(status.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN');
+    if (status.state !== 'stale') throw new LockConflictError(status.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN', this.activity(status, location === this.recovery ? 'recovery' : 'operation'));
     await this.remove(location, snapshot, true); return true;
   }
   async recoverAbandonedOperation(): Promise<boolean> { return this.recover(this.operation); }
@@ -272,11 +311,15 @@ export class LiveLocks {
     catch (error) {
       if (!(error instanceof LiveError) || error.code !== 'LIVE_OPERATION_OR_RECOVERY_LOCKED') throw error;
       const state = await this.inspectOperation();
-      if (state.state === 'active' || state.reason === 'LOCK_BELONGS_TO_OTHER_PROFILE') throw error;
-      if (state.state === 'uncertain') throw new LiveError(state.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN');
+      if (state.state === 'active' || state.reason === 'LOCK_BELONGS_TO_OTHER_PROFILE') throw new LockConflictError(error.code, this.activity(state, 'operation'));
+      if (state.state === 'uncertain') throw new LockConflictError(state.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN', this.activity(state, 'operation'));
       if (state.state === 'stale') await this.recoverAbandonedOperation();
       // Another window may win this single retry; never clear its live owner.
-      lock = await this.create(this.operation, randomUUID());
+      try { lock = await this.create(this.operation, randomUUID()); }
+      catch (retryError) {
+        if (!(retryError instanceof LiveError) || retryError.code !== 'LIVE_OPERATION_OR_RECOVERY_LOCKED') throw retryError;
+        throw new LockConflictError(retryError.code, await this.inspectOperationActivity());
+      }
     }
     this.heldOperation = lock;
     try { return await fn(); }

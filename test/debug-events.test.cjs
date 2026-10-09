@@ -44,6 +44,20 @@ test('only known exact fixed error and guard codes survive',()=>{
  for(const guard of [{version:1,reason:'UNKNOWN_SECRET',generationAllowed:true},{version:2,reason:'PROMPT',generationAllowed:true},{version:1,reason:'PROMPT',generationAllowed:'SENTINEL'}])assert.equal(sanitizeDebugData({guard}),undefined);
  assert.deepEqual(sanitizeDebugData({code:'IMAGE_REQUEST_SCOPE_DENIED',guard:{version:1,reason:'FRAMEWORK_METADATA',generationAllowed:'unknown'}}),{code:'IMAGE_REQUEST_SCOPE_DENIED',guard:{version:1,reason:'FRAMEWORK_METADATA',generationAllowed:'unknown'}});
 });
+test('known account-lock conflicts retain exact codes in stored failure summaries and debug exports',async()=>{
+ const {LiveError}=require('../out/live-storage');
+ const {readLastAccountFailure}=require('../out/last-account-failure');
+ const f=fixture();await f.log.setEnabled(true);
+ for(const code of ['LIVE_OPERATION_OR_RECOVERY_LOCKED','LIVE_OPERATION_IN_PROGRESS','LOCK_BELONGS_TO_OTHER_PROFILE','LOCK_PROCESS_IDENTITY_UNAVAILABLE','LOCK_PROCESS_STATUS_UNKNOWN','LOCK_PROCESS_STILL_ALIVE','LOCK_RECORD_UNWRITABLE']){
+  assert.equal(debugErrorCode(new LiveError(code)),code);
+  const failure={schema:1,at:'2026-10-09T00:00:00.000Z',action:'import',stage:'command',phase:'none',code};
+  assert.deepEqual(readLastAccountFailure(failure),failure);
+  f.log.begin('account.import').end('blocked',{code});
+ }
+ const preview=await f.log.preview();assert.doesNotMatch(preview,/UNCLASSIFIED_ERROR/);
+ assert.match(preview,/LIVE_OPERATION_OR_RECOVERY_LOCKED/);assert.match(preview,/LOCK_PROCESS_STILL_ALIVE/);
+ for(const value of ['LOCK_PROCESS_STILL_ALIVE\nsecret','LOCK_RECORD_UNWRITABLE-SENTINEL'])assert.equal(debugErrorCode(new LiveError(value)),'UNCLASSIFIED_ERROR');
+});
 test('bounds reject unbounded counts, unknown states and metadata contents',async()=>{
  const f=fixture();const log=new DebugRecorder(f.store,{version:'1.2.3-SENTINEL',host:'wsl+SENTINEL',platform:'linux-SENTINEL'});await log.setEnabled(true);log.begin('account.capture').end('completed',{count:Infinity,requestedCount:-1,completedCount:10001,status:'secret'});const text=f.records.join('');assert.doesNotMatch(text,/SENTINEL|Infinity|requestedCount|completedCount/);assert.equal(JSON.parse(f.records[0]).version,'unknown');
 });

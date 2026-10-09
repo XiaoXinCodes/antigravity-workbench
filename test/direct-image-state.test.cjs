@@ -7,13 +7,13 @@ const path=require('node:path');
 const accountId='00000000-0000-4000-8000-000000000001', modelId='gemini-3.1-flash-image';
 const choices={accounts:[{id:accountId,label:'synthetic',expectedEmail:'a@example.test',active:true}],models:[{id:modelId,label:modelId}]};
 const tick=()=>new Promise(setImmediate);
-async function fixture(t, storage = new Map()) {
+async function fixture(t, storage = new Map(), options = {}) {
  const output=await fs.mkdtemp(path.join(os.tmpdir(),'agm-image-state-'));t.after(()=>fs.rm(output,{recursive:true,force:true}));
  const commands=new Map(),states=[],panels=[];let decide,lateChoice,reading=0,runs=[],finishRun,currentChoices=choices;
  const direct={getEndpoint:()=> 'production',readChoices:async()=>{reading++;if(lateChoice)return lateChoice;return currentChoices;},
   run:async(request,signal,_progress,id)=>{runs.push({request,signal,id,progress:_progress});const result=await new Promise(resolve=>{finishRun=resolve;});if(result instanceof Error)throw result;return result||{images:[],batch:{outcome:'complete'}};}};
  const uri=file=>({scheme:'file',authority:'',fsPath:file,path:file});
- const vscode={ViewColumn:{Active:1},env:{},workspace:{workspaceFolders:[{uri:uri(output)}]},
+ const vscode={ViewColumn:{Active:1},env:{},workspace:{workspaceFolders:options.noWorkspace?[]:[{uri:uri(output)}]},
   commands:{registerCommand:(id,fn)=>{commands.set(id,fn);return{dispose(){}};}},window:{showWarningMessage:()=>new Promise(resolve=>{decide=resolve;}),
    createWebviewPanel:()=>{const panel={webview:{postMessage:async state=>states.push(structuredClone(state)),onDidReceiveMessage:fn=>{panel.receive=fn;return{dispose(){}};}},onDidDispose:fn=>{panel.close=fn;return{dispose(){}};},reveal(){}};panels.push(panel);return panel;}}};
  const entry=require.resolve('../out/direct-image-ui'),original=Module._load;Module._load=function(name,...args){return name==='vscode'?vscode:original.call(this,name,...args);};
@@ -124,4 +124,76 @@ test('closing an in-flight panel keeps its late result bound to the old task and
  f.finish({images:[{file:path.join(f.states.at(-1).outputDirectory,'committed-before-cancel.png'),width:32,height:32}],batch:{outcome:'complete'}});await tick();await tick();
  await f.send({...f.generate,prompt:'next scene'});f.decide();await tick();assert.equal(f.runs.length,2);f.finish(Error('IMAGE_CANCELLED'));await tick();await tick();
  const tasks=f.states.at(-1).tasks;assert.equal(tasks[0].id,firstId);assert.equal(tasks[0].images[0].name,'committed-before-cancel.png');assert.equal(tasks[1].images.length,0);assert.equal(tasks[1].phase,'cancelled');
+});
+
+test('stale draft revisions cannot replace newer text or change the confirmed request',async t=>{
+ const f=await fixture(t);
+ await f.send({...f.generate,type:'draft',prompt:'ABC',draftRevision:3});
+ await f.send({...f.generate,type:'draft',prompt:'A',draftRevision:1});
+ assert.equal(f.states.at(-1).draft.prompt,'ABC');
+ assert.equal(f.states.at(-1).draftRevision,3);
+ await f.send({...f.generate,prompt:'ABC',draftRevision:3});f.decide();await tick();
+ assert.equal(f.runs[0].request.prompt,'ABC');f.finish();await tick();await tick();
+ f.panels.at(-1).close();await f.open();
+ await f.send({...f.generate,type:'draft',prompt:'fresh reopened edit',draftRevision:1});
+ assert.equal(f.states.at(-1).draft.prompt,'fresh reopened edit');assert.equal(f.states.at(-1).draftRevision,1);
+});
+
+test('missing description and save location give distinct actionable errors before confirmation or send',async t=>{
+ const blank=await fixture(t);await blank.send({...blank.generate,prompt:''});
+ assert.match(blank.states.at(-1).status,/画面描述/);assert.equal(blank.runs.length,0);assert.equal(blank.states.at(-1).tasks.length,0);
+ const noWorkspace=await fixture(t,new Map(),{noWorkspace:true});await noWorkspace.send(noWorkspace.generate);
+ assert.match(noWorkspace.states.at(-1).status,/选择保存位置/);assert.equal(noWorkspace.runs.length,0);assert.equal(noWorkspace.states.at(-1).tasks.length,0);
+});
+
+test('sent request cancellation explains unknown server outcome and already loaded image errors relocalize',async t=>{
+ const {setLanguage}=require('../out/i18n');const f=await fixture(t);
+ await f.send(f.generate);f.decide();await tick();await f.send({type:'cancel'});
+ f.finish(Object.assign(Error('IMAGE_DIRECT_OUTCOME_UNKNOWN'),{modelSource:'saved-account',projectSource:'saved-token'}));await tick();await tick();
+ assert.match(f.states.at(-1).status,/服务端结果未知/);assert.match(f.states.at(-1).status,/消耗额度/);assert.equal(f.states.at(-1).busy,false);
+ try{setLanguage('en');const translated=f.states.at(-1);assert.match(translated.status,/server outcome/i);assert.doesNotMatch(translated.status,/[\u3400-\u9fff]/u);assert.doesNotMatch(translated.tasks[0].status,/[\u3400-\u9fff]/u);
+  f.setChoices({accounts:choices.accounts,models:[],readiness:'error',accountMessage:'IMAGE_SAVED_MODELS_FORBIDDEN'});setLanguage('zh-CN');await f.send({type:'checkAccount'});
+  assert.match(f.states.at(-1).accountStatus,/Google 拒绝/);setLanguage('en');assert.match(f.states.at(-1).accountStatus,/Google denied/);assert.doesNotMatch(f.states.at(-1).accountStatus,/[\u3400-\u9fff]/u);
+ }finally{setLanguage('zh-CN');f.panels.at(-1).close();await f.controller.flush()}
+});
+
+test('existing composite account errors switch to English without translating account labels or IDs',async t=>{
+ const {setLanguage}=require('../out/i18n');const f=await fixture(t);
+ f.setChoices({accounts:choices.accounts,models:[],readiness:'error',accountMessage:'IMAGE_SAVED_MODELS_FORBIDDEN'});await f.send({type:'checkAccount'});
+ assert.match(f.states.at(-1).accountStatus,/Google 拒绝/);
+ try{setLanguage('en');assert.doesNotMatch(f.states.at(-1).accountStatus,/[\u3400-\u9fff]/u);assert.match(f.states.at(-1).accountStatus,/Google denied/);assert.equal(f.states.at(-1).choices.accounts[0].id,accountId);
+ }finally{setLanguage('zh-CN');f.panels.at(-1).close();await f.controller.flush()}
+});
+
+test('production webview preserves unfocused new edits and submits the complete prompt despite queued echoes',()=>{
+ const f=require('./helpers/image-webview.cjs').imageWebview();
+ const state={type:'state',busy:false,draftRevision:0,draftEpoch:0,actionRevision:0,status:'ready',references:[],choices,outputDirectory:'/synthetic/output',tasks:[],draft:{prompt:'',accountId,modelId,ratio:'1:1',count:1,size:'auto',quality:'auto',followCurrent:true}};
+ f.message(state);assert.equal(f.el('generate').disabled,true);assert.match(f.el('formHint').textContent,/画面描述/);
+ f.el('prompt').focus();for(const prompt of ['A','AB','ABC']){f.el('prompt').value=prompt;f.el('prompt').dispatch('input')}
+ f.el('count').focus();f.message({...state,draftRevision:1,draft:{...state.draft,prompt:'A'}});
+ assert.equal(f.el('prompt').value,'ABC');assert.equal(f.el('generate').disabled,false);
+ f.el('generate').click();assert.equal(f.sent.at(-1).prompt,'ABC');assert.equal(f.sent.at(-1).draftRevision,3);
+ // A queued idle echo must not unlock a just-submitted action.
+ f.message({...state,draftRevision:3,draft:{...state.draft,prompt:'ABC'}});assert.equal(f.el('generate').disabled,true);const count=f.sent.length;f.el('generate').click();assert.equal(f.sent.length,count);
+ f.message({...state,draftRevision:3,actionRevision:1,draft:{...state.draft,prompt:'ABC'}});assert.equal(f.el('generate').disabled,false);
+ // Explicitly loading a saved draft remains authoritative, including when the old textarea is focused.
+ f.el('prompt').focus();f.message({...state,draftEpoch:1,draftRevision:3,actionRevision:1,draft:{...state.draft,prompt:'saved draft'}});assert.equal(f.el('prompt').value,'saved draft');
+ f.message({...state,draftRevision:3,actionRevision:1,draft:{...state.draft,prompt:'late old draft'}});assert.equal(f.el('prompt').value,'saved draft');
+ // A previous account's idle echo cannot enable generation during a new selection.
+ f.el('account').value='saved-B';f.el('account').dispatch('change');assert.equal(f.el('generate').disabled,true);
+ f.message({...state,draftEpoch:1,draftRevision:3,actionRevision:1,draft:{...state.draft,prompt:'saved draft'}});assert.equal(f.el('generate').disabled,true);assert.equal(f.el('account').value,'saved-B');
+});
+
+test('production webview guides missing save location and labels a stopped sent request as outcome unconfirmed',()=>{
+ const f=require('./helpers/image-webview.cjs').imageWebview();
+ const state={type:'state',busy:false,status:'ready',references:[],choices,outputDirectory:'',tasks:[],draft:{prompt:'synthetic',accountId,modelId,ratio:'1:1',count:1,size:'auto',quality:'auto',followCurrent:true}};
+ f.message(state);assert.equal(f.el('generate').disabled,true);assert.match(f.el('formHint').textContent,/选择保存位置/);
+ f.message({...state,outputDirectory:'/synthetic/output',tasks:[{id:'synthetic-task',createdAt:'2026-10-09T00:00:00Z',phase:'cancelled',status:'IMAGE_DIRECT_OUTCOME_UNKNOWN',promptSummary:'synthetic',modelId,ratio:'1:1',count:1,size:'auto',quality:'auto',images:[]}]});
+ const heading=f.el('tasks').children[0].children[0];assert.equal(heading.children[1].textContent,'结果未确认');assert.equal(f.el('generate').disabled,false);
+});
+
+test('cancelling a pending native generation consent releases this task before the dialog replies',async t=>{
+ const f=await fixture(t);await f.send(f.generate);assert.equal(f.states.at(-1).busy,true);
+ await f.send({type:'cancel'});await tick();assert.equal(f.states.at(-1).busy,false);assert.equal(f.states.at(-1).tasks[0].phase,'cancelled');assert.equal(f.runs.length,0);
+ f.decide();await tick();assert.equal(f.runs.length,0);f.panels.at(-1).close();await f.controller.flush();
 });

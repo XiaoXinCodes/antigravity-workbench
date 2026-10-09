@@ -6,7 +6,7 @@ const settle=()=>new Promise(setImmediate);
 function setup(options={}){
  const commands=new Map(),events=[],state=options.state??new Map(),warnings=[],notifications=[];
  const ui={answer:undefined,trusted:true,selected:undefined,remoteName:undefined,official:undefined,config:{}};
- const vscode={UIKind:{Desktop:1},ExtensionKind:{UI:1,Workspace:2},env:{uiKind:1,get remoteName(){return ui.remoteName;}},extensions:{getExtension(id){return id==='google.google-antigravity'?ui.official:undefined;}},workspace:{get isTrusted(){return ui.trusted;},getConfiguration(){return{get:key=>ui.config[key]};}},commands:{async getCommands(){return ui.commandIds||[];},registerCommand(n,fn){commands.set(n,fn);return {dispose(){}};},async executeCommand(n){events.push(n);if(ui.execute)await ui.execute(n);}},window:{onDidChangeWindowState(fn){ui.focus=fn;return{dispose(){}};},async showWarningMessage(text){warnings.push(text);return ui.answer;},async showQuickPick(){return ui.selected;},async showInformationMessage(text){notifications.push(text);return undefined;}}};
+ const vscode={UIKind:{Desktop:1},ExtensionKind:{UI:1,Workspace:2},env:{uiKind:1,get remoteName(){return ui.remoteName;}},extensions:{getExtension(id){return id==='google.google-antigravity'?ui.official:undefined;}},workspace:{get isTrusted(){return ui.trusted;},getConfiguration(){return{get:key=>ui.config[key]};}},commands:{async getCommands(){return ui.commandIds||[];},registerCommand(n,fn){commands.set(n,fn);return {dispose(){}};},async executeCommand(n){events.push(n);if(ui.execute)await ui.execute(n);}},window:{onDidChangeWindowState(fn){ui.focus=fn;return{dispose(){}};},async showWarningMessage(text,_options,action){warnings.push(text);const answer=ui.answer;return typeof answer==='function'?answer(text,action):answer;},async showQuickPick(){return ui.selected;},async showInformationMessage(text){notifications.push(text);return undefined;}}};
  const original=Module._load;Module._load=function(n,...args){return n==='vscode'?vscode:original.call(this,n,...args);};
  let api;try{delete require.cache[entry];api=require(entry);}finally{Module._load=original;}
  const context={secrets:{get:async()=>undefined},globalState:{get(k,d){return state.has(k)?state.get(k):d;},async update(k,v){state.set(k,v);}},extension:{extensionKind:1},extensionUri:{scheme:'file',authority:''},globalStorageUri:{scheme:'file',authority:'',toString:()=> 'file:///synthetic-private-home'},subscriptions:[]};
@@ -37,65 +37,67 @@ function officialSyncFixture(t){
 
 function processRecoveryFixture(t) {
  const {t:tr}=require('../out/i18n'),{LiveError}=require('../out/live-storage');
- let rows=[{id:'synthetic-process-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true}],endHook;
+ let rows=[{id:'synthetic-process-selection',pid:710,parentPid:1,startedAt:'2026-10-08T11:00:00Z',owner:'detached',scope:'detached',parentState:'gone',taskState:'unknown',canEnd:true}],endHook;
  const scans=[],ends=[];
- const recovery={async scan(){scans.push(rows.map(p=>p.pid));return{phase:rows.length?'blocked':'clear',processes:rows.map(p=>({...p})),canContinue:!rows.length};},async end(id,signal){ends.push(id);if(endHook)return endHook(id,signal);rows=[];return'exited';},invalidate(){}};
+ const recovery={async scan(){scans.push(rows.map(p=>p.pid));return{phase:rows.length?'blocked':'clear',processes:rows.map(p=>({...p})),current:{id:'current',pid:709,parentPid:process.pid,owner:'current',scope:'current-window',parentState:'alive',taskState:'unknown',canEnd:false},currentCount:1,totalCount:rows.length+1,canContinue:!rows.length};},async end(id,signal){ends.push(id);if(endHook)return endHook(id,signal);rows=[];return'exited';},async endMany(ids,signal){ends.push(...ids);if(endHook)return endHook(ids,signal);rows=[];return ids.map(()=>'exited');},invalidate(){}};
  const f=setup({processRecovery:recovery});
  const account={id:'11111111-1111-4111-8111-111111111111',label:'Saved target',expectedEmail:'target@example.test',capturedAt:'2026-10-01T00:00:00Z',identitySource:'hub'};
  f.state.set('live-switch.accounts.v1',[account]); f.ui.answer=tr('liveUi.e0351ba254');
  f.ui.resolveLifecycle=async()=>{if(rows.length)throw new LiveError('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN');return f.backend;};
  t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));
- return{...f,account,scans,ends,rows:()=>rows,setRows:value=>{rows=value;},setEnd:value=>{endHook=value;},confirm:()=>{f.ui.answer=tr('officialProcess.endConfirm');}};
+ return{...f,account,scans,ends,rows:()=>rows,setRows:value=>{rows=value;},setEnd:value=>{endHook=value;},confirm:()=>{f.ui.answer=tr('liveUi.e0351ba254');}};
+}
+function selectFixture(f,email='b@example.test') {
+ const account={id:'00000000-0000-4000-8000-000000000081',label:'Synthetic selected',expectedEmail:email,capturedAt:'2026-10-01T00:00:00Z',identitySource:'hub'};
+ f.state.set('live-switch.accounts.v1',[account]);f.ui.selected={account};return account;
+}
+function provideNativeProcessProof(t, snapshot) {
+ const processes=require('../out/official-process'),oldInspect=processes.inspectWslProcesses;
+ const {OfficialProcessRecovery}=require('../out/official-process-recovery'),oldScan=OfficialProcessRecovery.prototype.scan;
+ if(process.platform==='linux')processes.inspectWslProcesses=async()=>snapshot();
+ if(process.platform==='win32')OfficialProcessRecovery.prototype.scan=async()=>{
+  const value=await snapshot(),conflicts=value.processes.filter(row=>row.kind!=='current-hub').map(row=>({id:'synthetic-'+row.pid,pid:row.pid,parentPid:row.parentPid,owner:row.kind==='unverified'?'unknown':'other',scope:row.kind==='unverified'?'unknown':'other-window',parentState:'alive',taskState:'unknown',canEnd:false}));
+  return{phase:conflicts.length?'blocked':'clear',processes:conflicts,canContinue:!conflicts.length,currentCount:value.current?1:0,totalCount:value.processes.length,...(value.current?{current:{id:'synthetic-current',pid:value.current.pid,parentPid:value.current.parentPid,owner:'current',scope:'current-window',parentState:'alive',taskState:'unknown',canEnd:false}}:{})};
+ };
+ const platform=process.platform;t.after(()=>{if(platform==='linux')processes.inspectWslProcesses=oldInspect;if(platform==='win32')OfficialProcessRecovery.prototype.scan=oldScan;});
 }
 
-test('blocked switch retains selected account; one task-risk confirmation ends one backend, rescans and resumes existing switch',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);
- assert.equal(f.diag.getState().processConflicts.processes[0].pid,710);assert.equal(f.diag.getState().processSwitchTarget,f.account.expectedEmail);assert.ok(!f.events.includes('install')&&!f.events.includes('recovery'));
- const index=JSON.stringify(f.state.get('live-switch.accounts.v1')),history=f.state.get('live-switch.lastFailure.v1');
- f.confirm();await f.call('processEnd','synthetic-process-selection');
- assert.deepEqual(f.ends,['synthetic-process-selection']);assert.ok(f.scans.length>=3);assert.equal(f.events.filter(x=>x==='install').length,1);
- assert.equal(f.warnings.filter(x=>/任务状态未知/.test(x)).length,1);assert.match(f.warnings.at(-1),/710/);assert.match(f.warnings.at(-1),/target@example.test/);
- assert.equal(JSON.stringify(f.state.get('live-switch.accounts.v1')),index);assert.deepEqual(f.state.get('live-switch.lastFailure.v1'),history);assert.equal(f.diag.getState().processSwitchTarget,undefined);
+test('one task-risk confirmation ends the verified leftover set and resumes the selected switch without a routine panel',async t=>{
+ const f=processRecoveryFixture(t),index=JSON.stringify(f.state.get('live-switch.accounts.v1')),history=f.state.get('live-switch.lastFailure.v1');await f.call('switch',f.account.id);
+ assert.deepEqual(f.ends,['synthetic-process-selection']);assert.ok(f.scans.length>=2);assert.equal(f.events.filter(x=>x==='install').length,1);
+ assert.equal(f.warnings.length,1);assert.match(f.warnings[0],/710/);assert.match(f.warnings[0],/709/);assert.match(f.warnings[0],/target@example.test/);assert.match(f.warnings[0],/中断任务/);
+ assert.equal(JSON.stringify(f.state.get('live-switch.accounts.v1')),index);assert.deepEqual(f.state.get('live-switch.lastFailure.v1'),history);assert.equal(f.diag.getState().processConflicts,undefined);assert.equal(f.diag.getState().processSwitchTarget,undefined);
 });
-test('cancelling process confirmation or supplying an arbitrary selection never terminates or writes',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);f.ui.answer=undefined;await f.call('processEnd','synthetic-process-selection');
- assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));f.confirm();
- for(const arg of [710,{pid:710},'fake-selection'])await f.call('processEnd',arg);
- assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
+test('cancelling scope confirmation or supplying an arbitrary selection never terminates or writes',async t=>{
+ const f=processRecoveryFixture(t);f.ui.answer=undefined;await f.call('switch',f.account.id);assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));f.confirm();
+ for(const arg of [710,{pid:710},'fake-selection'])await f.call('processEnd',arg);assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
 });
-test('recheck really rescans process conflicts; cleared conflict has an explicit continuation without a second task confirmation',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);const before=f.scans.length;f.setRows([]);
+test('recheck rescans an unsafe conflict and continuation obtains the first scope confirmation',async t=>{
+ const f=processRecoveryFixture(t);f.setRows(f.rows().map(row=>({...row,owner:'other',scope:'other-window',canEnd:false,parentState:'alive'})));await f.call('switch',f.account.id);assert.equal(f.warnings.length,0);const before=f.scans.length;f.setRows([]);
  await f.diag.recheck();assert.ok(f.scans.length>before);assert.equal(f.diag.getState().processConflicts.canContinue,true);assert.equal(f.diag.getState().error,undefined);
- await f.call('processContinue');assert.equal(f.events.filter(x=>x==='install').length,1);assert.deepEqual(f.ends,[]);
+ await f.call('processContinue');assert.equal(f.events.filter(x=>x==='install').length,1);assert.deepEqual(f.ends,[]);assert.equal(f.warnings.length,1);assert.match(f.warnings[0],/709/);
 });
-test('a new conflict after ending the selected backend is shown instead of batch-ending or switching',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);f.confirm();
- f.setEnd(async()=>{f.setRows([{...f.rows()[0],id:'new-selection',pid:711}]);return'exited';});
- await f.call('processEnd','synthetic-process-selection');assert.deepEqual(f.ends,['synthetic-process-selection']);assert.ok(!f.events.includes('install'));assert.equal(f.diag.getState().processConflicts.processes[0].pid,711);
+test('a new conflict after ending the selected set is shown instead of silently widening consent or switching',async t=>{
+ const f=processRecoveryFixture(t);f.setEnd(async()=>{f.setRows([{...f.rows()[0],id:'new-selection',pid:711}]);return['exited'];});await f.call('switch',f.account.id);
+ assert.deepEqual(f.ends,['synthetic-process-selection']);assert.ok(!f.events.includes('install'));assert.equal(f.diag.getState().processConflicts.processes[0].pid,711);assert.equal(f.warnings.length,1);
 });
-test('changed account under the same ID invalidates continuation and termination consent',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);f.confirm();f.state.set('live-switch.accounts.v1',[{...f.account,expectedEmail:'replacement@example.test'}]);
- await f.call('processEnd','synthetic-process-selection');assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
+test('changed account under the same ID invalidates pending termination consent',async t=>{
+ const f=processRecoveryFixture(t);Object.defineProperty(f.ui,'answer',{get(){f.state.set('live-switch.accounts.v1',[{...f.account,expectedEmail:'replacement@example.test'}]);return '切换账号';}});
+ await f.call('switch',f.account.id);assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
 });
-test('repeated process-end clicks share the in-flight command and a late disposed result never resumes switching',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);f.confirm();let finish;
- f.setEnd((_id,signal)=>new Promise(resolve=>{finish=()=>resolve('exited');signal.addEventListener('abort',()=>finish());}));
- const pending=f.call('processEnd','synthetic-process-selection');for(let n=0;n<30&&!finish;n++)await new Promise(resolve=>setImmediate(resolve));assert.ok(finish);
- await f.call('processEnd','synthetic-process-selection');assert.equal(f.ends.length,1);
- f.context.subscriptions.forEach(s=>s.dispose());finish();await pending;assert.ok(!f.events.includes('install'));
+test('repeated switch clicks share batch termination and a late disposed result never installs',async t=>{
+ const f=processRecoveryFixture(t);let finish;f.setEnd((_ids,signal)=>new Promise(resolve=>{finish=()=>resolve(['exited']);signal.addEventListener('abort',()=>finish());}));
+ const pending=f.call('switch',f.account.id);for(let n=0;n<30&&!finish;n++)await new Promise(resolve=>setImmediate(resolve));assert.ok(finish);
+ await f.call('switch',f.account.id);assert.equal(f.ends.length,1);assert.equal(f.warnings.length,1);f.context.subscriptions.forEach(s=>s.dispose());finish();await pending;assert.ok(!f.events.includes('install'));
 });
-test('pending recovery, image activity and active operation lock block process termination',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);f.confirm();
- f.service.journal=async()=>({id:'pending',phase:'prepared'});await f.call('processEnd','synthetic-process-selection');assert.deepEqual(f.ends,[]);
- f.service.journal=async()=>null;const release=require('../out/image-activity').enterImageOperation('synthetic-recovery-test');
- try{await f.call('processEnd','synthetic-process-selection');assert.deepEqual(f.ends,[]);}finally{release();}
- f.locks.withOperation=async()=>{throw new(require('../out/live-storage').LiveError)('LIVE_OPERATION_OR_RECOVERY_LOCKED');};
- await f.call('processEnd','synthetic-process-selection');assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
+test('pending recovery, noncancellable image activity and active operation lock block automatic termination',async t=>{
+ const f=processRecoveryFixture(t);f.service.journal=async()=>({id:'pending',phase:'prepared'});await f.call('switch',f.account.id);assert.deepEqual(f.ends,[]);
+ f.service.journal=async()=>null;const release=require('../out/image-activity').enterImageOperation('synthetic-recovery-test');try{await f.call('switch',f.account.id);assert.deepEqual(f.ends,[]);}finally{release();}
+ f.locks.withOperation=async()=>{throw new(require('../out/live-storage').LiveError)('LIVE_OPERATION_OR_RECOVERY_LOCKED');};await f.call('switch',f.account.id);assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
 });
-test('window recreation keeps process details; a new controller has no persisted automatic switch intent',async t=>{
- const f=processRecoveryFixture(t);await f.call('switch',f.account.id);const before=f.scans.length;await f.diag.ensureIdentity();assert.equal(f.diag.getState().processConflicts.processes[0].pid,710);assert.equal(f.scans.length,before);
- const replacement=processRecoveryFixture(t);replacement.state.set('live-switch.lastFailure.v1',f.state.get('live-switch.lastFailure.v1'));await replacement.call('processScan');
- assert.equal(replacement.diag.getState().processSwitchTarget,undefined);assert.ok(!replacement.events.includes('install'));
+test('window recreation keeps exception details but a new controller has no automatic switch intent',async t=>{
+ const f=processRecoveryFixture(t);f.setRows(f.rows().map(row=>({...row,canEnd:false,owner:'other',scope:'other-window'})));await f.call('switch',f.account.id);const before=f.scans.length;await f.diag.ensureIdentity();assert.equal(f.diag.getState().processConflicts.processes[0].pid,710);assert.equal(f.scans.length,before);
+ const replacement=processRecoveryFixture(t);replacement.setRows(f.rows());replacement.state.set('live-switch.lastFailure.v1',f.state.get('live-switch.lastFailure.v1'));await replacement.call('processScan');assert.equal(replacement.diag.getState().processSwitchTarget,undefined);assert.ok(!replacement.events.includes('install'));
 });
 test('external official login on the same Hub immediately refreshes, saves and deduplicates without another OAuth or official write',async t=>{
  const f=officialSyncFixture(t);await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,'a@example.test');assert.equal(f.diag.getAccounts().length,1);const first=f.diag.getAccounts()[0].id;
@@ -121,8 +123,8 @@ test('idle loopback candidate change triggers fresh official verification and au
 });
 test('remove current switches to the first usable different account before deleting its copy',async t=>{
  const f=officialSyncFixture(t);await f.diag.refresh();f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
- const a=f.diag.getAccounts().find(item=>item.expectedEmail==='a@example.test'),b=f.diag.getAccounts().find(item=>item.expectedEmail==='b@example.test');f.ui.answer='删除保存副本';await f.call('remove',a.id);
- assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.deepEqual(f.diag.getAccounts().map(item=>item.id),[b.id]);assert.equal(f.data.has('live-switch.account.v1.'+a.id),false);assert.equal(f.events.filter(e=>e==='credential-write').length,1);assert.equal(f.warnings.length,1);assert.equal(await f.real.journal(),null);
+ const a=f.diag.getAccounts().find(item=>item.expectedEmail==='a@example.test'),b=f.diag.getAccounts().find(item=>item.expectedEmail==='b@example.test');f.ui.answer=(_message,action)=>action;await f.call('remove',a.id);
+ assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.deepEqual(f.diag.getAccounts().map(item=>item.id),[b.id]);assert.equal(f.data.has('live-switch.account.v1.'+a.id),false);assert.equal(f.events.filter(e=>e==='credential-write').length,1);assert.equal(f.warnings.length,2);assert.match(f.warnings[0],/删除/);assert.match(f.warnings[1],/本窗口.*后台/);assert.match(f.warnings[1],/中断任务/);assert.equal(await f.real.journal(),null);
 });
 test('remove the only current copy keeps official login and suppresses same-identity readding until an identity change',async t=>{
  const f=officialSyncFixture(t);await f.diag.refresh();const a=f.diag.getAccounts()[0];const before=structuredClone(f.current());f.ui.answer='删除保存副本';await f.call('remove',a.id);assert.equal(f.diag.getAccounts().length,0);assert.deepEqual(f.current(),before);assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
@@ -130,11 +132,11 @@ test('remove the only current copy keeps official login and suppresses same-iden
  f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getAccounts().length,1);f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();assert.equal(f.diag.getAccounts().length,2);
 });
 test('remove a noncurrent copy does not switch; failed current replacement retains its saved copy',async t=>{
- const f=officialSyncFixture(t);await f.diag.refresh();f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();const [a,b]=f.diag.getAccounts();f.ui.answer='删除保存副本';await f.call('remove',a.id);assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
+ const f=officialSyncFixture(t);await f.diag.refresh();f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();const [a,b]=f.diag.getAccounts();f.ui.answer=(_message,action)=>action;await f.call('remove',a.id);assert.equal(f.diag.getState().activeEmail,'b@example.test');assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
  f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.service.install=async()=>{throw new (require('../out/live-storage').LiveError)('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN')};await f.call('remove',f.diag.getAccounts().find(item=>item.expectedEmail==='a@example.test').id);
  assert.equal(f.diag.getAccounts().length,2);assert.equal(f.data.has('live-switch.account.v1.'+b.id),true);assert.match(f.diag.getState().error,/查看下方进程/);assert.ok(!f.events.includes('credential-write'));
 });
-test('activation registers real commands but reads no credentials and starts no backend',()=>{const f=setup();assert.equal(f.commands.size,15);assert.deepEqual(f.events,[]);assert.match(f.diag.getStatus(),/尚未操作/);});
+test('activation registers real commands but reads no credentials and starts no backend',()=>{const f=setup();assert.equal(f.commands.size,16);assert.ok(f.commands.has('antigravityAccounts.live.processEndAll'));assert.deepEqual(f.events,[]);assert.match(f.diag.getStatus(),/尚未操作/);});
 test('read-only quota preserves a freshly verified official badge while an older add journal remains pending',async t=>{
  const f=officialSyncFixture(t);await f.diag.refresh();await f.real.prepareLogin(f.backend,'00000000-0000-4000-8000-000000000080');f.set('c@example.test');f.ui.focus({focused:true});await f.diag.refresh();const account=f.diag.getAccounts().find(item=>item.expectedEmail==='c@example.test');
  assert.equal(account.active,true);await f.call('quota',account.id);assert.equal(f.diag.getAccounts().find(item=>item.id===account.id).active,true);assert.equal(f.diag.getState().identityVerifiedDuringRecovery,true);assert.equal(f.diag.getState().pending,true);assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
@@ -147,7 +149,7 @@ test('deleting a foreign-host copy of the current email never switches the local
 });
 test('a verified replacement switch lets a later official login re-add the removed identity immediately',async t=>{
  const f=officialSyncFixture(t);await f.diag.refresh();const a=f.diag.getAccounts()[0];f.set('b@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
- f.ui.answer='删除保存副本';await f.call('remove',a.id);assert.equal(f.diag.getState().activeEmail,'b@example.test');f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
+ f.ui.answer=(_message,action)=>action;await f.call('remove',a.id);assert.equal(f.diag.getState().activeEmail,'b@example.test');f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();
  assert.equal(f.diag.getState().activeEmail,'a@example.test');assert.equal(f.diag.getAccounts().filter(item=>item.expectedEmail==='a@example.test').length,1);assert.equal(f.diag.getAccounts().length,2);
 });
 test('idle official sign-out invalidates the same-Hub current badge instead of swallowing its fixed auth error',async t=>{
@@ -167,7 +169,7 @@ test('explicit verify resumes a stopped installed transaction, repins the lifecy
 });
 test('debug-OFF preserves primary switch stage and secondary recovery error instead of a generic wrapper',async()=>{
  const f=setup();await f.diag.refresh();let journal;const {LiveError}=require('../out/live-storage');
- f.service.journal=async()=>journal;f.ui.selected={account:{id:'fixture-id',expectedEmail:'a@example.test'}};f.ui.answer='切换账号';f.backend.restartMode='component';
+ f.service.journal=async()=>journal;selectFixture(f,'a@example.test');f.ui.answer='切换账号';f.backend.restartMode='component';
  f.ui.resolveLifecycle=async running=>{if(journal&&running)throw new LiveError('OFFICIAL_HUB_NOT_READY');return f.backend;};
  f.service.install=async(_id,_backend,id,stage)=>{stage('journal-installed');journal={id,phase:'installed',target:{expectedEmail:'a@example.test'}};throw new LiveError('RECOVERY_SAVE_NOT_VERIFIED');};
  await f.call('switch');const failure=f.state.get('live-switch.lastFailure.v1');
@@ -224,8 +226,8 @@ test('timed-out installed acknowledgement starts only the exact target and focus
 });
 test('journal conflict never triggers automatic rollback even with a running backend',async()=>{
  const f=setup();await f.diag.refresh();const {LiveError}=require('../out/live-storage');let journal,restores=0;
- f.service.journal=async()=>journal;f.ui.selected={account:{id:'selected',expectedEmail:'a@example.test'}};f.ui.answer='切换账号';f.backend.restartMode='component';
- f.service.install=async(_id,_backend,id,stage)=>{stage('journal-installed');journal={id,phase:'installed',target:{id:'selected'}};throw new LiveError('RECOVERY_CHANGED')};
+ f.service.journal=async()=>journal;selectFixture(f,'a@example.test');f.ui.answer='切换账号';f.backend.restartMode='component';
+ f.service.install=async(_id,_backend,id,stage)=>{stage('journal-installed');journal={id,phase:'installed',target:{id:f.ui.selected.account.id}};throw new LiveError('RECOVERY_CHANGED')};
  f.service.restore=async()=>{restores++};await f.call('switch');assert.equal(restores,0);assert.ok(journal);assert.equal(f.diag.getState().pending,true);
  for(const sub of f.context.subscriptions)sub.dispose();
 });
@@ -233,9 +235,9 @@ test('automatic stopped completion is unavailable after reconnect dispatch or fo
  const {LiveError}=require('../out/live-storage');
  for(const mode of ['reconnect-dispatched','prepared','different-target','different-code','verification-started','external-change']){
   const f=setup();await f.diag.refresh();let journal,resumes=0;
-  f.service.journal=async()=>journal;f.ui.selected={account:{id:'selected',expectedEmail:'a@example.test'}};f.ui.answer='切换账号';f.backend.restartMode='component';f.backend.generation='stopped';f.locks.assertRecovery=async()=>{};
+  f.service.journal=async()=>journal;selectFixture(f,'a@example.test');f.ui.answer='切换账号';f.backend.restartMode='component';f.backend.generation='stopped';f.locks.assertRecovery=async()=>{};
   f.ui.resolveLifecycle=async running=>{if(journal&&running)throw new LiveError('OFFICIAL_HUB_NOT_READY');return f.backend;};
-  f.service.install=async(_id,_backend,id,stage)=>{stage(mode==='reconnect-dispatched'?'reconnect':'journal-installed');journal={id,phase:mode==='prepared'?'prepared':'installed',verification:{state:'pending',attempts:mode==='verification-started'?1:0},target:{id:mode==='different-target'?'other':'selected',expectedEmail:'a@example.test'}};throw new LiveError(mode==='different-code'?'EXTERNAL_CHANGE':'RECOVERY_SAVE_NOT_VERIFIED');};
+  f.service.install=async(_id,_backend,id,stage)=>{stage(mode==='reconnect-dispatched'?'reconnect':'journal-installed');journal={id,phase:mode==='prepared'?'prepared':'installed',verification:{state:'pending',attempts:mode==='verification-started'?1:0},target:{id:mode==='different-target'?'other':f.ui.selected.account.id,expectedEmail:'a@example.test'}};throw new LiveError(mode==='different-code'?'EXTERNAL_CHANGE':'RECOVERY_SAVE_NOT_VERIFIED');};
   f.service.resumeStoppedVerification=async()=>{resumes++;throw new LiveError('EXTERNAL_CHANGE');};
   await f.call('switch');assert.equal(resumes,mode==='external-change'?1:0);assert.ok(journal);assert.equal(f.diag.getState().pending,true);assert.ok(!f.events.includes('stop')&&!f.events.includes('bad-direct-reload'));
   for(const sub of f.context.subscriptions)sub.dispose();
@@ -250,12 +252,12 @@ test('a focus refresh during another image batch does not invent account recover
 });
 test('capture dismissal and untrusted calls perform no credential work',async()=>{const f=setup();await f.call('capture');assert.deepEqual(f.events,['locked','unlocked']);f.events.length=0;f.ui.trusted=false;await f.call('capture');assert.deepEqual(f.events,[]);assert.match(f.diag.getState().error,/受信任|信任/);});
 test('real switch command defers window reload until after releasing operation mutex',async()=>{
- const f=setup();f.ui.selected={account:{id:'fixture-id',expectedEmail:'b@example.test'}};f.ui.answer='切换账号';
+ const f=setup();selectFixture(f,'b@example.test');f.ui.answer='切换账号';
  f.service.install=async(_id,backend,transaction)=>{assert.match(transaction,/^[a-f0-9-]{36}$/);f.events.push('install');await backend.reload();};
  await f.call('switch');assert.deepEqual(f.events,['locked','recovery','install','unlocked','workbench.action.reloadWindow']);
 });
 test('component switch verifies inside operation lock and never reloads the window', async () => {
- const f=setup(); f.ui.selected={account:{id:'fixture-id',expectedEmail:'b@example.test'}}; f.ui.answer='切换账号';
+ const f=setup(); selectFixture(f,'b@example.test'); f.ui.answer='切换账号';
  f.backend.restartMode='component'; let journal;
  f.service.journal=async()=>journal;
  f.locks.assertRecovery=async()=>{};
@@ -267,7 +269,7 @@ test('component switch verifies inside operation lock and never reloads the wind
  assert.ok(!f.events.includes('workbench.action.reloadWindow'));
 });
 test('failed target verification rolls back only through guarded storage and verifies original session', async () => {
- const f=setup(); f.ui.selected={account:{id:'fixture-id',expectedEmail:'b@example.test'}}; f.ui.answer='切换账号';
+ const f=setup(); selectFixture(f,'b@example.test'); f.ui.answer='切换账号';
  f.backend.restartMode='component'; let journal, checks=0;
  f.service.journal=async()=>journal; f.locks.assertRecovery=async()=>{};
  f.service.install=async(_id,backend,id)=>{journal={id,phase:'installed',target:{expectedEmail:'b@example.test'}};await backend.reload();};
@@ -279,7 +281,7 @@ test('failed target verification rolls back only through guarded storage and ver
  assert.ok(!f.events.includes('workbench.action.reloadWindow'));
 });
 test('missing component capabilities and pending images stop before credential mutation', async () => {
- const f=setup(); f.ui.selected={account:{id:'fixture-id',expectedEmail:'b@example.test'}}; f.ui.answer='切换账号';f.backend.restartMode='unavailable';
+ const f=setup(); selectFixture(f,'b@example.test'); f.ui.answer='切换账号';f.backend.restartMode='unavailable';
  await f.call('switch');assert.ok(!f.events.includes('install'));assert.ok(!f.events.includes('recovery'));assert.match(f.diag.getState().error,/组件重连能力/);
  f.events.length=0;f.backend.restartMode='component';
  const release=require('../out/image-activity').enterImageOperation('offline-confirmation');
@@ -373,6 +375,7 @@ test('lifecycle accepts future releases and missing version diagnostics with liv
  const contract=require('../out/official-contract'),environment=require('../out/live-environment'),fs=require('node:fs/promises'),previousContract=contract.assertOfficialEntrypoint,previousHash=environment.assertWslBackendExecutable,previousStat=fs.stat,previousAccess=fs.access;
  contract.assertOfficialEntrypoint=async()=>{};environment.assertWslBackendExecutable=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};
  let stopped=false,versionResult={code:0,stdout:'agy version 99.4.2-preview',stderr:''};const calls=[];
+ provideNativeProcessProof(t,()=>{const current={pid:321,parentPid:process.pid,startTicks:'synthetic-birth',kind:'current-hub',taskState:'unknown'};return stopped?{processes:[]}:{processes:[current],current};});
  require.cache[main]={loaded:true,exports:{async deactivate(){stopped=true;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};f.events.push('deactivate-official')}}};
  storage.runPrivate=async(executable,args)=>{calls.push({executable,args});if(args[0]==='--version'){if(versionResult instanceof Error)throw versionResult;return versionResult}return{code:0,stdout:stopped?'':process.platform==='win32'?'"agy.exe","321"':'agy\n',stderr:''}};
  t.after(()=>{contract.assertOfficialEntrypoint=previousContract;environment.assertWslBackendExecutable=previousHash;fs.stat=previousStat;fs.access=previousAccess;storage.runPrivate=previousRun;if(previousCache)require.cache[main]=previousCache;else delete require.cache[main]});
@@ -512,6 +515,7 @@ for(const platform of ['darwin','win32']) test(`${platform} native lifecycle pre
  contract.assertOfficialEntrypoint=async()=>{};environment.assertWslBackendExecutable=async()=>{throw Error('native must not inspect WSL executable')};processes.inspectWslProcesses=async()=>{throw Error('native must not access proc')};
  fs.stat=async filename=>{assert.equal(path.basename(filename),platform==='win32'?'agy.exe':'agy');return{isFile:()=>true}};fs.access=async(_filename,mode)=>{assert.equal(mode,platform==='win32'?require('node:fs').constants.F_OK:require('node:fs').constants.X_OK)};
  let count=2,stopping=false,polls=0,deactivated=0,epoch=0;const observed=[];
+ if(platform==='win32')provideNativeProcessProof(t,()=>{observed.push({proof:'held-handle-synthetic'});if(stopping&&++polls>=3)count=0;const current={pid:710,parentPid:process.pid,startTicks:'synthetic-birth-'+epoch,kind:'current-hub',taskState:'unknown'};return{processes:count?[current,...Array.from({length:count-1},(_,n)=>({pid:711+n,parentPid:702,startTicks:'synthetic-peer-'+n,kind:'unowned-hub',taskState:'unknown'}))]:[],...(count?{current}:{})};});
  storage.runPrivate=async(executable,args)=>{
   if(args[0]==='--version')return{code:0,stdout:'agy version 1.3.1',stderr:''};observed.push({executable,args});
   if(platform==='win32'){assert.equal(executable,path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','tasklist.exe'));assert.deepEqual(args,['/FO','CSV','/NH','/FI','IMAGENAME eq agy.exe']);}
@@ -521,7 +525,7 @@ for(const platform of ['darwin','win32']) test(`${platform} native lifecycle pre
  };
  require.cache[main]={loaded:true,exports:{async deactivate(){deactivated++;stopping=true;polls=0;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};}}};
  f.ui.commandIds=['antigravity.reconnect','antigravity.panel.focus'];f.ui.execute=async command=>{if(command==='antigravity.panel.focus'){stopping=false;count=1;epoch++;official.exports={port:45678,csrfToken:'synthetic-native-csrf-'+epoch};}};
- await assert.rejects(f.api.resolveOfficialLifecycle(f.context),/CLOSE_OTHER_AGY_PROCESSES/);assert.equal(deactivated,0);
+ await assert.rejects(f.api.resolveOfficialLifecycle(f.context),platform==='win32'?/OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN/:/CLOSE_OTHER_AGY_PROCESSES/);assert.equal(deactivated,0);
  count=1;const backend=await f.api.resolveOfficialLifecycle(f.context);assert.equal(backend.fileOnlyGuard,undefined);
  await backend.stop();assert.ok(polls>=4);await backend.reload();const first=backend.generation;await backend.stop();await backend.reload();assert.notEqual(backend.generation,first);assert.equal(deactivated,2);
  assert.ok(observed.length>0);assert.ok(!f.events.includes('workbench.action.reloadWindow'));
@@ -591,6 +595,7 @@ test('lifecycle never stops a new hub that appeared while its process count was 
  official.isActive=true;const main=path.join(official.extensionPath,'extension.js'),oldCache=require.cache[main],oldRun=storage.runPrivate,oldContract=contract.assertOfficialEntrypoint,oldHash=environment.assertWslBackendExecutable,oldStat=fs.stat,oldAccess=fs.access;
  contract.assertOfficialEntrypoint=async()=>{};environment.assertWslBackendExecutable=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};let drift=false,empty=false,deactivated=0;
  require.cache[main]={loaded:true,exports:{deactivate:async()=>{deactivated++}}};
+ provideNativeProcessProof(t,()=>{if(drift)official.exports={port:45678,csrfToken:'synthetic-new-generation'};const current={pid:321,parentPid:process.pid,startTicks:'synthetic-birth',kind:'current-hub',taskState:'unknown'};return empty?{processes:[]}:{processes:[current],current};});
  storage.runPrivate=async(_executable,args)=>{if(args[0]==='--version')return{code:0,stdout:'agy version 1.2.14',stderr:''};if(drift)official.exports={port:45678,csrfToken:'synthetic-new-generation'};return{code:0,stdout:empty?'':process.platform==='win32'?'"agy.exe","321"':'agy\n',stderr:''};};
  t.after(()=>{contract.assertOfficialEntrypoint=oldContract;environment.assertWslBackendExecutable=oldHash;fs.stat=oldStat;fs.access=oldAccess;storage.runPrivate=oldRun;if(oldCache)require.cache[main]=oldCache;else delete require.cache[main]});
  const backend=await f.api.resolveOfficialLifecycle(f.context);drift=true;await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION/);assert.equal(deactivated,0);
@@ -693,7 +698,7 @@ test('a pending switch automatically finishes on refresh without prompting or fi
 test('switches after long idle and repeated failures receive separate bounded recovery windows',async()=>{
  const {verificationClock}=require('./fixtures/verification-clock.cjs'),clock=verificationClock(),f=setup({verificationClock:clock});
  await f.diag.refresh();clock.jump(3_600_000);let journal,proofs=0,installs=0;
- f.ui.selected={account:{id:'fixture',expectedEmail:'b@example.test'}};f.ui.answer='切换账号';f.backend.restartMode='component';
+ selectFixture(f,'b@example.test');f.ui.answer='切换账号';f.backend.restartMode='component';
  f.locks.assertRecovery=async()=>{};f.service.journal=async()=>journal;
  f.service.install=async(_id,_backend,id)=>{installs++;journal={id,phase:'installed',target:{expectedEmail:'b@example.test'}};};
  f.service.finishVerified=async backend=>{proofs++;await backend.proof();throw new (require('../out/live-storage').LiveError)('HUB_RPC_FAILED');};
@@ -719,7 +724,7 @@ test('stale scheduled recovery cannot verify a later journal or publish its iden
 });
 test('disposed controller discards a late switch proof without starting rollback or restart',async()=>{
  const {verificationClock,settle}=require('./fixtures/verification-clock.cjs'),clock=verificationClock(),f=setup({verificationClock:clock});await f.diag.refresh();
- let journal,complete,restores=0;f.ui.selected={account:{id:'fixture',expectedEmail:'b@example.test'}};f.ui.answer='切换账号';f.backend.restartMode='component';
+ let journal,complete,restores=0;selectFixture(f,'b@example.test');f.ui.answer='切换账号';f.backend.restartMode='component';
  f.locks.assertRecovery=async()=>{};f.service.journal=async()=>journal;
  f.service.install=async(_id,_backend,id)=>{journal={id,phase:'installed',target:{expectedEmail:'b@example.test'}};};
  f.backend.proof=()=>new Promise(resolve=>{complete=resolve;});f.service.finishVerified=async backend=>backend.proof();f.service.restore=async()=>{restores++;};
@@ -809,7 +814,7 @@ test('currently verified account uses official refresh without exporting a saved
 
 test('debug account hooks report actual caught failure without account identity or raw error',async t=>{
  const {DebugRecorder,installDebugRecorder}=require('../out/debug-events'),records=[];const logger=new DebugRecorder({append:async(line,current)=>{if(current())records.push(JSON.parse(line));},readLines:async()=>[],flush:async()=>{},dispose(){}},{version:'0.13.2',platform:'linux',host:'local'});await logger.setEnabled(true);const installed=installDebugRecorder(logger);t.after(()=>installed.dispose());
- const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.locks.withOperation=async()=>{throw Error('SECRET_ERROR personal@example.test')};await f.call('switch',saved.id);const end=records.find(x=>x.operation==='account.switch'&&x.phase==='result');assert.equal(end.outcome,'failed');assert.equal(end.data.code,'UNCLASSIFIED_ERROR');assert.doesNotMatch(JSON.stringify(records),/SECRET|personal@example|00000000-0000-4000/);assert.notEqual(end.operationId,saved.id);
+ const f=setup();f.state.set('live-switch.accounts.v1',[saved]);f.ui.answer='切换账号';f.locks.withOperation=async()=>{throw Error('SECRET_ERROR personal@example.test')};await f.call('switch',saved.id);const end=records.find(x=>x.operation==='account.switch'&&x.phase==='result');assert.equal(end.outcome,'failed');assert.equal(end.data.code,'UNCLASSIFIED_ERROR');assert.doesNotMatch(JSON.stringify(records),/SECRET|personal@example|00000000-0000-4000/);assert.notEqual(end.operationId,saved.id);
 });
 
 test('debug account consent dismissals are cancelled without claiming a login or switch completed',async t=>{
@@ -952,13 +957,13 @@ test('production copy exception rejects external or unidentified operation and r
 });
 
 test('Windows force mode gets one explicit forced-termination consent, without a normal-exit promise',async t=>{
- const f=processRecoveryFixture(t),{t:tr}=require('../out/i18n');f.setRows(f.rows().map(row=>({...row,endMode:'force'})));
- await f.call('switch',f.account.id);f.ui.answer=tr('officialProcess.forceConfirm');await f.call('processEnd','synthetic-process-selection');
+ const f=processRecoveryFixture(t);f.setRows(f.rows().map(row=>({...row,endMode:'force'})));
+ await f.call('switch',f.account.id);
  assert.deepEqual(f.ends,['synthetic-process-selection']);assert.equal(f.events.filter(x=>x==='install').length,1);
- const modal=f.warnings.filter(text=>/任务状态未知/.test(text));assert.equal(modal.length,1);assert.match(modal[0],/Windows.*直接强制结束/);assert.match(modal[0],/不会请求正常退出/);assert.doesNotMatch(modal[0],/四秒/);assert.match(modal[0],/target@example.test/);
+ assert.equal(f.warnings.length,1);assert.match(f.warnings[0],/Windows.*直接强制结束/);assert.match(f.warnings[0],/不会请求正常退出/);assert.doesNotMatch(f.warnings[0],/四秒/);assert.match(f.warnings[0],/target@example.test/);
 });
 test('account replacement during termination confirmation invalidates the consent before ending',async t=>{
- const f=processRecoveryFixture(t),{t:tr}=require('../out/i18n');await f.call('switch',f.account.id);
- Object.defineProperty(f.ui,'answer',{get(){f.state.set('live-switch.accounts.v1',[{...f.account,expectedEmail:'replaced-during-confirmation@example.test'}]);return tr('officialProcess.endConfirm');}});
- await f.call('processEnd','synthetic-process-selection');assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
+ const f=processRecoveryFixture(t),{t:tr}=require('../out/i18n');
+ Object.defineProperty(f.ui,'answer',{get(){f.state.set('live-switch.accounts.v1',[{...f.account,expectedEmail:'replaced-during-confirmation@example.test'}]);return tr('liveUi.e0351ba254');}});
+ await f.call('switch',f.account.id);assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
 });

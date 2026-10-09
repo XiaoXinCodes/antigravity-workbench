@@ -35,6 +35,17 @@ test('remote folder command never reveals the UI-host path and copy ignores supp
 test('empty preview is read-only and never opens a save dialog',async()=>{
  const f=fixture();await f.command('preview');assert.equal(f.providers.has('antigravity-debug-preview'),true);assert.ok(f.calls.find(x=>x[0]==='show'&&x[1].includes('暂无调试日志')));assert.equal(f.calls.some(x=>x[0]==='saveDialog'),false);f.dispose();
 });
+test('VS Code local userdata storage opens a log preview rather than silently returning',async()=>{
+ const storage=path.resolve('/synthetic/profile/User/globalStorage/workbench'),f=fixture({uri:{scheme:'vscode-userdata',authority:'',fsPath:storage}});
+ assert.equal(f.controller.getState().available,true);assert.equal(f.controller.getState().directory,path.join(storage,'debug-logs'));
+ await f.command('preview');assert.ok(f.calls.find(x=>x[0]==='show'&&x[1].includes('暂无调试日志')));assert.equal(f.calls.some(x=>x[0]==='warning'||x[0]==='saveDialog'),false);f.dispose();
+});
+test('userdata log storage stays unavailable for foreign, malformed and remote workspace paths',()=>{
+ const f=fixture(),resolve=f.api.resolveDebugLocation,c={extension:{extensionKind:1},globalStorageUri:{scheme:'vscode-userdata',authority:'',fsPath:'/synthetic/storage'}};
+ for(const uri of [{...c.globalStorageUri,authority:'foreign'},{...c.globalStorageUri,fsPath:'relative'},{...c.globalStorageUri,fsPath:'/C:/foreign'},{...c.globalStorageUri,fsPath:'/synthetic\nforeign'}])assert.equal(resolve({...c,globalStorageUri:uri},{platform:'linux',desktop:true}).available,false);
+ for(const remoteName of ['wsl','ssh-remote'])assert.equal(resolve({...c,extension:{extensionKind:2}},{platform:'linux',desktop:true,remoteName}).available,false);
+ assert.equal(resolve(c,{platform:'linux',desktop:false}).available,false);f.dispose();
+});
 test('read failure reports its actual stage and safe OS category',async()=>{
  const f=fixture({store:{append:async()=>{},readLines:async()=>{throw Object.assign(new Error('private path'),{code:'EACCES'})},flush:async()=>{},dispose(){}}});
  await f.command('preview');const warning=f.calls.find(x=>x[0]==='warning')?.[1];

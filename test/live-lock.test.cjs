@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const { LiveLocks, probeProcessIdentity } = require('../out/live-lock');
+const { LiveLocks, LockConflictError, probeProcessIdentity } = require('../out/live-lock');
 const OWNER = 'a'.repeat(64), OTHER = 'b'.repeat(64);
 const operation = '.agm-operation.lock', recovery = '.antigravity-account-manager-switch.lock';
 function record(values = {}) { return { schema: 2, owner: OWNER, id: randomUUID(), pid: 41, nonce: randomUUID(), startIdentity: 'old-start', ...values }; }
@@ -18,6 +18,85 @@ function options(probe = async () => ({ state: 'dead' }), pid = 99) {
   return { pid, probe: async id => id === pid ? { state: 'alive', startIdentity: `self-${pid}` } : probe(id) };
 }
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+test('activity inspection is read-only and classifies only verified ownership',async()=>fixture(async dir=>{
+ const reader=new LiveLocks(dir,OWNER,options());
+ assert.deepEqual(await reader.inspectOperationActivity(),{state:'absent',kind:'unknown',scope:'unknown'});
+ assert.deepEqual(await reader.inspectRecoveryActivity(),{state:'absent',kind:'unknown',scope:'unknown'});
+ assert.deepEqual(await fs.readdir(dir),[]);
+ for(const [changes,probe,scope,reason] of [
+  [{purpose:'image',owner:OTHER},async()=>({state:'alive',startIdentity:'old-start'}),'other-profile','LOCK_BELONGS_TO_OTHER_PROFILE'],
+  [{purpose:'image'},async()=>({state:'unknown'}),'unknown','LOCK_PROCESS_STATUS_UNKNOWN'],
+  [{purpose:'image',schema:1},async()=>({state:'alive',startIdentity:'old-start'}),'unknown','LOCK_PROCESS_IDENTITY_UNAVAILABLE']
+ ]){
+  const raw=JSON.stringify(record(changes));await fs.mkdir(path.join(dir,operation));await fs.writeFile(path.join(dir,operation,'owner.json'),raw);
+  const locks=new LiveLocks(dir,OWNER,options(probe));const activity=await locks.inspectOperationActivity();
+  assert.equal(activity.kind,'unknown');assert.equal(activity.scope,scope);assert.equal(activity.reason,reason);
+  assert.equal(await read(dir,operation),raw);assert.equal(await locks.isOperationCurrent(activity),false);
+  await fs.rm(path.join(dir,operation),{recursive:true});
+ }
+}));
+test('same-process image conflict retains its verified snapshot and never enters the account callback',async()=>fixture(async dir=>{
+ const writer=new LiveLocks(dir,OWNER,{purpose:'image'}),reader=new LiveLocks(dir,OWNER);let entered=false;
+ await writer.withOperation(async()=>{
+  const activity=await reader.inspectOperationActivity();assert.equal(activity.kind,'image');assert.equal(activity.scope,'this-process');
+  assert.equal(await reader.isOperationCurrent(activity),true);
+  await assert.rejects(reader.withOperation(async()=>{entered=true;}),error=>{
+   assert.ok(error instanceof LockConflictError);assert.equal(error.code,'LIVE_OPERATION_OR_RECOVERY_LOCKED');
+   assert.deepEqual(error.activity,activity);error.activity.owner.purpose=undefined;
+   return true;
+  });
+  assert.equal(entered,false);assert.equal((await reader.inspectOperationActivity()).kind,'image');
+ });
+ assert.equal((await reader.inspectOperationActivity()).state,'absent');
+}));
+test('a completed image snapshot cannot match a new image in the same process',async()=>fixture(async dir=>{
+ const writer=new LiveLocks(dir,OWNER,{purpose:'image'}),reader=new LiveLocks(dir,OWNER);let previous;
+ await writer.withOperation(async()=>{previous=await reader.inspectOperationActivity();});
+ assert.equal(await reader.isOperationCurrent(previous),false);
+ await writer.withOperation(async()=>{
+  const next=await reader.inspectOperationActivity();assert.notEqual(previous.owner.nonce,next.owner.nonce);
+  assert.equal(await reader.isOperationCurrent(previous),false);assert.equal(await reader.isOperationCurrent(next),true);
+ });
+}));
+test('verified recovery ownership is distinct from image and account operations',async()=>fixture(async dir=>{
+ const writer=new LiveLocks(dir,OWNER),reader=new LiveLocks(dir,OWNER),id=randomUUID();
+ await writer.beginRecovery(id);
+ try{
+  const activity=await reader.inspectRecoveryActivity();assert.equal(activity.state,'active');assert.equal(activity.kind,'recovery');assert.equal(activity.scope,'this-process');
+  await assert.rejects(reader.clearAbandonedRecovery(),error=>error instanceof LockConflictError&&error.code==='LOCK_PROCESS_STILL_ALIVE'&&error.activity.kind==='recovery');
+  assert.equal(await reader.hasRecovery(),true);
+ }finally{await writer.clearRecovery(id);}
+}));
+test('held-operation rechecks fail closed without deleting a replacement owner',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER);
+ await assert.rejects(locks.assertOperationHeld(),/LOCK_OPERATION_REQUIRED/);
+ await locks.withOperation(async()=>{
+  await locks.assertOperationHeld();const raw=await read(dir,operation),replacement={...JSON.parse(raw),id:randomUUID(),nonce:randomUUID()};
+  await fs.writeFile(path.join(dir,operation,'owner.json'),JSON.stringify(replacement));
+  try{
+   await assert.rejects(locks.assertOperationHeld(),/LOCK_OWNERSHIP_CHANGED/);
+   assert.deepEqual(JSON.parse(await read(dir,operation)),replacement);
+  }finally{await fs.writeFile(path.join(dir,operation,'owner.json'),raw);}
+  await locks.assertOperationHeld();
+ });
+ await assert.rejects(locks.assertOperationHeld(),/LOCK_OPERATION_REQUIRED/);
+}));
+test('a real independent image process is classified as another process and remains alive',{timeout:10000},async()=>fixture(async dir=>{
+ const {fork}=require('node:child_process'),{once}=require('node:events');
+ const entry=require.resolve('../out/live-lock');
+ const program=`const {LiveLocks}=require(${JSON.stringify(entry)});const locks=new LiveLocks(process.argv[1],process.argv[2],{purpose:'image'});locks.withOperation(async()=>{process.send({held:true});await new Promise(resolve=>process.once('message',resolve));}).then(()=>process.disconnect(),error=>{process.send({code:error.code});process.disconnect();});`;
+ const child=fork('-e',[program,dir,OWNER],{execArgv:[],stdio:['ignore','ignore','ignore','ipc']});
+ const exited=once(child,'exit');
+ try{
+  const [message]=await once(child,'message');assert.equal(message.held,true);
+  const locks=new LiveLocks(dir,OWNER),activity=await locks.inspectOperationActivity();
+  assert.equal(activity.state,'active');assert.equal(activity.kind,'image');assert.equal(activity.scope,'other-process');
+  await assert.rejects(locks.withOperation(async()=>assert.fail('must not enter')),error=>error instanceof LockConflictError&&error.activity.scope==='other-process');
+  assert.equal(child.exitCode,null);assert.equal(await locks.isOperationCurrent(activity),true);
+  child.send({release:true});await exited;
+  assert.equal(await locks.isOperationCurrent(activity),false);assert.deepEqual(await fs.readdir(dir),[]);
+ }finally{if(child.exitCode===null)child.kill();await exited;}
+}));
 test('held operation recognition requires this instance and every owner identity field',async()=>fixture(async dir=>{
  const locks=new LiveLocks(dir,OWNER,options()),other=new LiveLocks(dir,OWNER,options());let observed;
  await locks.withOperation(async()=>{

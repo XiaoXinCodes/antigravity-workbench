@@ -11,13 +11,15 @@ import builtins, hashlib, io, json, os, select, signal, sys, types
 from unittest.mock import patch
 source, case = json.loads(sys.stdin.read())
 pid, parent, birth = 710, 702, '123456'
+if case == 'scan-detached': parent = 1
 boot_id = '11111111-1111-4111-8111-111111111111'
 args = ['/synthetic/bin/agy', '--hub', '--app_data_dir=antigravity', '--hub-port=32124', '--csrf_token=synthetic-only-capability']
 raw = ('\0'.join(args) + '\0').encode()
-target = dict(pid=pid, parentPid=parent, startTicks=birth, bootId=boot_id, commandHash=hashlib.sha256(raw + b'\0HOME=/synthetic-home').hexdigest(), kind='unowned-hub', parentState='alive', canEnd=True)
-request = dict(operation='scan' if case == 'scan' else 'end', executable=args[0], home='/synthetic-home', ownerPid=701, port=32123, csrfToken='synthetic-current-capability', target=target)
+target = dict(pid=pid, parentPid=parent, startTicks=birth, bootId=boot_id, commandHash=hashlib.sha256(raw + b'\0HOME=/synthetic-home\0PPID=702').hexdigest(), kind='unowned-hub', scope='current-window', parentState='alive', canEnd=True)
+request = dict(operation='scan' if case.startswith('scan') else 'end', executable=args[0], home='/synthetic-home', ownerPid=701, port=32123, csrfToken='synthetic-current-capability', target=target)
 if case == 'hash-changed': target['commandHash'] = 'f'*64
 if case == 'current-capability-wrong-parent': request['port'], request['csrfToken'] = 32124, 'synthetic-only-capability'
+if case == 'scan-current-intermediate': request['port'], request['csrfToken'] = 32124, 'synthetic-only-capability'
 sent, closed, opened, attempts, clock, reused, acknowledgements = [], [], [], [], [0.0], [False], [0]
 def open_fake(filename, mode='r', *a, **kw):
     if filename == '/proc/sys/kernel/random/boot_id': return io.StringIO(boot_id + '\n')
@@ -38,7 +40,9 @@ def open_fake(filename, mode='r', *a, **kw):
         tick = '999999' if reused[0] else birth
         if case == 'changed-before-force' and sent: tick = '999999'
         return io.StringIO('710 (agy) ' + ' '.join(['S', str(parent)] + ['0']*17 + [tick]))
-    if filename == '/proc/702/stat': return io.StringIO('702 (synthetic-host) ' + ' '.join(['S', '1'] + ['0']*17 + ['100']))
+    if filename == '/proc/702/stat': return io.StringIO('702 (synthetic-launcher) ' + ' '.join(['S', '1' if case in ('other-window', 'scan-other-window') else '701'] + ['0']*17 + ['999999' if case == 'parent-reused' else '100']))
+    if filename == '/proc/701/stat': return io.StringIO('701 (synthetic-host) ' + ' '.join(['S', '1'] + ['0']*17 + ['999999' if case == 'owner-reused-before-force' and sent else '50']))
+    if filename == '/proc/1/stat': return io.StringIO('1 (synthetic-init) ' + ' '.join(['S', '0'] + ['0']*17 + ['1']))
     raise AssertionError('unexpected filesystem read')
 def pidfd_fake(pid_value, flags):
     assert pid_value == pid and flags == 0
@@ -82,6 +86,19 @@ function run(caseName) {
   const metadata = values.pop(); const stages = values.filter(value => value.authorize).map(value => value.authorize);
   return { result: values.find(value => !value.authorize), stages, ...metadata, output: result.stdout };
 }
+test('helper recognizes indirect current, detached previous Hub, and a live foreign window separately', { skip: !available }, () => {
+  let r = run('scan-current-intermediate'), p = r.result.processes[0];
+  assert.equal(p.kind, 'current-hub'); assert.equal(p.scope, 'current-window'); assert.equal(p.canEnd, false);
+  r = run('scan-detached'); p = r.result.processes[0];
+  assert.equal(p.kind, 'unowned-hub'); assert.equal(p.scope, 'detached'); assert.equal(p.canEnd, true);
+  r = run('scan-other-window'); p = r.result.processes[0];
+  assert.equal(p.kind, 'unowned-hub'); assert.equal(p.scope, 'other-window'); assert.equal(p.canEnd, false);
+  assert.deepEqual(r.signals, []);
+});
+test('reused owner ancestry during the TERM wait cannot authorize escalation', { skip: !available }, () => {
+  const r = run('owner-reused-before-force'); assert.equal(r.result.code, 'OFFICIAL_PROCESS_SELECTION_STALE');
+  assert.deepEqual(r.signals, [15]); assert.deepEqual(r.stages, ['term']);
+});
 test('shipped helper scans and verifies a foreign Hub without exposing argv or capability', { skip: !available }, () => {
   const r = run('scan'); assert.equal(r.result.processes[0].kind, 'unowned-hub'); assert.equal(r.result.processes[0].canEnd, true); assert.equal(r.result.processes[0].parentState, 'alive');
   assert.deepEqual(r.signals, []); assert.doesNotMatch(r.output, /synthetic-only-capability|--csrf_token|--hub-port|PRIVATE_FIELD|synthetic-private-value/);
@@ -90,7 +107,7 @@ test('normal exit uses only TERM on the held pidfd; timeout escalation uses that
   let r = run('normal'); assert.equal(r.result.result, 'exited'); assert.deepEqual(r.signals, [15]); assert.deepEqual(r.closed, [200]);
   r = run('force'); assert.equal(r.result.result, 'forced'); assert.deepEqual(r.signals, [15, 9]); assert.deepEqual(r.closed, [200]); assert.deepEqual(r.stages, ['term', 'force']);
 });
-for (const name of ['reused-at-bind', 'hash-changed', 'duplicate-flag', 'wrong-uid', 'wrong-executable', 'different-home', 'home-inaccessible', 'home-missing', 'home-duplicate', 'home-oversized', 'current-capability-wrong-parent']) test(`${name} never sends a signal`, { skip: !available }, () => {
+for (const name of ['reused-at-bind', 'hash-changed', 'duplicate-flag', 'wrong-uid', 'wrong-executable', 'different-home', 'home-inaccessible', 'home-missing', 'home-duplicate', 'home-oversized', 'current-capability-wrong-parent', 'other-window', 'parent-reused']) test(`${name} never sends a signal`, { skip: !available }, () => {
   const r = run(name); assert.equal(r.result.code, 'OFFICIAL_PROCESS_SELECTION_STALE'); assert.deepEqual(r.signals, []); assert.deepEqual(r.closed, [200]);
 });
 test('already exited target is benign; permission and timeout are precise failures', { skip: !available }, () => {

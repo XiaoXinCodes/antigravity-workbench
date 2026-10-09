@@ -52,7 +52,7 @@ public static class AgProcess {
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
  [DllImport("kernel32.dll",CharSet=CharSet.Ansi,ExactSpelling=true)] static extern IntPtr GetProcAddress(IntPtr module,string name);
  public sealed class Row {
-  public string platform="win32"; public int pid,parentPid; public string startTicks,commandHash,kind="unverified",parentState="unknown",startedAt; public bool canEnd;
+  public string platform="win32"; public int pid,parentPid; public string startTicks,commandHash,kind="unverified",scope="unknown",parentState="unknown",startedAt; public bool canEnd;
  }
  sealed class Fixed : Exception { public string Code; public Fixed(string code){Code=code;} }
  static Fixed Stale(){return new Fixed("OFFICIAL_PROCESS_SELECTION_STALE");}
@@ -106,6 +106,24 @@ public static class AgProcess {
  static string Flag(string[] args,string flag){string found=null;int count=0;foreach(string a in args){if(a.Split('=')[0]==flag){count++;if(a.StartsWith(flag+"=",StringComparison.Ordinal))found=a.Substring(flag.Length+1);}}return count==1?found:null;}
  static string Hash(string value){using(SHA256 sha=SHA256.Create()){return BitConverter.ToString(sha.ComputeHash(new UTF8Encoding(false,true).GetBytes(value))).Replace("-","").ToLowerInvariant();}}
  sealed class Metadata { public int Parent;public string Command,Scope,Image; }
+ sealed class Ancestor { public IntPtr Handle;public int Pid,Parent;public long Birth; }
+ static string Ancestry(int parent,long childBirth,int ownerPid){
+  List<Ancestor> held=new List<Ancestor>();HashSet<int> seen=new HashSet<int>();int cursor=parent;long beforeChild=childBirth;
+  try{for(int depth=0;depth<64;depth++){
+   if(cursor<=0||!seen.Add(cursor))return "unknown";
+   IntPtr h=OpenProcess(Query|Synchronize,false,cursor);
+   if(h==IntPtr.Zero)return depth==0&&Marshal.GetLastWin32Error()==87?"detached":"unknown";
+   Ancestor row=new Ancestor{Handle=h,Pid=cursor};held.Add(row);
+   if(Exited(h))return depth==0?"detached":"unknown";
+   row.Birth=Birth(h);if(row.Birth>beforeChild||Sid(h)!=CurrentSid())return "unknown";
+   Basic basic;int returned;if(NtQueryInformationProcess(h,0,out basic,Marshal.SizeOf(typeof(Basic)),out returned)!=0||returned!=Marshal.SizeOf(typeof(Basic))||basic.Pid.ToInt64()!=cursor||basic.Parent.ToInt64()<0||basic.Parent.ToInt64()>Int32.MaxValue)return "unknown";
+   row.Parent=(int)basic.Parent.ToInt64();
+   if(cursor==ownerPid){foreach(Ancestor item in held){Basic after;int length;if(Exited(item.Handle)||Birth(item.Handle)!=item.Birth||NtQueryInformationProcess(item.Handle,0,out after,Marshal.SizeOf(typeof(Basic)),out length)!=0||length!=Marshal.SizeOf(typeof(Basic))||after.Pid.ToInt64()!=item.Pid||after.Parent.ToInt64()!=item.Parent)throw Stale();}return "current-window";}
+   if(row.Parent==0)return "other-window";
+   beforeChild=row.Birth;cursor=row.Parent;
+  }return "unknown";}catch(Fixed){return "unknown";}finally{foreach(Ancestor item in held)CloseHandle(item.Handle);}
+ }
+ static bool Eligible(Row row){return row.kind=="unowned-hub"&&(row.scope=="current-window"||row.scope=="detached");}
  static Metadata Launch(IntPtr h,int pid,string home,Action<string> progress=null){
   if(progress!=null)progress("architecture");
   ushort machine,native;if(IntPtr.Size!=8||!IsWow64Process2(h,out machine,out native)||machine!=0||(native!=0x8664&&native!=0xaa64))throw Unavailable();
@@ -125,7 +143,8 @@ public static class AgProcess {
   if(progress!=null)progress("stability");Metadata after=Launch(h,pid,home);if(Exited(h))throw new Fixed("gone");
   if(birth!=Birth(h)||image!=Image(h)||sid!=Sid(h)||launch.Parent!=after.Parent||launch.Command!=after.Command||launch.Scope!=after.Scope||launch.Image!=after.Image)throw Stale();
   bool advertised=parsedPort==port&&advertisedCsrf==csrf;
-  Row row=new Row{pid=pid,parentPid=launch.Parent,startTicks=birth.ToString(CultureInfo.InvariantCulture),commandHash=Hash(launch.Command+"\0"+launch.Scope+"\0"+image+"\0"+sid+"\0"+launch.Parent),kind=advertised?(launch.Parent==ownerPid?"current-hub":"unverified"):"unowned-hub",startedAt=DateTime.FromFileTimeUtc(birth).ToString("o",CultureInfo.InvariantCulture)};
+  string scope=advertised?"current-window":Ancestry(launch.Parent,birth,ownerPid);
+  Row row=new Row{pid=pid,parentPid=launch.Parent,startTicks=birth.ToString(CultureInfo.InvariantCulture),commandHash=Hash(launch.Command+"\0"+launch.Scope+"\0"+image+"\0"+sid+"\0"+launch.Parent+"\0"+scope),kind=advertised?"current-hub":"unowned-hub",scope=scope,startedAt=DateTime.FromFileTimeUtc(birth).ToString("o",CultureInfo.InvariantCulture)};
   IntPtr parent=OpenProcess(Synchronize,false,row.parentPid);if(parent!=IntPtr.Zero){try{row.parentState=Exited(parent)?"gone":"alive";}finally{CloseHandle(parent);}}else if(Marshal.GetLastWin32Error()==87)row.parentState="gone";
   return row;
  }
@@ -136,13 +155,13 @@ public static class AgProcess {
   List<Row> rows=new List<Row>();Process[] processes=Process.GetProcessesByName("agy");if(processes.Length>1024)throw Unavailable();
   foreach(Process process in processes){using(process){int pid;try{pid=process.Id;}catch(InvalidOperationException){continue;}IntPtr h=IntPtr.Zero;
    try{h=Bind(pid,false);Row row=Inspect(h,pid,executable,home,ownerPid,port,csrf);
-    if(row.kind=="unowned-hub"){IntPtr end=IntPtr.Zero;try{end=Bind(pid,true);Row checkedRow=Inspect(end,pid,executable,home,ownerPid,port,csrf);row.canEnd=checkedRow.startTicks==row.startTicks&&checkedRow.commandHash==row.commandHash&&checkedRow.kind=="unowned-hub";}catch(Fixed){}finally{if(end!=IntPtr.Zero)CloseHandle(end);}}
+    if(Eligible(row)){IntPtr end=IntPtr.Zero;try{end=Bind(pid,true);Row checkedRow=Inspect(end,pid,executable,home,ownerPid,port,csrf);row.canEnd=checkedRow.startTicks==row.startTicks&&checkedRow.commandHash==row.commandHash&&Eligible(checkedRow);}catch(Fixed){}finally{if(end!=IntPtr.Zero)CloseHandle(end);}}
     rows.Add(row);
    }catch(Fixed e){if(e.Code!="gone")rows.Add(new Row{pid=pid});}finally{if(h!=IntPtr.Zero)CloseHandle(h);}
   }}return rows.ToArray();
  }
  static void CancelCheck(){uint available;if(!PeekNamedPipe(GetStdHandle(-10),IntPtr.Zero,0,IntPtr.Zero,out available,IntPtr.Zero)||available!=0)throw new Fixed("OFFICIAL_PROCESS_END_CANCELLED");}
- static void Match(Row row,string birth,string proof){if(row.kind!="unowned-hub"||row.startTicks!=birth||row.commandHash!=proof)throw Stale();}
+ static void Match(Row row,string birth,string proof){if(!Eligible(row)||row.startTicks!=birth||row.commandHash!=proof)throw Stale();}
  public static string End(int pid,string birth,string proof,string executable,string home,int ownerPid,int port,string csrf){
   IntPtr h=IntPtr.Zero;try{
    h=Bind(pid,true);Match(Inspect(h,pid,executable,home,ownerPid,port,csrf),birth,proof);
