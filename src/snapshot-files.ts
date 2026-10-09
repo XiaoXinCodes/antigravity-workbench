@@ -4,6 +4,8 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { identityKey, InputError, LIMITS, parseJson, parseSnapshot, restoreAccounts, type Account, type Snapshot } from './core';
 
+const directoryQueues = new Map<string, Promise<void>>();
+
 export async function ensurePrivateDirectory(directory: string): Promise<void> {
   if (!path.isAbsolute(directory)) throw new InputError('DIRECTORY_MUST_BE_ABSOLUTE');
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -12,8 +14,30 @@ export async function ensurePrivateDirectory(directory: string): Promise<void> {
   if (process.platform !== 'win32' && (stats.mode & 0o077) !== 0) throw new InputError('DIRECTORY_NOT_PRIVATE');
 }
 export async function withDirectoryLock<T>(directory: string, operation: () => Promise<T>): Promise<T> {
-  const lock = path.join(directory, '.write.lock');
+  // Windows can deny CREATE_NEW while another local writer's lock deletion is
+  // pending. Serialize local writers through cleanup; keep the disk lock for
+  // other processes and never treat permission failures as acquired locks.
+  const key = path.resolve(directory);
+  const previous = directoryQueues.get(key) ?? Promise.resolve();
   const deadline = Date.now() + 2000;
+  let expired = false;
+  let timer: NodeJS.Timeout | undefined;
+  const work = previous.then(() => {
+    if (expired || Date.now() >= deadline) throw new InputError('STORAGE_BUSY');
+    clearTimeout(timer);
+    return withDirectoryFileLock(directory, operation, deadline);
+  });
+  const settled = work.then(() => undefined, () => undefined);
+  directoryQueues.set(key, settled);
+  void settled.then(() => { if (directoryQueues.get(key) === settled) directoryQueues.delete(key); });
+  const waiting = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => { expired = true; reject(new InputError('STORAGE_BUSY')); }, 2000);
+  });
+  try { return await Promise.race([work, waiting]); }
+  finally { clearTimeout(timer); }
+}
+async function withDirectoryFileLock<T>(directory: string, operation: () => Promise<T>, deadline: number): Promise<T> {
+  const lock = path.join(directory, '.write.lock');
   let handle;
   while (!handle) {
     try { handle = await fs.open(lock, 'wx', 0o600); }
