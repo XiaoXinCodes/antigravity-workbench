@@ -334,7 +334,7 @@ test('fake HTTPS transport pins Google destination, no redirect, no raw error an
   await assert.rejects(sendDirectImage(token, { project: 'offline-project' }, new AbortController().signal, fake), { message: 'IMAGE_DIRECT_FORBIDDEN' });
   assert.equal(seen.length, 1); assert.equal(seen[0].hostname, 'daily-cloudcode-pa.googleapis.com');
   assert.equal(seen[0].path, '/v1internal:generateContent'); assert.equal(seen[0].rejectUnauthorized, true);
-  assert.equal(seen[0].headers['User-Agent'], 'Antigravity-Workbench/0.1.5');
+  assert.equal(seen[0].headers['User-Agent'], 'Antigravity-Workbench/0.1.6');
 });
 
 test('429 without a specific reason remains ambiguous, preserving safe HTTP evidence without raw server text', async () => {

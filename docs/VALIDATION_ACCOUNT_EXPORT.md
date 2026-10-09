@@ -1,6 +1,6 @@
 # 导出文件覆盖修复验证 / Export replacement validation
 
-2026-10-09；分支 `fix/account-export-replace`，基于核对后的远端 main `1218745eaf45178c6747c30e21ff7b70f1a91463`。版本仍为 0.1.5；本次仅本地实现与验证，未推送、合并、发布或操作用户机器。
+2026-10-09 初次本地审查记录；分支 `fix/account-export-replace`，基于核对后的远端 main `1218745eaf45178c6747c30e21ff7b70f1a91463`。此阶段版本为 0.1.5，仅本地实现与验证，未推送、合并、发布或操作用户机器。后续 0.1.6 的发行检查与平台 CI 门禁见 [0.1.6 验证范围](VALIDATION_0.1.6.md)。
 
 ## 根因与交互
 
@@ -34,8 +34,8 @@
 
 全部账号、密码、token、文件和故障均为合成夹具。原生 Linux 文件 I/O、并发子进程与隔离 VS Code 宿主实际运行；文件选择和确认的 UI 流程通过注入 VS Code API 验证，宿主 smoke 不等同于手动点击原生保存控件。
 
-Win32 盘符/路径使用 `path.win32` 加真实合成文件的路径映射模型；WSL 挂载路径通过 Linux workspace-host URI 与目录权限模型验证。本补丁未执行 Windows/macOS 原生 CI或用户实际 WSL / DrvFS 验收，既有 0.1.5 CI 不作为此补丁证据。未读取真实登录或加密迁移文件，也未操作实际 Google、账号切换或图片服务。
+Win32 盘符/路径使用 `path.win32` 加真实合成文件的路径映射模型；WSL 挂载路径通过 Linux workspace-host URI 与目录权限模型验证。初次本地审查未执行 Windows/macOS 原生 CI 或用户实际 WSL / DrvFS 验收，既有 0.1.5 CI 不作为此补丁证据。未读取真实登录或加密迁移文件，也未操作实际 Google、账号切换或图片服务。
 
 可移植 Node 文件 API 不提供针对确认快照的原子 CAS，也不能冻结其他应用在最后检查与 rename 之间的路径操作；排他标记保护遵守协议的导出者，快照检查拒绝已观察到的外部变化，不声称能隔离拥有目录写权限的恶意进程。中断可能留下密文临时文件或未完成标记；不确定归属或状态时不会强行接管，可先选择新文件名。未承诺断电后的目录持久化或读取从未落盘的内容。
 
-All data and injected failures are synthetic. Native Linux file operations, independent child processes and an isolated VS Code host were exercised. Windows paths and WSL mount behavior are modeled; no native Windows/macOS CI, real WSL/DrvFS acceptance, Google credentials, user-machine operation or publication was performed. The final path check and rename are not an OS-level compare-and-swap against noncooperating directory writers.
+All data and injected failures are synthetic. Native Linux file operations, independent child processes and an isolated VS Code host were exercised. At this initial local-review stage, Windows paths and WSL mount behavior were modeled; no native Windows/macOS CI, real WSL/DrvFS acceptance, Google credentials, user-machine operation or publication was performed. See the 0.1.6 validation record for subsequent release checks. The final path check and rename are not an OS-level compare-and-swap against noncooperating directory writers.
