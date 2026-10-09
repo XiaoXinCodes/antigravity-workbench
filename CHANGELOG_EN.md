@@ -4,6 +4,16 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.8](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.8) — 2026-10-09
+
+Improve background confirmation for WSL account switching and official launch compatibility.
+
+- Allow explicit handling of unknown-window backgrounds after verifying their shared login scope, with an interruption warning.
+- Support the default official 1.7 launch and multi-root workspaces while retaining cancellation and identity checks.
+- Preserve Windows system profile paths for background checks.
+
+[Release notes](docs/RELEASE_0.1.8.md) · [Validation scope](docs/VALIDATION_0.1.8.md)
+
 ## [0.1.7](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.7) — 2026-10-09
 
 Improve background handling for account operations and fix account and image interactions.

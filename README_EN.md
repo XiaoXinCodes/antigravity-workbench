@@ -60,7 +60,7 @@ If Marketplace is unavailable, download the `.vsix` attachment from the [latest 
 ### Save or add an account
 
 1. If you already have an official login, select **Save current account**. To add another account, select **Add account** and complete OAuth authorization in your browser. Adding restores the original login afterwards; using the new account requires a separate switch.
-2. Select **Switch** on an account card and confirm the displayed background and task scope. Workbench handles that scope, restarts the official component and verifies the target identity before reporting completion. Active tasks in the confirmed scope may be interrupted.
+2. Select **Switch** on an account card and confirm the displayed background and task scope. Workbench handles that scope, restarts the official component and verifies the target identity before reporting completion. Active tasks in the confirmed scope, including related windows, may be interrupted. Unverifiable backgrounds or login scope show conflict and recovery details.
 3. Select **Refresh** on an account card to query its server quota without first switching logins.
 
 A usable local saved record displays a disabled **Saved** button. Missing or unusable credentials can update the existing record without creating a duplicate. Saved describes local checks and does not guarantee that server authorization remains valid. See [account management](docs/INDEPENDENT_ACCOUNTS.md) (Chinese).
