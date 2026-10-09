@@ -4,6 +4,17 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.5](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.5) — 2026-10-09
+
+Verify server identity and query quota during import, with replace or skip choices for duplicate accounts.
+
+- Verify imported credentials and display quota results without first switching accounts.
+- Replace an existing copy or skip a duplicate. Select the target when older copies coexist, retaining its position.
+- Improve credential retention during cancellation, save failures and recovery, and clean up import candidates belonging to deleted copies.
+- Keep the current official login during import, and leave account state unchanged during export.
+
+[Release notes](docs/RELEASE_0.1.5.md) · [Validation scope](docs/VALIDATION_0.1.5.md)
+
 ## [0.1.4](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.4) — 2026-10-08
 
 Inspect and resolve a selected background process when another window or a leftover process blocks account switching.

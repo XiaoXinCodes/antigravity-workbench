@@ -1,6 +1,6 @@
 # 账号导入改进验证 / Account import validation
 
-2026-10-08；本地审查分支 `feat/verified-account-import`。基于实际远端 main `fd3944399815b97826a3a565a08fda599acf178c`（0.1.4）。未修改版本、模型或 Fast 配置；未 push、合并、发布或操作实机。
+以下记录首次实现的本地验证（2026-10-08）；当时的本地审查分支 `feat/verified-account-import`。基于实际远端 main `fd3944399815b97826a3a565a08fda599acf178c`（0.1.4）。当时未修改版本、模型或 Fast 配置，也未 push、合并、发布或操作实机。后续 0.1.5 发行验证见 [VALIDATION_0.1.5.md](VALIDATION_0.1.5.md)。
 
 ## 实现范围
 
@@ -35,4 +35,4 @@
 
 SecretStorage 不提供 fsync 或跨 Google 响应的原子提交。断电发生在收到轮换响应且尚未成功持久化之间时，只能保留交换未知标记并禁止重用旧 refresh token，不能保证恢复一段从未落盘的响应。不同应用或窗口不遵守宿主操作锁时也无法建立跨进程 CAS。错误会保留固定分类与恢复信息，不声称完成真实账号验收。
 
-All credentials are synthetic. Server and SecretStorage fault behavior is mocked; native Linux filesystem/process checks and an isolated VS Code host are real. No Google login, real credential access, native Windows/macOS/WSL account acceptance, push, merge or publication was performed. SecretStorage has no fsync guarantee; an unpersisted server rotation cannot be reconstructed after power loss, so uncertain outcomes block reuse of the prior refresh token.
+All credentials are synthetic. Server and SecretStorage fault behavior is mocked; native Linux filesystem/process checks and an isolated VS Code host are real. At this initial implementation stage, no Google login, real credential access, native Windows/macOS/WSL account acceptance, push, merge or publication was performed. See VALIDATION_0.1.5.md for subsequent release validation. SecretStorage has no fsync guarantee; an unpersisted server rotation cannot be reconstructed after power loss, so uncertain outcomes block reuse of the prior refresh token.

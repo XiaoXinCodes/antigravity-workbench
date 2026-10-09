@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 /** Independently implemented wire contract; no upstream source or catalogue is bundled. */
 export type ImageEndpoint = 'production' | 'daily';
-export const IMAGE_HTTP_USER_AGENT = 'Antigravity-Workbench/0.1.4';
+export const IMAGE_HTTP_USER_AGENT = 'Antigravity-Workbench/0.1.5';
 export function imageEndpoint(value: unknown = 'daily'): ImageEndpoint {
   if (value !== 'production' && value !== 'daily') throw new Error('IMAGE_DIRECT_ENDPOINT_INVALID');
   return value;
