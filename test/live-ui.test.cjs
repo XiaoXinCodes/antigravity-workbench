@@ -605,9 +605,9 @@ test('Login rechecks generation after awaited file proof and sends no RPC to a r
  const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage'),contract=require('../out/official-contract'),fs=require('node:fs/promises'),environment=require('../out/live-environment'),proof=require('../out/live-wsl-proof'),hub=require('../out/live-hub');
  official.isActive=true;const main=path.join(official.extensionPath,'extension.js'),oldCache=require.cache[main],oldRun=storage.runPrivate,oldContract=contract.assertOfficialEntrypoint,oldStat=fs.stat,oldAccess=fs.access,oldMode=environment.resolveOfficialStorageMode,oldHash=environment.assertWslBackendExecutable,oldGuard=proof.createWslFileGuard,oldLogin=hub.loginWithOfficialHub;
  contract.assertOfficialEntrypoint=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};environment.resolveOfficialStorageMode=async()=> 'wsl-file';environment.assertWslBackendExecutable=async()=>{};
- const processes=require('../out/official-process'),oldInspect=processes.inspectWslProcesses;
- processes.inspectWslProcesses=async()=>{const current={pid:710,parentPid:process.pid,startTicks:'123',kind:'current-hub',taskState:'unknown'};return{processes:[current],current};};
- t.after(()=>{processes.inspectWslProcesses=oldInspect});
+ // Supply the same synthetic current instance through each platform's proof
+ // adapter; this file-guard test must not scan unrelated native fixture jobs.
+ provideNativeProcessProof(t,async()=>{const current={pid:710,parentPid:process.pid,startTicks:'123',kind:'current-hub',taskState:'unknown'};return{processes:[current],current};});
  let drift=false,logins=0;proof.createWslFileGuard=()=>async()=>{if(drift)official.exports={port:45678,csrfToken:'synthetic-new-generation'};return true};hub.loginWithOfficialHub=async()=>{logins++};
  require.cache[main]={loaded:true,exports:{deactivate:async()=>{}}};storage.runPrivate=async(_executable,args)=>({code:0,stdout:args[0]==='--version'?'agy version 1.2.14':process.platform==='win32'?'"agy.exe","321"':'agy\n',stderr:''});
  t.after(()=>{contract.assertOfficialEntrypoint=oldContract;fs.stat=oldStat;fs.access=oldAccess;storage.runPrivate=oldRun;environment.resolveOfficialStorageMode=oldMode;environment.assertWslBackendExecutable=oldHash;proof.createWslFileGuard=oldGuard;hub.loginWithOfficialHub=oldLogin;if(oldCache)require.cache[main]=oldCache;else delete require.cache[main]});
