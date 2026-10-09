@@ -185,6 +185,7 @@ export async function resolveOfficialLifecycle(context: vscode.ExtensionContext,
       const proof = await inspector.scan(), current = inspector.currentProcessIdentity();
       if (proof.processes.some(row => row.owner === 'other' || row.owner === 'detached')) throw new LiveError('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN');
       if (proof.processes.length) throw new LiveError('OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED');
+      if (proof.current && proof.current.credentialScopeVerified !== true) throw new LiveError('OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED');
       if (proof.currentCount === undefined) throw new LiveError('OFFICIAL_HUB_PROCESS_UNVERIFIED');
       if (current && pinnedProcess && !sameOfficialProcess(current, pinnedProcess)) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
       if (current) pinnedProcess ??= current;
@@ -1092,9 +1093,10 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       }
       if (processRecovery && (dependencies.processRecovery || official?.isActive)) scanned = await scanProcesses(false);
       hubProcess = processRecovery?.currentProcessIdentity?.();
-      if (scanned && !scanned.canContinue && (!scanned.processes.length || scanned.processes.some(row => !row.canEnd))) {
+      if (scanned && scanned.currentCount !== undefined && hubGeneration && hubGeneration !== 'stopped' && !scanned.current) throw new LiveError('OFFICIAL_HUB_PROCESS_UNVERIFIED');
+      if (scanned && (scanned.current && scanned.current.credentialScopeVerified !== true || scanned.processes.some(row => !row.canEnd || row.credentialScopeVerified !== true) || !scanned.canContinue && !scanned.processes.length)) {
         processConflicts = scanned;
-        throw new LiveError(scanned.processes.some(row => row.owner === 'unknown') ? 'OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED' : scanned.processes.length ? 'OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN' : 'OFFICIAL_HUB_PROCESS_UNVERIFIED');
+        throw new LiveError(scanned.current && scanned.current.credentialScopeVerified !== true || scanned.processes.some(row => row.owner === 'unknown' || row.credentialScopeVerified !== true) ? 'OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED' : scanned.processes.length ? 'OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN' : 'OFFICIAL_HUB_PROCESS_UNVERIFIED');
       }
       // Starting the official extension for OAuth happens only after consent.
       if (!scanned?.processes.length && !(action === 'login' && !official?.isActive && !dependencies.lifecycle)) backend = await resolveLifecycle(action !== 'restore', action === 'login');
@@ -1103,11 +1105,13 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       throw error;
     }
     const scope = [tr('officialProcess.scopeCurrent', { p0: scanned?.current ? ` (PID ${scanned.current.pid})` : '' })];
-    if (scanned?.processes.length) scope.push(tr('officialProcess.scopeDetached', { p0: scanned.processes.map(row => `PID ${row.pid}${row.startedAt ? ` (${row.startedAt})` : ''}`).join(', ') }));
+    const related = scanned?.processes.some(row => row.scope === 'unknown' || row.scope === 'other-window');
+    if (scanned?.processes.length) scope.push(tr(related ? 'officialProcess.scopeRelated' : 'officialProcess.scopeDetached', { p0: scanned.processes.map(row => `PID ${row.pid}${row.startedAt ? ` (${row.startedAt})` : ''}`).join(', ') }));
     if (images.ids.length) scope.push(tr('officialProcess.scopeImages', { p0: images.ids.length }));
     const title = account ? tr('officialProcess.switchAction', { p0: account.expectedEmail, p1: account.migrationState === 'pending' ? tr('liveUi.61d34541c9') : '' }) : action === 'login' ? tr('officialProcess.loginAction') : tr('officialProcess.restoreAction', { p0: journal?.backup?.keyringState === 'unobserved' ? tr('liveUi.5ad013a479') : tr('liveUi.33f439cf93') });
     const consent = tr(action === 'switch' ? 'liveUi.e0351ba254' : action === 'login' ? 'liveUi.b3b97798fc' : 'liveUi.3417cfe630');
-    if (await vscode.window.showWarningMessage(tr('officialProcess.operationConsent', { p0: title, p1: scope.join('\n'), p2: scanned?.processes.length ? tr(scanned.processes.every(row => row.endMode === 'force') ? 'officialProcess.forceRisk' : 'officialProcess.termRisk') : '' }), { modal: true }, consent) !== consent || disposed) return null;
+    const risk = (scanned?.processes.length ? tr(scanned.processes.every(row => row.endMode === 'force') ? 'officialProcess.forceRisk' : 'officialProcess.termRisk') : '') + (related ? tr('officialProcess.relatedRisk') : '');
+    if (await vscode.window.showWarningMessage(tr('officialProcess.operationConsent', { p0: title, p1: scope.join('\n'), p2: risk }), { modal: true }, consent) !== consent || disposed) return null;
     if (account && JSON.stringify(items().find(item => item.id === account.id)) !== JSON.stringify(account)) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     await stopConfirmedImages(images, occupant);
     return { action, ...(account ? { argument: account.id, fingerprint: JSON.stringify(account) } : {}), ...(backend ? { backend } : {}), ...(scanned ? { scan: scanned } : {}), ...(hubGeneration ? { hubGeneration } : {}), ...(hubExtension ? { hubExtension } : {}), ...(hubProcess ? { hubProcess } : {}), images };
@@ -1136,7 +1140,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         await processRecovery.endMany(conflicts.map(row => row.id), controller.signal);
         if (disposed || controller.signal.aborted) throw new LiveError('OFFICIAL_PROCESS_END_CANCELLED');
         const scanned = await scanProcesses(false);
-        if (!scanned?.canContinue) { processConflicts = scanned; throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); }
+        if (!scanned?.canContinue || scanned.processes.length || scanned.current && scanned.current.credentialScopeVerified !== true) { processConflicts = scanned; throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); }
         assertConfirmedHub();
       } finally { if (processAbort === controller) processAbort = undefined; }
     }
@@ -1146,7 +1150,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     // wait so an intervening same-capability replacement cannot be adopted.
     if (prepared.hubProcess && processRecovery) {
       const latest = await scanProcesses(false);
-      if (!latest?.canContinue) { processConflicts = latest; throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); }
+      if (!latest?.canContinue || latest.processes.length || latest.current && latest.current.credentialScopeVerified !== true) { processConflicts = latest; throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); }
     }
     assertConfirmedHub();
     return backend;
@@ -1618,14 +1622,16 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   });
   const endProcesses = async (argument: unknown, all = false): Promise<boolean | void> => {
     const selected = all && argument === undefined ? processConflicts?.processes.filter(row => row.canEnd) : typeof argument === 'string' ? processConflicts?.processes.filter(row => row.id === argument && row.canEnd) : undefined;
-    if (!selected?.length || !processRecovery || selected.length > 1 && !processRecovery.endMany) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    if (!selected?.length || selected.some(row => row.credentialScopeVerified !== true) || !processRecovery || selected.length > 1 && !processRecovery.endMany) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     const intent = blockedSwitch;
     if (intent && JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     const targetEmail = intent ? items().find(item => item.id === intent.id)!.expectedEmail : undefined;
     const consent = tr(selected.length > 1 ? 'officialProcess.batchEnd' : selected[0]!.endMode === 'force' ? 'officialProcess.forceConfirm' : 'officialProcess.endConfirm');
-    const scopes = [tr('officialProcess.scopeDetached', { p0: selected.map(row => `PID ${row.pid} (${row.startedAt ?? tr('officialProcess.unknownTime')})`).join(', ') })];
+    const related = selected.some(row => row.scope === 'unknown' || row.scope === 'other-window');
+    const scopes = [tr(related ? 'officialProcess.scopeRelated' : 'officialProcess.scopeDetached', { p0: selected.map(row => `PID ${row.pid} (${row.startedAt ?? tr('officialProcess.unknownTime')})`).join(', ') })];
     if (intent) scopes.push(tr('officialProcess.scopeCurrent', { p0: processConflicts?.current ? ` (PID ${processConflicts.current.pid})` : '' }));
-    const message = tr('officialProcess.operationConsent', { p0: targetEmail ? tr('officialProcess.switchAction', { p0: targetEmail, p1: '' }) : tr('officialProcess.endOnly'), p1: scopes.join('\n'), p2: tr(selected.every(row => row.endMode === 'force') ? 'officialProcess.forceRisk' : 'officialProcess.termRisk') });
+    const risk = tr(selected.every(row => row.endMode === 'force') ? 'officialProcess.forceRisk' : 'officialProcess.termRisk') + (related ? tr('officialProcess.relatedRisk') : '');
+    const message = tr('officialProcess.operationConsent', { p0: targetEmail ? tr('officialProcess.switchAction', { p0: targetEmail, p1: '' }) : tr('officialProcess.endOnly'), p1: scopes.join('\n'), p2: risk });
     if (await vscode.window.showWarningMessage(message, { modal: true }, consent) !== consent || disposed) return;
     if (blockedSwitch !== intent) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     if (intent && JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');

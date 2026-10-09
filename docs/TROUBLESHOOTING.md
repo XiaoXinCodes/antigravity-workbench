@@ -9,8 +9,8 @@
 | 账号列表仍在，但切换不可用 | 查看是否有待恢复操作、另一窗口占用、存储能力不足或宿主不一致；按恢复入口处理 |
 | `OFFICIAL_COMPONENT_RESTART_UNAVAILABLE` | 官方组件没有可用的受支持重启能力；检查扩展是否激活及其兼容性，收集版本与错误码 |
 | `CLOSE_OTHER_AGY_PROCESSES` | 结束其他相关任务或窗口后重新检查；不要随意终止身份不明的进程 |
-| `OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN` | 查看按异常出现的“后台异常与恢复”。正常切换会自动识别本窗口后台，并在一次确认中列出本窗口及已核验的遗留后台范围；确认后插件处理，不需要先手动扫描。其他活跃窗口或归属未知的后台不能自动结束，应在所属窗口处理后重试。多项安全目标共用一次名单确认；新进程或换代需重新确认 |
-| `OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED` / `OFFICIAL_HUB_PROCESS_UNVERIFIED` | 无法核实 agy 归属或当前 Hub 进程；等官方启动完成后重新检查，必要时核对宿主与相关 CLI。不能据此断定存在另一窗口 |
+| `OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN` | 查看“后台异常与恢复”。进程身份及同一登录范围可核实时，一次确认列出本窗口与相关后台，提醒可能中断相关窗口任务。归属未知仍如实显示；无法核验时在所属窗口处理后重试。新进程或换代不能沿用旧确认 |
+| `OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED` / `OFFICIAL_HUB_PROCESS_UNVERIFIED` | 无法核实进程身份、登录范围或当前 Hub；等官方启动完成后重扫，按固定原因核对宿主、认证覆盖或 `antigravity.serverArgs`。官方默认多根目录参数受支持，未知自定义参数仍会阻止操作；不能据此断定存在另一窗口 |
 | `OFFICIAL_BACKEND_STOP_TIMEOUT` | 后台未在等待期限内完成退出；未继续写入切号凭据。先检查当前后台与恢复状态，不按进程名批量结束任务 |
 | `OFFICIAL_PROCESS_SELECTION_STALE` | 选定后台、官方 Hub 或目标账号发生变化。重新检查并重新选择；旧选择不会用来结束新进程 |
 | `OFFICIAL_PROCESS_END_DENIED` / `OFFICIAL_PROCESS_END_UNAVAILABLE` | Linux/WSL 的安全结束需要 pidfd、`/usr/bin/python3` 和目标进程的退出权限；缺少能力时仅显示详情和重扫。Windows 使用系统 PowerShell 与 .NET：原生 64 位目标需能核实完整启动路径、同用户及同 USERPROFILE，并具有进程读取与退出权限；编译被策略限制、目标为模拟/32 位进程或身份未知时，只提供详情和重扫，不申请管理员权限。macOS 目前不提供扩展内终止适配器，可在对应窗口或系统进程工具中处理已核实的指定后台后重扫 |

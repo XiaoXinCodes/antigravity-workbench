@@ -4,6 +4,16 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.8](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.8) — 2026-10-09
+
+改善 WSL 账号切换的后台确认与官方启动兼容性。
+
+- 后台归属未知时，核验同一登录范围后支持明确确认处理，并提醒可能中断相关窗口的任务。
+- 兼容官方 1.7 默认启动方式与多根工作区，保留取消、身份变化和无法核验时的保护。
+- 补齐 Windows 后台检查的系统配置目录环境。
+
+[发布说明](docs/RELEASE_0.1.8.md) · [验证范围](docs/VALIDATION_0.1.8.md)
+
 ## [0.1.7](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.7) — 2026-10-09
 
 改善账号操作的后台处理，修复账号与图片界面的交互问题。

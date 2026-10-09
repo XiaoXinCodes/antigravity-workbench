@@ -11,8 +11,25 @@ const { renderWorkbench, WorkbenchView } = require(entry);
 Module._load = original;
 const state = (extra = {}) => ({ accounts: [], snapshots: [], status: '准备就绪', busy: false, pending: false, recoveryPhase: 'none', warning: null, environment: { available: true, message: '本机工作台 · WSL 工作区' }, ...extra });
 const account = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', label: 'Example', expectedEmail: 'example@example.test', capturedAt: '2026-10-01T00:00:00.000Z', identitySource: 'hub' };
+test('unknown scope explains ownership and shows the distinct current Hub without implying missing Linux tools',()=>{
+ const processConflicts={phase:'blocked',canContinue:false,limitation:'ownership',current:{id:'current-private-selection',pid:709,parentPid:701,owner:'current',scope:'current-window',parentState:'alive',taskState:'unknown',canEnd:false},processes:[{id:'conflict-selection',pid:710,parentPid:702,owner:'other',scope:'unknown',scopeReason:'ancestor-user-mismatch',parentState:'alive',taskState:'unknown',canEnd:false}]};
+ const html=renderWorkbench(state({processConflicts}),'nonce');
+ assert.match(html,/本窗口后台：PID 709/);assert.match(html,/额外冲突后台/);assert.match(html,/祖先进程属于不同系统用户/);
+ assert.ok(!html.includes('python3'));assert.ok(!html.includes('pidfd'));assert.ok(!html.includes('current-private-selection'));
+ assert.match(html,/data-command="live.processEnd" data-id="conflict-selection" disabled/);
+});
+test('independently verified unknown-window backend offers explicit handling and retains truthful ancestry details',()=>{
+ const row={id:'selected-synthetic-710',pid:710,parentPid:702,owner:'other',scope:'unknown',scopeReason:'ancestor-user-mismatch',credentialScopeVerified:true,credentialScopeReason:'verified',parentState:'alive',taskState:'unknown',canEnd:true};
+ const html=renderWorkbench(state({processConflicts:{phase:'blocked',canContinue:false,current:{id:'private-current-id',pid:709,owner:'current',scope:'current-window',credentialScopeVerified:true,parentState:'alive',taskState:'unknown',canEnd:false},processes:[row]},processSwitchTarget:'target@example.test'}),'nonce');
+ assert.match(html,/后台原窗口归属未确定/);assert.match(html,/祖先进程属于不同系统用户/);
+ assert.match(html,/已核验同用户、官方程序及同认证范围/);
+ assert.match(html,/data-command="live.processEnd" data-id="selected-synthetic-710" class=/);
+ assert.ok(!html.includes('private-current-id'));assert.ok(!html.includes('pidfd'));
+ const unverified=renderWorkbench(state({processConflicts:{phase:'blocked',canContinue:false,limitation:'ownership',processes:[{...row,credentialScopeVerified:false,credentialScopeReason:'unsupported-launch-flags'}]}}),'nonce');
+ assert.match(unverified,/尚未核实的自定义启动选项/);assert.match(unverified,/antigravity\.serverArgs/);assert.match(unverified,/data-command="live.processEnd" data-id="selected-synthetic-710" disabled/);
+});
 test('conflict list shows PID, birth, ownership uncertainty and the intended switch without private proof',()=>{
- const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true}]};
+ const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,credentialScopeVerified:true}]};
  let html=renderWorkbench(state({processConflicts,processSwitchTarget:'target@example.test'}),'nonce');
  assert.match(html,/PID 710/);assert.match(html,/父进程：702/);assert.match(html,/原窗口未知/);assert.match(html,/任务状态未知/);assert.match(html,/target@example.test/);assert.match(html,/data-command="live.processScan"/);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection"/);
  assert.doesNotMatch(html,/commandHash|csrfToken|startTicks|bootId/);
@@ -20,7 +37,7 @@ test('conflict list shows PID, birth, ownership uncertainty and the intended swi
  html=renderWorkbench(state({processConflicts:{phase:'clear',canContinue:true,processes:[]},processSwitchTarget:'target@example.test'}),'nonce');assert.match(html,/data-command="live.processContinue"/);
 });
 test('conflict actions explain Windows force and unavailable platform dependencies',()=>{
- const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,endMode:'force'}]};
+ const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,credentialScopeVerified:true,endMode:'force'}]};
  let html=renderWorkbench(state({processConflicts}),'nonce');
  assert.match(html,/强制结束此后台/);
  html=renderWorkbench(state({processConflicts,processSwitchTarget:'target@example.test'}),'nonce');assert.match(html,/强制结束此后台并切号/);
@@ -79,7 +96,7 @@ function fixture(extra = {}) {
  return { provider, webview, posted, message: value => message(value), close: () => closed() };
 }
 test('process messages require a current opaque selection and reject arbitrary PID, paths, signals and stale views',async()=>{
- calls.length=0;const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,owner:'other',parentState:'alive',taskState:'unknown',canEnd:true}]};
+ calls.length=0;const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,credentialScopeVerified:true}]};
  const f=fixture({processConflicts});
  for(const payload of [{command:'live.processEnd',pid:710},{command:'live.processEnd',processId:710},{command:'live.processEnd',processId:'wrong'},{command:'live.processEnd',processId:'opaque-selection',signal:'SIGKILL'},{command:'live.processScan',processId:'opaque-selection'},{command:'live.processEnd',processId:'opaque-selection',path:'/synthetic/agy'}])await f.message(payload);
  assert.equal(calls.length,0);await f.message({command:'live.processEnd',processId:'opaque-selection'});await f.message({command:'live.processScan'});

@@ -11,7 +11,7 @@ const ACCOUNT_B = '00000000-0000-4000-8000-000000000002';
 const HOST = 'a'.repeat(64);
 const trace = [];
 const fileUri = value => ({ scheme: 'file', authority: '', query: '', fragment: '', fsPath: value, toString: () => `file://${value}` });
-const detached = (pid, id = `selection-${pid}`) => ({ id, pid, parentPid: 1, startedAt: '2026-10-09T04:00:00Z', owner: 'detached', parentState: 'gone', taskState: 'unknown', canEnd: true, scope: 'detached' });
+const detached = (pid, id = `selection-${pid}`) => ({ id, pid, parentPid: 1, startedAt: '2026-10-09T04:00:00Z', owner: 'detached', parentState: 'gone', taskState: 'unknown', canEnd: true, scope: 'detached', credentialScopeVerified: true });
 
 /** VS Code APIs, Hub responses and account tokens are synthetic. The account
  * transaction and UI command implementation are the production modules. */
@@ -75,7 +75,7 @@ function fixture(t, options = {}) {
     async scan() { record('scan-processes', rows.map(row => row.pid)); selections = new Set(rows.filter(row => row.canEnd).map(row => row.id)); return {
       phase: rows.length ? 'blocked' : 'clear', processes: structuredClone(rows), canContinue: !rows.length,
       currentCount: running ? 1 : 0, totalCount: rows.length + (running ? 1 : 0),
-      ...(running ? {current: {id:'current-selection', pid:1001, parentPid:process.pid, owner:'current', parentState:'alive', taskState:'unknown', canEnd:false, scope:'current-window'}} : {})
+      ...(running ? {current: {id:'current-selection', pid:1001, parentPid:process.pid, owner:'current', parentState:'alive', taskState:'unknown', canEnd:false, scope:'current-window',credentialScopeVerified:true}} : {})
     }; },
     async end(id) { record('end-one', id); throw new LiveError('OFFICIAL_PROCESS_END_UNAVAILABLE'); },
     async endMany(ids, signal) { record('end-many', [...ids]); if (ids.some(id => !selections.has(id)) || rows.some(row => !ids.includes(row.id))) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); if (ui.endMany) return ui.endMany(ids, signal); rows = []; return ids.map(() => 'exited'); },
@@ -104,8 +104,8 @@ function realRecovery(f, onScan) {
         ++scans; onScan?.({scans, replaceCurrent: (pid, start) => {currentPid=pid;currentStart=start;}});
         f.record('native-helper-scan', {scans, currentPid, currentStart, pids:f.rows().map(row=>row.pid)});
         return {supported:true, processes:[
-          {pid:currentPid,parentPid:process.pid,startTicks:currentStart,bootId:'00000000-0000-4000-8000-000000000000',commandHash:'a'.repeat(64),kind:'current-hub',scope:'current-window',parentState:'alive',canEnd:false},
-          ...f.rows().map(row=>({pid:row.pid,parentPid:1,startTicks:String(row.pid),bootId:'00000000-0000-4000-8000-000000000000',commandHash:'b'.repeat(64),kind:'unowned-hub',scope:'detached',parentState:'gone',canEnd:true,startedAt:row.startedAt}))
+          {pid:currentPid,parentPid:process.pid,startTicks:currentStart,bootId:'00000000-0000-4000-8000-000000000000',commandHash:'a'.repeat(64),kind:'current-hub',scope:'current-window',credentialScopeVerified:true,parentState:'alive',canEnd:false},
+          ...f.rows().map(row=>({pid:row.pid,parentPid:1,startTicks:String(row.pid),bootId:'00000000-0000-4000-8000-000000000000',commandHash:'b'.repeat(64),kind:'unowned-hub',scope:'detached',credentialScopeVerified:true,parentState:'gone',canEnd:true,startedAt:row.startedAt}))
         ]};
       }
       authorize?.(); f.record('native-helper-end', {pid:request.target.pid});
