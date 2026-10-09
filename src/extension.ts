@@ -1,3 +1,4 @@
+import { registerQuotaHistory } from './quota-history-ui';
 import { registerAutomationUi, registerIdentityPrivacy } from './automation-ui';
 import { registerLocalizedHelp } from './localized-help';
 import { registerI18n } from './i18n-vscode';
@@ -29,14 +30,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const tree = { accounts: [] as Account[], warning: null as string | null, refresh: (): void => dashboard.refresh() };
   let accountChanged = (): void => undefined;
   let automationChanged = (): void => undefined;
+  let historyChanged = (): void => undefined;
   let quotaChanged = (): void => undefined;
-  const live = registerLiveUi(context, { changed: () => { tree.refresh(); accountChanged(); quotaChanged(); automationChanged(); } });
+  const live = registerLiveUi(context, { changed: () => { tree.refresh(); accountChanged(); quotaChanged(); automationChanged(); historyChanged(); } });
   const quotaTools = registerQuotaTools(context, live, () => tree.refresh());
   quotaChanged = quotaTools.refresh;
   const direct = createDirectImageIntegration(context, () => live.getAccounts(), { accountsReady: () => live.getState().accountStorageReady });
   const automation = registerAutomationUi(context, live);
   automationChanged = automation.refresh;
-  const images = registerDirectImageUi(context, direct, () => tree.refresh(), undefined, quotaTools.preferences, sample => { void automation.observe([sample]); });
+  const history = registerQuotaHistory(context, live);
+  historyChanged = history.refresh;
+  const images = registerDirectImageUi(context, direct, () => tree.refresh(), undefined, quotaTools.preferences, sample => { void automation.observe([sample]); }, history);
   flushImageSession = images.flush;
   accountChanged = () => {
     const state = live.getState();

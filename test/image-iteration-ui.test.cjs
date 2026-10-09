@@ -94,3 +94,11 @@ test('clearing a source preserves an unavailable model and parameters without an
  assert.deepEqual(f.disk().draft,before);assert.equal(f.choiceReads(),reads);assert.equal(f.disk().origin,undefined);assert.deepEqual(f.disk().references,[]);assert.equal(f.runs.length,0);assert.equal(f.latest().accountBlocked,true);
  await f.send({type:'draft',...f.latest().draft,modelId:'other-image-model'});assert.equal(f.latest().accountBlocked,false);
 });
+
+test('reuse any failed historical request preserves original parameters and missing references, protects the newest unsaved draft and never generates',async t=>{
+ const f=await fixture(t);f.original.phase='failed';const draft={...f.latest().draft,prompt:'new unsaved text typed just before reuse',draftRevision:1};await f.send({type:'reuseTask',taskId:f.original.id,...draft});
+ assert.equal(f.latest().draft.prompt,f.original.prompt);assert.equal(f.latest().draft.accountId,B);assert.equal(f.latest().draft.modelId,model);assert.equal(f.latest().draft.count,2);assert.equal(f.latest().draft.ratio,'16:9');assert.equal(f.disk().draft.size,'2K');assert.equal(f.disk().draft.quality,'detail');assert.deepEqual(f.disk().references,f.original.references);assert.equal(f.disk().savedDrafts[0].draft.prompt,draft.prompt);assert.match(f.latest().actionNotice,/参考图缺失/);assert.equal(f.runs.length,0);assert.equal(f.disk().origin,undefined);
+});
+test('historical reuse save failure rolls back and replaced account / changed endpoint leaves current draft intact',async t=>{
+ const f=await fixture(t),before=f.disk();f.setFail(true);await f.send({type:'reuseTask',taskId:f.original.id});assert.deepEqual(f.disk(),before);f.setFail(false);await f.send({type:'saveRecords'});f.accounts[1].capturedAt='2026-10-06T00:00:00Z';await f.send({type:'reuseTask',taskId:f.original.id});assert.deepEqual(f.disk().draft,before.draft);delete f.accounts[1].capturedAt;f.setEndpoint('production');await f.send({type:'reuseTask',taskId:f.original.id});assert.deepEqual(f.disk().draft,before.draft);assert.equal(f.runs.length,0);
+});

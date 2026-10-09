@@ -137,6 +137,12 @@ export class SavedImageAccounts {
     if (!row) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
     return { ...row, accountId: id, endpoint, queriedAt: prepared.queriedAt };
   }
+  async observeQuota(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint, assertCurrent: () => Promise<void>) {
+    const prepared = await this.prepare(id, signal, endpoint, true, { assertCurrent });
+    const row = prepared.quota.find(item => item.modelId === modelId);
+    if (!row) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+    return { ...row, accountId: id, endpoint, queriedAt: prepared.queriedAt };
+  }
   async diagnoseCatalog(id: string, signal: AbortSignal, endpoint: ImageEndpoint, assertCurrent: () => Promise<void>): Promise<CatalogSummary> {
     return (await this.prepare(id, signal, endpoint, true, { assertCurrent })).catalog;
   }

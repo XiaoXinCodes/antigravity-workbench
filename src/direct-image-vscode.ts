@@ -1,3 +1,4 @@
+import { accountDisplayFingerprint } from './quota-presentation';
 import { savedAccountStore } from './saved-account-store';
 import { t as tr } from './i18n';
 import { diagnoseImageCatalog } from './image-catalog-diagnostic';
@@ -167,6 +168,20 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       return { ...row, accountId, endpoint, queriedAt: new Date().toISOString() };
     });
   };
+  const readCandidateImageQuota = async (id: string, model: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<ImageQuotaSnapshot> => {
+    assertAccountsReady();
+    const account = summaries().find(a => a.id === id);
+    if (!account || !account.hostCurrent || account.migrationState === 'pending') throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
+    const fingerprint = accountDisplayFingerprint(account);
+    const assertCurrent = async () => {
+      const current = summaries().find(a => a.id === id);
+      if (signal.aborted || !current || accountDisplayFingerprint(current) !== fingerprint || current.active !== account.active) throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
+      if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
+    };
+    await assertCurrent();
+    const result = account.active ? await readImageQuota(id, model, signal) : await saved.observeQuota(id, model, signal, endpoint, assertCurrent);
+    await assertCurrent(); return result;
+  };
   const check = async (signal: AbortSignal, allowProjectLookup: boolean, expectedEndpoint?: ImageEndpoint) => {
     const endpoint = allowProjectLookup ? getEndpoint() : undefined;
     if (expectedEndpoint !== undefined && endpoint !== imageEndpoint(expectedEndpoint)) throw new Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
@@ -233,7 +248,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       if (!recorded) diagnostic.event('status', { code: 'IMAGE_OPERATION_HISTORY_UNAVAILABLE' });
     }
   };
-  return { readChoices, readImageQuota, hasSavedAccountSelection: (id: string) => saved.isSelected(id), selectSavedAccount: (id: string) => { assertAccountsReady(); saved.selectForWindow(id); }, listAccounts: summaries, diagnoseCatalog, diagnose, diagnoseProject, run, getEndpoint,
+  return { readChoices, readImageQuota, readCandidateImageQuota, hasSavedAccountSelection: (id: string) => saved.isSelected(id), selectSavedAccount: (id: string) => { assertAccountsReady(); saved.selectForWindow(id); }, listAccounts: summaries, diagnoseCatalog, diagnose, diagnoseProject, run, getEndpoint,
     operationRecordWarning: () => historyWriteFailed ? tr("directImageVscode.1da2d70877") : '',
     operationHistory: async () => formatImageOperations(await journal.read()) };
 }

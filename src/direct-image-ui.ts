@@ -1,12 +1,14 @@
 import { displayAccount, hideIdentityText, onIdentityPresentationChange, identityAlias, identityHidden } from './identity-presentation';
 import { accountDisplayFingerprint } from './quota-presentation';
+import { ImageRecommendation } from './image-recommendation';
+import type { ImageHistoryObserver } from './quota-history-ui';
 import type { AlertSample } from './quota-alerts';
 import { locale, localizeLines, localizeMessage, onLanguageChange, t as tr } from './i18n';
 import { verifiedCurrentAccountId } from './current-account';
 import * as vscode from 'vscode';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { checkedDirectory } from './image-files';
 import { readDirectRaster } from './direct-image-raster';
 import { recoverExistingImage } from './direct-image-output';
@@ -38,7 +40,7 @@ function nativePath(uri: vscode.Uri): string | undefined {
 }
 
 /** Only handles UI state; account binding, HTTP, image validation and saving live outside the webview. */
-export function registerDirectImageUi(context: vscode.ExtensionContext, direct: Direct, outputChanged?: () => void, sessionStorage?: ImageSessionStorage, preferences = new QuotaPreferences(context.globalState), observeQuota?: (sample: AlertSample) => void) {
+export function registerDirectImageUi(context: vscode.ExtensionContext, direct: Direct, outputChanged?: () => void, sessionStorage?: ImageSessionStorage, preferences = new QuotaPreferences(context.globalState), observeQuota?: (sample: AlertSample) => void, history?: ImageHistoryObserver) {
   const storageRoot = context.storageUri?.fsPath ?? context.globalStorageUri?.fsPath;
   const session = sessionStorage ?? new ImageSessionStore(storageRoot ? path.join(storageRoot, context.storageUri ? 'image-session' : 'image-session-no-workspace') : undefined);
   let initialized: Promise<void> | undefined, loaded = false, storageNotice = '', saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -128,6 +130,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
   const privateText = (value: string) => hideIdentityText(value, direct.listAccounts?.() ?? choices.accounts);
   const emit = (save = true, languageOnly = false) => { if (save) scheduleSave(); if (!panel) return;
     const currentId = verifiedCurrentAccountId(choices.accounts, accountSnapshot === undefined ? choices.accounts.find(account => account.active)?.expectedEmail : officialEmail, officialBlocked);
+    recommendation.selection(draft.modelId, direct.getEndpoint());
     quota.selection(JSON.stringify([selectedSavedId ?? '@current', draft.accountId, draft.modelId, direct.getEndpoint()]));
     if (vscode.Uri?.file) panel.webview.options = { ...panel.webview.options,
       localResourceRoots: [...new Set([...images.filter(image => !image.unavailable).map(image => path.dirname(image.file)),
@@ -140,6 +143,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     savedDrafts: savedDrafts.map(s => ({ id: s.id, savedAt: s.savedAt, summary: s.draft.prompt.slice(0, 80) || tr("directImageUi.de5f067d27") })),
     comparison: comparison ? { versions: comparison.versions.map(v => ({ key: v.key, label: localizeMessage(v.label) })), left: compareSide(comparison.left), right: compareSide(comparison.right) } : undefined,
     imageFavorites: preferences.getState().imageFavorites,
+    recommendation: { ...recommendation.getState(), rows: recommendation.getState().rows.map(row => { const a = (direct.listAccounts?.() ?? choices.accounts).find(a => a.id === row.accountId); return { ...row, fingerprint: undefined, label: a ? displayAccount(a) : '', usable: recommendation.usable(row) }; }) },
     imageQuota: { ...quota.getState(), error: localizeImageFailure(quota.getState().error ?? '') }, accountRetryPending: !!retryTimer, accountStatus: privateText(localizeImageFailure(accountStatus)), accountBlocked: accountBlocked || choicesLoading || modelUnavailable, choicesLoading, canCheckAccount: !!selectedSavedId || !officialBlocked,
     recentDiagnostic: privateText(formatRecentImageFailure(recent.get())), operationHistory: privateText(localizeLines(operationHistory)), choices: {
     accounts: choices.accounts.map(x => ({ id: x.id, label: displayAccount(x) + (x.id === currentId ? tr("directImageUi.d381a6a80a") : ''), active: x.id === currentId, unavailable: x.hostCurrent === false || x.migrationState === 'pending' })), models: choices.models },
@@ -160,6 +164,10 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
   context.subscriptions.push(onIdentityPresentationChange(() => emit(false, true)));
   const project = new ImageProjectActions(context, () => emit(false));
   const quota = new ImageQuotaQuery(() => emit(false));
+  const recommendation = new ImageRecommendation(() => direct.listAccounts?.() ?? choices.accounts, (id, model, signal, endpoint) => direct.readCandidateImageQuota(id, model, signal, endpoint), () => emit(false), row => {
+    if (row.snapshot) { void history?.imageObservation(row.snapshot, row.fingerprint).catch(() => undefined); observeQuota?.({ accountId: row.accountId, fingerprint: row.fingerprint, quotaKey: JSON.stringify([row.snapshot.endpoint, row.snapshot.modelId]), modelLabel: row.snapshot.modelId, observedAt: row.snapshot.queriedAt, fraction: row.snapshot.remainingFraction }); }
+    else void history?.imageGap(row.accountId, row.fingerprint, recommendation.getState().modelId, recommendation.getState().endpoint).catch(() => undefined);
+  });
   const refresh = async (force = false) => {
     if (disposed) return;
     if (busy || !panel || officialBlocked && !selectedSavedId) { refreshPending = true; emit(); return; }
@@ -229,6 +237,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     const waiting = !!retryTimer;
     if (waiting) checkSuspended = true;
     stopRetry();
+    recommendation.cancel();
     quota.invalidate(true);
     cancelRequested = true; active?.abort(); choicesAbort?.abort(); ++choicesRevision;
     if ((choicesLoading || waiting) && !busy) {
@@ -305,13 +314,24 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
       const current = (direct.listAccounts?.() ?? choices.accounts).find(a => a.id === id);
       if (fingerprint && current && accountDisplayFingerprint(current) === fingerprint) observeQuota?.({ accountId: id, fingerprint, quotaKey: JSON.stringify([endpoint, model]), modelLabel: model, observedAt: result.queriedAt, fraction: result.remainingFraction });
+      if (fingerprint && current && accountDisplayFingerprint(current) === fingerprint) void history?.imageObservation(result, fingerprint).catch(() => undefined);
       return result;
     }, imageQuotaErrorText);
+    if (quotaSelection() === key && quota.getState().error && fingerprint) void history?.imageGap(id, fingerprint, model, endpoint).catch(() => undefined);
   };
   const handle = async (value: unknown, owner: vscode.WebviewPanel) => {
     if (!value || typeof value !== 'object' || Array.isArray(value) || panel !== owner) return;
     const msg = value as Record<string, unknown>;
     if (Number.isSafeInteger(msg.actionRevision) && Number(msg.actionRevision) >= actionRevision) actionRevision = Number(msg.actionRevision);
+    if (msg.type === 'compareAccounts') { if (!busy && saveDraft(msg, false) && draft.modelId && !modelUnavailable && typeof direct.readCandidateImageQuota === 'function') await recommendation.start(draft.modelId, direct.getEndpoint()); return; }
+    if (msg.type === 'cancelCompareAccounts') { recommendation.cancel(); emit(false); return; }
+    if (msg.type === 'chooseRecommended') {
+      if (!saveDraft(msg, false)) return;
+      recommendation.selection(draft.modelId, direct.getEndpoint());
+      const row = recommendation.choose(msg.accountId);
+      if (!row || busy) { actionNotice = tr('recommend.unavailable'); emit(false); return; }
+      msg.type = 'selectAccount'; msg.selection = row.accountId;
+    }
     if (msg.type === 'queryQuota') { await querySelectedQuota(); return; }
     if (msg.type === 'layout') {
       if (typeof msg.resultsShare !== 'number' || !Number.isFinite(msg.resultsShare) || typeof msg.resultsCollapsed !== 'boolean') return;
@@ -371,7 +391,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     if (msg.type === 'draft') { if (!busy) saveDraft(msg); return; }
     if (msg.type === 'cancel') { cancel(); return; }
     if (busy) { emit(); return; }
-    if (!['output', 'references', 'removeReference', 'clearReferences', 'recover', 'preview', 'generate', 'continueImage', 'restoreDraft', 'deleteDraft', 'detachIteration', 'compareImage', 'compareSelect', 'copyPath', 'copyMarkdown', 'insertMarkdown', 'copyToProject'].includes(String(msg.type))) return;
+    if (!['output', 'references', 'removeReference', 'clearReferences', 'recover', 'preview', 'generate', 'reuseTask', 'continueImage', 'restoreDraft', 'deleteDraft', 'detachIteration', 'compareImage', 'compareSelect', 'copyPath', 'copyMarkdown', 'insertMarkdown', 'copyToProject'].includes(String(msg.type))) return;
     if (msg.type === 'removeReference' || msg.type === 'clearReferences') {
       if (msg.revision !== referenceRevision || !references.length || msg.type === 'removeReference' &&
           (!Number.isInteger(msg.index) || Number(msg.index) < 0 || Number(msg.index) >= references.length)) { emit(false); return; }
@@ -385,7 +405,20 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     let releaseImage: (() => void) | undefined, completedQuotaSelection: string | undefined;
     const assertActionActive = () => { if (panel !== owner || cancelRequested) throw Error('IMAGE_CANCELLED'); };
     try {
-      if (msg.type === 'continueImage') {
+      if (['reuseTask', 'continueImage', 'restoreDraft'].includes(String(msg.type)) && msg.prompt !== undefined && !saveDraft(msg, false)) throw Error('IMAGE_DIRECT_SCOPE_INVALID');
+      if (msg.type === 'reuseTask') {
+        const original = tasks.find(t => t.id === msg.taskId);
+        if (!original || original.count < 1 || !RATIOS.has(original.ratio) || !SIZES.has(original.size) || !QUALITIES.has(original.quality)) throw Error('IMAGE_RESULT_UNAVAILABLE');
+        const account = (direct.listAccounts?.() ?? choices.accounts).find(a => a.id === original.accountId && a.hostCurrent !== false && a.migrationState !== 'pending');
+        if (!account) throw Error('IMAGE_EDIT_ACCOUNT_REMOVED');
+        if (original.accountFingerprint && original.accountFingerprint !== createHash('sha256').update(accountDisplayFingerprint(account)).digest('hex') || !original.accountFingerprint && account.capturedAt && Date.parse(account.capturedAt) > Date.parse(original.createdAt)) throw Error('IMAGE_EDIT_ACCOUNT_REMOVED');
+        if (original.endpoint && original.endpoint !== direct.getEndpoint()) throw Error('IMAGE_EDIT_ENDPOINT_CHANGED');
+        const missing: string[] = [];
+        for (const file of original.references) { try { await readDirectRaster(file, await checkedDirectory(path.dirname(file))); } catch { missing.push(path.basename(file)); } }
+        assertActionActive();
+        await loadDraft({ id: randomUUID(), savedAt: new Date().toISOString(), draft: { prompt: original.prompt, accountId: account.id, modelId: original.modelId, ratio: original.ratio, count: original.count, size: original.size, quality: original.quality, followCurrent: false }, outputDirectory: original.outputDirectory, references: [...original.references], ...(original.origin ? { origin: { ...original.origin } } : {}) });
+        actionNotice = missing.length ? tr('reuse.missing', { p0: missing.join('、') }) : tr('reuse.loaded');
+      } else if (msg.type === 'continueImage') {
         const selected = resultImage(tasks, msg.taskId, msg.index);
         const available = (direct.listAccounts?.() ?? choices.accounts).find(a => a.id === selected.task.accountId && a.hostCurrent !== false && a.migrationState !== 'pending');
         if (!available) throw Error(selected.task.accountId ? 'IMAGE_EDIT_ACCOUNT_REMOVED' : 'IMAGE_EDIT_ACCOUNT_MISSING');
@@ -510,7 +543,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
           ...(origin?.sha256 ? { referenceHashes: { [origin.file]: origin.sha256 } } : {}) };
         const summary = request.prompt.trim().replace(/\s+/g, ' ');
         task = { prompt: request.prompt, references: [...references], endpoint, accountSource: selectedSavedId ? 'saved' : 'current', id: operationId, createdAt: new Date().toISOString(), promptSummary: summary.length > 140 ? summary.slice(0, 140) + '…' : summary,
-          accountId: account.id, accountLabel: account.label === account.expectedEmail ? account.label : `${account.label} · ${account.expectedEmail}`, modelId: model.id, ratio: draft.ratio, size: draft.size, quality: draft.quality, count: draft.count,
+          accountId: account.id, accountFingerprint: createHash('sha256').update(accountDisplayFingerprint(account)).digest('hex'), accountLabel: account.label === account.expectedEmail ? account.label : `${account.label} · ${account.expectedEmail}`, modelId: model.id, ratio: draft.ratio, size: draft.size, quality: draft.quality, count: draft.count,
           phase: 'confirming', status: tr("directImageUi.c7ef6c5df6"), outputDirectory, images: [], ...(origin ? { origin: { ...origin } } : {}) };
         tasks.push(task); emit();
         if (!await persistNow()) throw Error('IMAGE_SESSION_SAVE_REQUIRED');
@@ -556,7 +589,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       }
     } catch (error) {
       status = /^(IMAGE_EDIT_|IMAGE_PROJECT_|IMAGE_DRAFT_|IMAGE_RESULT_)/.test(error instanceof Error ? error.message : '') ? imageActionMessage(error) : code(error);
-      if (['continueImage', 'restoreDraft', 'deleteDraft', 'compareImage', 'compareSelect', 'copyPath', 'copyMarkdown', 'insertMarkdown', 'copyToProject'].includes(String(msg.type))) actionNotice = imageActionMessage(error);
+      if (['reuseTask', 'continueImage', 'restoreDraft', 'deleteDraft', 'compareImage', 'compareSelect', 'copyPath', 'copyMarkdown', 'insertMarkdown', 'copyToProject'].includes(String(msg.type))) actionNotice = imageActionMessage(error);
       if (task) { task.phase = cancelRequested || active?.signal.aborted || error instanceof Error && error.message === 'IMAGE_CANCELLED' ? 'cancelled' : 'failed'; task.status = status; }
       if (attempt) {
         try { await recent.save(captureRecentImageFailure(error, attempt.modelId, attempt.stage, attempt.operationId)); }
@@ -584,7 +617,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     draftRevision = 0; draftEpoch = 0; actionRevision = 0;
     panel.webview.html = directImageHtml(nonce, panel.webview.cspSource, layout);
     const owner = panel;
-    context.subscriptions.push(panel.webview.onDidReceiveMessage(value => handle(value, owner)), panel.onDidDispose(() => { if (panel === owner) { stopRetry(); quota.invalidate(); panel = undefined; void persistNow(); ++choicesRevision; choicesAbort?.abort(); choicesLoading = false; cancelRequested = true; active?.abort(); } }));
+    context.subscriptions.push(panel.webview.onDidReceiveMessage(value => handle(value, owner)), panel.onDidDispose(() => { if (panel === owner) { stopRetry(); recommendation.cancel(); quota.invalidate(); panel = undefined; void persistNow(); ++choicesRevision; choicesAbort?.abort(); choicesLoading = false; cancelRequested = true; active?.abort(); } }));
     if (!outputDirectory) {
       const first = vscode.workspace.workspaceFolders?.map(x => nativePath(x.uri)).find((x): x is string => !!x);
       if (first) { try { const checked = await checkedDirectory(first); if (panel === owner && !outputDirectory) { outputDirectory = checked; outputChanged?.(); } } catch { /* User may choose a folder. */ } }
@@ -593,7 +626,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
   }));
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.images.cancel', cancel));
   const flush = async () => { await persistNow(); await session.flush(); await layoutSave; };
-  context.subscriptions.push({ dispose: () => { disposed = true; stopRetry(); quota.invalidate(); choicesAbort?.abort(); active?.abort(); void flush(); } });
+  context.subscriptions.push({ dispose: () => { disposed = true; stopRetry(); recommendation.dispose(); quota.invalidate(); choicesAbort?.abort(); active?.abort(); void flush(); } });
   return { flush, getStatus: () => status, getOutputDirectory: () => outputDirectory,
     accountStateChanged(state: { pending: boolean; email: string; accountIds: string[] }) {
       if (disposed) return;
