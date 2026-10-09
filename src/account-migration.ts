@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { constants, type Stats } from 'node:fs';
-import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'node:crypto';
+import { constants, type Stats, type BigIntStats } from 'node:fs';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scrypt } from 'node:crypto';
 import { normalizeLabel } from './core';
 import { LiveError, assertSlotIdentity, tokenAccountHint, validateSlots, type TokenSlots } from './live-storage';
 
@@ -192,7 +192,7 @@ function localFilename(filename: string): string {
       /^(?:\\\\|\/\/)/u.test(filename) || /^\/[a-zA-Z]:/u.test(filename)) throw new LiveError('MIGRATION_PATH_UNSAFE');
   return path.normalize(filename);
 }
-type DirectorySnapshot = { name: string; stat: Stats }[];
+type DirectorySnapshot = { name: string; stat: BigIntStats }[];
 async function checkDirectories(filename: string): Promise<DirectorySnapshot> {
   const directories: string[] = [];
   let name = path.dirname(filename);
@@ -204,16 +204,18 @@ async function checkDirectories(filename: string): Promise<DirectorySnapshot> {
   }
   const snapshots: DirectorySnapshot = [];
   for (const directory of directories) {
-    const stat = await fs.lstat(directory);
+    const stat = await fs.lstat(directory, { bigint: true });
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new LiveError('MIGRATION_PATH_UNSAFE');
     snapshots.push({ name: directory, stat });
   }
   return snapshots;
 }
-function sameFile(a: Stats, b: Stats): boolean { return a.ino === b.ino && a.dev === b.dev; }
+function sameFile(a: Stats | BigIntStats, b: Stats | BigIntStats): boolean { return a.ino === b.ino && a.dev === b.dev; }
 async function verifyDirectories(before: DirectorySnapshot, code = 'MIGRATION_FILE_CHANGED'): Promise<void> {
   for (const { name, stat } of before) {
-    const current = await fs.lstat(name);
+    let current: BigIntStats;
+    try { current = await fs.lstat(name, { bigint: true }); }
+    catch (error) { if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw new LiveError(code); throw error; }
     if (!current.isDirectory() || current.isSymbolicLink() || !sameFile(stat, current)) throw new LiveError(code);
   }
 }
@@ -247,14 +249,14 @@ export async function readMigrationArchive(filename: string): Promise<Buffer> {
   finally { await handle?.close().catch(() => undefined); }
 }
 
-/** Only a valid encrypted envelope may be written. Never truncate an existing file. */
-export async function writeMigrationArchive(filename: string, data: Uint8Array): Promise<void> {
+/** Exclusive creation and descriptor readback also protect replacement staging. */
+async function createMigrationArchive(filename: string, data: Uint8Array): Promise<BigIntStats> {
   const local = localFilename(filename);
   // Own the bytes across awaits, so a caller cannot swap in plaintext after validation.
   if (!(data instanceof Uint8Array) || data.byteLength > MAX_ARCHIVE) throw new LiveError('MIGRATION_ARCHIVE_TOO_LARGE');
   const bytes = Buffer.from(data);
   parseArchive(bytes);
-  let handle: fs.FileHandle | undefined, created: Stats | undefined;
+  let handle: fs.FileHandle | undefined, created: BigIntStats | undefined;
   let complete = false;
   try {
     const directories = await checkDirectories(local);
@@ -265,13 +267,13 @@ export async function writeMigrationArchive(filename: string, data: Uint8Array):
     // Request a private creation default where supported, without imposing a
     // mode or filesystem policy on this password-encrypted portable artifact.
     handle = await fs.open(local, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
-    created = await handle.stat();
+    created = await handle.stat({ bigint: true });
     if (!created.isFile()) throw new LiveError('MIGRATION_PATH_UNSAFE');
     await handle.writeFile(bytes);
     await handle.sync();
-    const written = await handle.stat(), current = await fs.lstat(local);
+    const written = await handle.stat({ bigint: true }), current = await fs.lstat(local, { bigint: true });
     if (!written.isFile() || !sameFile(created, written) || !sameFile(created, current) || !current.isFile() || current.isSymbolicLink() ||
-        written.size !== bytes.length || current.size !== bytes.length) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+        written.size !== BigInt(bytes.length) || current.size !== BigInt(bytes.length)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
     // Verify the exact ciphertext through the owned descriptor, never by
     // opening a path that another process may have replaced. Bound the read
     // even if the file grows, and detect same-length content corruption.
@@ -286,11 +288,12 @@ export async function writeMigrationArchive(filename: string, data: Uint8Array):
     await verifyDirectories(directories, 'MIGRATION_EXPORT_FILE_CHANGED');
     // Content and directory checks await filesystem work.
     // Recheck the owned file afterwards; never accept a replacement during them.
-    const completed = await handle.stat(), final = await fs.lstat(local);
+    const completed = await handle.stat({ bigint: true }), final = await fs.lstat(local, { bigint: true });
     if (!completed.isFile() || !sameFile(created, completed) || !final.isFile() || final.isSymbolicLink() || !sameFile(created, final) ||
-        completed.size !== bytes.length || final.size !== bytes.length) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+        completed.size !== BigInt(bytes.length) || final.size !== BigInt(bytes.length) || !exportRevision(written, completed) || !exportRevision(completed, final)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
     await handle.close(); handle = undefined;
     complete = true;
+    return completed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new LiveError('MIGRATION_FILE_EXISTS');
     throw error instanceof LiveError ? error : new LiveError('MIGRATION_FILE_WRITE_FAILED');
@@ -298,7 +301,119 @@ export async function writeMigrationArchive(filename: string, data: Uint8Array):
     await handle?.close().catch(() => undefined);
     if (!complete && created) {
       // Do not unlink a replacement file installed by another process.
-      try { const current = await fs.lstat(local); if (current.isFile() && sameFile(created, current)) await fs.unlink(local); } catch { /* Only encrypted partial output could remain. */ }
+      try { const current = await fs.lstat(local, { bigint: true }); if (current.isFile() && sameFile(created, current)) await fs.unlink(local); } catch { /* Only encrypted partial output could remain. */ }
     }
+  }
+}
+
+interface ExportFileSnapshot { stat: BigIntStats; digest: string }
+interface ExportSnapshot { filename: string; directories: DirectorySnapshot; file: ExportFileSnapshot | undefined }
+/** An opaque, single-use snapshot. Selection and confirmation never write files. */
+export interface MigrationExportTarget { readonly filename: string; readonly exists: boolean }
+const exportSnapshots = new WeakMap<MigrationExportTarget, ExportSnapshot>();
+const exportRevision = (a: BigIntStats, b: BigIntStats): boolean => sameFile(a, b) &&
+  a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs && a.nlink === b.nlink;
+
+async function exportFileSnapshot(filename: string): Promise<ExportFileSnapshot | undefined> {
+  let before: BigIntStats;
+  try { before = await fs.lstat(filename, { bigint: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new LiveError('MIGRATION_PATH_UNSAFE');
+  if (before.size > BigInt(MAX_ARCHIVE)) throw new LiveError('MIGRATION_ARCHIVE_TOO_LARGE');
+  const handle = await fs.open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile() || !exportRevision(before, opened)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    const digest = createHash('sha256'), buffer = Buffer.alloc(64 * 1024);
+    let count = 0;
+    while (count <= Number(opened.size)) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, Number(opened.size) + 1 - count), count);
+      if (!bytesRead) break;
+      digest.update(buffer.subarray(0, bytesRead)); count += bytesRead;
+    }
+    const after = await handle.stat({ bigint: true }), current = await fs.lstat(filename, { bigint: true });
+    if (count !== Number(opened.size) || !exportRevision(opened, after) || !current.isFile() || current.isSymbolicLink() || !exportRevision(opened, current)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    return { stat: after, digest: digest.digest('hex') };
+  } finally { await handle.close(); }
+}
+
+export async function prepareMigrationExport(filename: string): Promise<MigrationExportTarget> {
+  const local = localFilename(filename);
+  try {
+    const directories = await checkDirectories(local), file = await exportFileSnapshot(local);
+    await verifyDirectories(directories, 'MIGRATION_EXPORT_FILE_CHANGED');
+    const target = Object.freeze({ filename: local, exists: file !== undefined });
+    exportSnapshots.set(target, { filename: local, directories, file });
+    return target;
+  } catch (error) {
+    if (error instanceof LiveError) throw error;
+    if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    throw new LiveError('MIGRATION_FILE_WRITE_FAILED');
+  }
+}
+
+async function removeExportFile(filename: string, owned: BigIntStats | undefined): Promise<void> {
+  if (!owned) return;
+  try {
+    const current = await fs.lstat(filename, { bigint: true });
+    if (current.isFile() && !current.isSymbolicLink() && sameFile(owned, current)) await fs.unlink(filename);
+  } catch { /* Keep uncertain ciphertext/claims; never delete another owner's file. */ }
+}
+
+/** No approval means exclusive creation. Replacement requires the confirmed snapshot.
+ * All bytes are staged, synced and verified before one same-directory rename.
+ * Never unlink/truncate the old target, or fall back when atomic rename is denied.
+ */
+export async function writeMigrationArchive(filename: string, data: Uint8Array, target?: MigrationExportTarget): Promise<void> {
+  const local = localFilename(filename);
+  if (!target) { await createMigrationArchive(local, data); return; }
+  const snapshot = exportSnapshots.get(target);
+  exportSnapshots.delete(target);
+  if (!snapshot || snapshot.filename !== local) throw new LiveError('MIGRATION_EXPORT_CONFIRM_REQUIRED');
+  if (!(data instanceof Uint8Array) || data.byteLength > MAX_ARCHIVE) throw new LiveError('MIGRATION_ARCHIVE_TOO_LARGE');
+  const bytes = Buffer.from(data); parseArchive(bytes);
+  let lock: fs.FileHandle | undefined, lockStat: BigIntStats | undefined, staged: BigIntStats | undefined;
+  const key = createHash('sha256').update(path.basename(local).toLowerCase()).digest('hex');
+  const claim = path.join(path.dirname(local), `.agwenc-export-${key}.lock`);
+  const temporary = path.join(path.dirname(local), `.agwenc-export-${key}-${randomBytes(16).toString('hex')}.tmp`);
+  try {
+    await verifyDirectories(snapshot.directories, 'MIGRATION_EXPORT_FILE_CHANGED');
+    try { lock = await fs.open(claim, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new LiveError('MIGRATION_EXPORT_BUSY'); throw error; }
+    lockStat = await lock.stat({ bigint: true });
+    const assertTarget = async (): Promise<void> => {
+      await verifyDirectories(snapshot.directories, 'MIGRATION_EXPORT_FILE_CHANGED');
+      const current = await exportFileSnapshot(local);
+      if (snapshot.file ? !current || !exportRevision(snapshot.file.stat, current.stat) || snapshot.file.digest !== current.digest : current !== undefined) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+      const held = await lock!.stat({ bigint: true }), named = await fs.lstat(claim, { bigint: true });
+      if (!held.isFile() || !named.isFile() || named.isSymbolicLink() || !sameFile(lockStat!, held) || !sameFile(lockStat!, named)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    };
+    await assertTarget();
+    if (!snapshot.file) {
+      // O_EXCL also guards against noncooperating creation after the last check.
+      await createMigrationArchive(local, bytes); return;
+    }
+    try { staged = await createMigrationArchive(temporary, bytes); }
+    catch (error) { if (error instanceof LiveError && error.code === 'MIGRATION_FILE_EXISTS') throw new LiveError('MIGRATION_EXPORT_BUSY'); throw error; }
+    const stage = await exportFileSnapshot(temporary);
+    if (!stage || !exportRevision(staged, stage.stat) || stage.digest !== createHash('sha256').update(bytes).digest('hex')) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    await assertTarget();
+    const currentStage = await fs.lstat(temporary, { bigint: true });
+    if (!currentStage.isFile() || currentStage.isSymbolicLink() || !exportRevision(staged, currentStage)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    await verifyDirectories(snapshot.directories, 'MIGRATION_EXPORT_FILE_CHANGED');
+    const currentTarget = await fs.lstat(local, { bigint: true });
+    if (!currentTarget.isFile() || currentTarget.isSymbolicLink() || !exportRevision(snapshot.file.stat, currentTarget)) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    await fs.rename(temporary, local);
+    // Rename is the commit point. No fallible validation follows a successful commit.
+    staged = undefined;
+  } catch (error) {
+    if (error instanceof LiveError) throw error;
+    if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw new LiveError('MIGRATION_EXPORT_FILE_CHANGED');
+    throw new LiveError('MIGRATION_FILE_WRITE_FAILED');
+  }
+  finally {
+    await lock?.close().catch(() => undefined);
+    await removeExportFile(temporary, staged);
+    await removeExportFile(claim, lockStat);
   }
 }

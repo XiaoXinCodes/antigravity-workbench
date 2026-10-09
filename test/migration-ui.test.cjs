@@ -13,13 +13,14 @@ const uri = (extra = {}) => ({ scheme: 'file', authority: '', query: '', fragmen
 function fixture(options = {}) {
   const commands = new Map(), events = [], messages = [], picks = [], inputs = [], dialogs = [], writes = [], state = new Map();
   const nativeFile = uri({ fsPath: options.filename || uri().fsPath });
-  const ui = { trusted: true, inputAnswers: [password, password], pickAnswers: [], consent: true, save: nativeFile, open: [nativeFile] };
+  const ui = { trusted: true, inputAnswers: [password, password], name: path.basename(nativeFile.fsPath), folder: [uri({ fsPath: path.dirname(nativeFile.fsPath) })], pickAnswers: [], consent: true, save: nativeFile, open: [nativeFile], exists: false };
   const archive = { schema: 1, createdAt: '2026-10-01T00:00:00.000Z', accounts: [1, 2, 3].map(n => ({ label: `Imported ${n}`, expectedEmail: `account${n}@example.test`, capturedAt: '2026-09-30T00:00:00.000Z', token })) };
   const codec = {
     async readMigrationArchive(filename) { events.push('read-file'); assert.equal(filename, nativeFile.fsPath); return Buffer.from('synthetic ciphertext'); },
     async decryptAccountArchive(bytes, supplied) { events.push('decrypt'); assert.equal(bytes.toString(), 'synthetic ciphertext'); if (supplied !== password) throw new LiveError('MIGRATION_DECRYPT_FAILED'); return archive; },
     async encryptAccountArchive(accounts, supplied) { events.push('encrypt'); assert.equal(supplied, password); assert.ok(accounts.length); return Buffer.from('synthetic ciphertext'); },
-    async writeMigrationArchive(filename, bytes) { events.push('write-file'); writes.push({ filename, bytes }); }
+    async prepareMigrationExport(filename) { events.push('prepare-file'); return { filename, exists: ui.exists }; },
+    async writeMigrationArchive(filename, bytes, target) { events.push('write-file'); assert.equal(target.filename,filename); writes.push({ filename, bytes, target }); }
   };
   const vscode = {
     ProgressLocation: { Notification: 1 }, Uri: { file: filename => uri({ fsPath: filename }) }, UIKind: { Desktop: 1 }, env: { uiKind: 1, remoteName: options.remoteName }, extensions: { getExtension(id) { return id==='google.google-antigravity'?options.official:undefined; } },
@@ -30,8 +31,8 @@ function fixture(options = {}) {
       async showInformationMessage(message, options, consent) { messages.push(message); return options?.modal && ui.consent ? consent : undefined; },
       async showQuickPick(choices, options) { picks.push({ choices, options }); events.push('pick'); const answer = ui.pickAnswers.shift(); return typeof answer === 'function' ? answer(choices) : answer === 'cancel' ? undefined : options.canPickMany ? choices : choices[0]; },
       async showSaveDialog(options) { dialogs.push(options); events.push('save-dialog'); return ui.save; },
-      async showOpenDialog(options) { dialogs.push(options); events.push('open-dialog'); return ui.open; },
-      async showInputBox(options) { inputs.push(options); events.push('password'); return ui.inputAnswers.shift(); },
+      async showOpenDialog(options) { dialogs.push(options); events.push('open-dialog'); return options.canSelectFolders ? ui.folder : ui.open; },
+      async showInputBox(options) { inputs.push(options); events.push(options.password ? 'password' : 'filename'); return options.password ? ui.inputAnswers.shift() : ui.name; },
       async withProgress(_options, run) { return run({}, { isCancellationRequested: !!options.cancelProgress, onCancellationRequested: () => ({ dispose() {} }) }); },
       async showTextDocument() {},
     }
@@ -58,7 +59,7 @@ function noMutation(f) { assert.ok(!f.events.some(event => ['write-file', 'impor
 function noSecrets(f) {
   const visible = JSON.stringify({ messages: f.messages, picks: f.picks, inputs: f.inputs, dialogs: f.dialogs, state: [...f.state], inline: f.controller.getState() });
   for (const secret of [token, 'fixture-secret-never-in-ui', password]) assert.ok(!visible.includes(secret), 'secrets must not enter UI, state or diagnostic messages');
-  for (const input of f.inputs) { assert.equal(input.password, true); assert.equal(input.ignoreFocusOut, true); assert.equal(input.value, undefined); }
+  for (const input of f.inputs) { assert.equal(input.ignoreFocusOut, true); if (input.password) { assert.equal(input.password, true); assert.equal(input.value, undefined); } else { assert.equal(input.value, 'antigravity-accounts.agwenc'); } }
 }
 test('migration commands activate passively and both flows recover under the operation lock', async () => {
   const f = fixture(); assert.deepEqual(f.events, []);
@@ -69,7 +70,7 @@ test('export selects multiple current-host accounts only and asks explicit OAuth
   const f = fixture(); await f.call('export');
   assert.deepEqual(f.service.exported, [saved(1).id, saved(2).id]); assert.equal(f.writes.length, 1);
   assert.equal(f.picks[0].options.canPickMany, true); assert.ok(f.picks[0].choices.every(choice => choice.picked));
-  assert.equal(f.picks[0].choices.length, 2); assert.equal(f.inputs.length, 2);
+  assert.equal(f.picks[0].choices.length, 2); assert.equal(f.inputs.length, 3);
   assert.match(f.messages[0], /完整 OAuth.*加密文件/); assert.match(f.messages[0], /分开传递文件与密码/);
   assert.ok(f.events.indexOf('confirm') < f.events.indexOf('export')); assert.ok(f.events.indexOf('encrypt') < f.events.indexOf('write-file'));
   assert.ok(!f.events.includes('lifecycle')); assert.equal(f.state.get(PENDING), undefined); noSecrets(f);
@@ -77,10 +78,46 @@ test('export selects multiple current-host accounts only and asks explicit OAuth
 test('export allows a subset and never exports a deselected account', async () => {
   const f = fixture(); f.ui.pickAnswers = [choices => [choices[1]]]; await f.call('export'); assert.deepEqual(f.service.exported, [saved(2).id]); noSecrets(f);
 });
+test('existing export file gets one bound replacement confirmation and no native save dialog',async()=>{
+  const i18n=require('../out/i18n');
+  try{for(const language of ['zh-CN','en']){
+    i18n.setLanguage(language);const f=fixture();f.ui.exists=true;await f.call('export');
+    assert.equal(f.events.filter(x=>x==='confirm').length,1);assert.ok(!f.events.includes('save-dialog'));
+    assert.equal(f.dialogs[0].canSelectFolders,true);assert.equal(f.dialogs[0].canSelectFiles,false);
+    assert.ok(f.events.indexOf('prepare-file')<f.events.indexOf('confirm'));assert.equal(f.writes[0].target.exists,true);
+    assert.ok(f.messages[0].includes(f.writes[0].filename));assert.match(f.messages[0],language==='en'?/Replace this existing file/:/替换以下现有文件/);
+    noSecrets(f);
+  }}finally{i18n.setLanguage('zh-CN');}
+});
+test('replacement cancellation at every dialog leaves export files and account state unchanged',async()=>{
+  for(const stage of ['file','filename','consent','password','repeat']){
+    const f=fixture();f.ui.exists=true;const before=JSON.stringify([...f.state]);
+    if(stage==='file')f.ui.folder=undefined;if(stage==='filename')f.ui.name=undefined;if(stage==='consent')f.ui.consent=false;
+    if(stage==='password')f.ui.inputAnswers=[];if(stage==='repeat')f.ui.inputAnswers=[password];
+    await f.call('export');noMutation(f);assert.equal(JSON.stringify([...f.state]),before);assert.ok(!f.events.includes('export'));noSecrets(f);
+  }
+});
+test('export rejects filename traversal, Windows device names and invalid extensions before credentials',async()=>{
+  for(const name of ['../x.agwenc','..\\x.agwenc','C:\\x.agwenc','CON.agwenc','nul.agwenc','LPT1.agwenc','COM¹.agwenc','x.txt','a\0.agwenc','a\u202e.agwenc',' archive.agwenc']){
+    const f=fixture();f.ui.name=name;await f.call('export');noMutation(f);assert.ok(!f.events.includes('prepare-file'));assert.ok(!f.events.includes('password'));noSecrets(f);
+    assert.match(f.controller.getState().error,/文件名/);
+  }
+});
+test('same-name WSL mount export passes the confirmed target without changing current login',{skip:process.platform!=='linux'},async()=>{
+  const f=fixture({extensionKind:2,remoteName:'wsl',filename:'/mnt/c/Synthetic Directory/账户.agwenc'});f.ui.exists=true;
+  await f.call('export');assert.equal(f.writes[0].filename,'/mnt/c/Synthetic Directory/账户.agwenc');assert.equal(f.writes[0].target.exists,true);
+  assert.ok(!f.events.some(x=>['install','lifecycle','recover-import','index-write'].includes(x)));noSecrets(f);
+});
+test('repeated export clicks and disposal discard late encryption without writing',async()=>{
+  const f=fixture();f.ui.exists=true;let release,entered;
+  const wait=new Promise(r=>release=r),started=new Promise(r=>entered=r);f.codec.encryptAccountArchive=async()=>{entered();await wait;return Buffer.from('synthetic ciphertext');};
+  const first=f.call('export');await started;await f.call('export');assert.equal(f.events.filter(x=>x==='confirm').length,1);
+  for(const subscription of f.context.subscriptions)subscription.dispose();release();await first;noMutation(f);noSecrets(f);
+});
 test('every export dismissal leaves files and storage unchanged', async () => {
-  for (const stage of ['selection', 'consent', 'file', 'password', 'repeat']) {
+  for (const stage of ['selection', 'consent', 'file', 'filename', 'password', 'repeat']) {
     const f = fixture(); if (stage === 'selection') f.ui.pickAnswers = ['cancel']; if (stage === 'consent') f.ui.consent = false;
-    if (stage === 'file') f.ui.save = undefined; if (stage === 'password') f.ui.inputAnswers = []; if (stage === 'repeat') f.ui.inputAnswers = [password];
+    if (stage === 'file') f.ui.folder = undefined; if (stage === 'filename') f.ui.name = undefined; if (stage === 'password') f.ui.inputAnswers = []; if (stage === 'repeat') f.ui.inputAnswers = [password];
     await f.call('export'); noMutation(f); assert.ok(!f.events.includes('export')); noSecrets(f);
   }
 });
@@ -88,12 +125,12 @@ test('export enforces password minimum and repeated confirmation even if input v
   for (const answers of [['short', 'short'], [password, 'different-password']]) {
     const f = fixture(); f.ui.inputAnswers = answers; await f.call('export'); noMutation(f); assert.ok(!f.events.includes('export')); noSecrets(f);
   }
-  const f = fixture(); await f.call('export'); assert.match(f.inputs[0].validateInput('short'), /12/); assert.equal(f.inputs[0].validateInput(password), null);
+  const f = fixture(); await f.call('export'); assert.match(f.inputs[1].validateInput('short'), /12/); assert.equal(f.inputs[1].validateInput(password), null);
 });
 test('native migration dialogs reject remote, foreign-host, relative and network paths before secret work', async () => {
   for (const invalid of [uri({ scheme: 'vscode-remote' }), uri({ scheme: 'vscode-local' }), uri({ authority: 'other-machine' }), uri({ query: 'secret=not-permitted' }), uri({ fragment: 'fragment' }), uri({ fsPath: 'relative-file' }), uri({ fsPath: '//network/share/archive' }), uri({ fsPath: '/file\0archive' })]) {
     for (const name of ['export', 'import']) {
-      const f = fixture(); f.ui.save = invalid; f.ui.open = [invalid]; await f.call(name); noMutation(f); assert.equal(f.inputs.length, 0); assert.ok(!f.events.includes('read-file')); assert.match(f.controller.getState().error, /文件|路径/);
+      const f = fixture(); f.ui.folder = [invalid]; f.ui.open = [invalid]; await f.call(name); noMutation(f); assert.equal(f.inputs.length, 0); assert.ok(!f.events.includes('read-file')); assert.match(f.controller.getState().error, /文件|路径/);
     }
   }
 });
@@ -223,14 +260,15 @@ test('every current migration core error has a specific safe UI explanation', ()
 test('export write failures report export-specific bilingual messages without exposing credentials', async () => {
   const i18n = require('../out/i18n');
   try {
-    for (const language of ['zh-CN','en']) for (const code of ['MIGRATION_EXPORT_FILE_CHANGED']) {
+    for (const language of ['zh-CN','en']) for (const code of ['MIGRATION_EXPORT_FILE_CHANGED','MIGRATION_FILE_WRITE_FAILED','MIGRATION_EXPORT_CONFIRM_REQUIRED','MIGRATION_EXPORT_BUSY']) {
       i18n.setLanguage(language);
       const f = fixture();
+      f.ui.exists=true;
       const before = JSON.stringify([...f.state].filter(([key])=>key===INDEX));
       f.codec.writeMigrationArchive = async () => { throw new LiveError(code); };
       await f.call('export');
       const error = f.controller.getState().error;
-      assert.match(error,language==='en'?/Export stopped/:/导出已停止/);
+      assert.match(error,language==='en'?/Export stopped|export target|export or|original was not replaced/i:/导出已停止|无法保存|导出目标|本次导出已停止/);
       assert.doesNotMatch(error,/未导入|Nothing imported|while reading|传输完成/);
       assert.equal(JSON.stringify([...f.state].filter(([key])=>key===INDEX)),before);
       assert.ok(!f.events.includes('import')&&!f.events.includes('install')&&!f.events.includes('lifecycle'));
