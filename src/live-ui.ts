@@ -1111,7 +1111,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     const related = scanned?.processes.some(row => row.scope === 'unknown' || row.scope === 'other-window');
     if (scanned?.processes.length) scope.push(tr(related ? 'officialProcess.scopeRelated' : 'officialProcess.scopeDetached', { p0: scanned.processes.map(row => `PID ${row.pid}${row.startedAt ? ` (${row.startedAt})` : ''}`).join(', ') }));
     if (images.ids.length) scope.push(tr('officialProcess.scopeImages', { p0: images.ids.length }));
-    const title = account ? tr('officialProcess.switchAction', { p0: account.expectedEmail, p1: account.migrationState === 'pending' ? tr('liveUi.61d34541c9') : '' }) : action === 'login' ? tr('officialProcess.loginAction') : tr('officialProcess.restoreAction', { p0: journal?.backup?.keyringState === 'unobserved' ? tr('liveUi.5ad013a479') : tr('liveUi.33f439cf93') });
+    const title = account ? tr('officialProcess.switchAction', { p0: displayEmail(account.expectedEmail, items()), p1: account.migrationState === 'pending' ? tr('liveUi.61d34541c9') : '' }) : action === 'login' ? tr('officialProcess.loginAction') : tr('officialProcess.restoreAction', { p0: journal?.backup?.keyringState === 'unobserved' ? tr('liveUi.5ad013a479') : tr('liveUi.33f439cf93') });
     const consent = tr(action === 'switch' ? 'liveUi.e0351ba254' : action === 'login' ? 'liveUi.b3b97798fc' : 'liveUi.3417cfe630');
     const risk = (scanned?.processes.length ? tr(scanned.processes.every(row => row.endMode === 'force') ? 'officialProcess.forceRisk' : 'officialProcess.termRisk') : '') + (related ? tr('officialProcess.relatedRisk') : '');
     if (await vscode.window.showWarningMessage(tr('officialProcess.operationConsent', { p0: title, p1: scope.join('\n'), p2: risk }), { modal: true }, consent) !== consent || disposed) return null;
@@ -1638,7 +1638,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     const scopes = [tr(related ? 'officialProcess.scopeRelated' : 'officialProcess.scopeDetached', { p0: selected.map(row => `PID ${row.pid} (${row.startedAt ?? tr('officialProcess.unknownTime')})`).join(', ') })];
     if (intent) scopes.push(tr('officialProcess.scopeCurrent', { p0: processConflicts?.current ? ` (PID ${processConflicts.current.pid})` : '' }));
     const risk = tr(selected.every(row => row.endMode === 'force') ? 'officialProcess.forceRisk' : 'officialProcess.termRisk') + (related ? tr('officialProcess.relatedRisk') : '');
-    const message = tr('officialProcess.operationConsent', { p0: targetEmail ? tr('officialProcess.switchAction', { p0: targetEmail, p1: '' }) : tr('officialProcess.endOnly'), p1: scopes.join('\n'), p2: risk });
+    const message = tr('officialProcess.operationConsent', { p0: targetEmail ? tr('officialProcess.switchAction', { p0: displayEmail(targetEmail, items()), p1: '' }) : tr('officialProcess.endOnly'), p1: scopes.join('\n'), p2: risk });
     if (await vscode.window.showWarningMessage(message, { modal: true }, consent) !== consent || disposed) return;
     if (blockedSwitch !== intent) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     if (intent && JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
@@ -1790,7 +1790,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     await context.globalState.update(INDEX, items().filter(a => a.id !== selected.account.id));
     quotas.delete(selected.account.id);
     await context.globalState.update(`live-switch.quota-consent.v2.${selected.account.id}`, undefined);
-    status = tr("liveUi.1902788fe6", { p0: selected.account.label });
+    status = tr("liveUi.1902788fe6", { p0: displayAccount(selected.account) });
     await recordAcceptance('account-removed');
     return true;
   });

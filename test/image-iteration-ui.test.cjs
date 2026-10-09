@@ -102,3 +102,11 @@ test('reuse any failed historical request preserves original parameters and miss
 test('historical reuse save failure rolls back and replaced account / changed endpoint leaves current draft intact',async t=>{
  const f=await fixture(t),before=f.disk();f.setFail(true);await f.send({type:'reuseTask',taskId:f.original.id});assert.deepEqual(f.disk(),before);f.setFail(false);await f.send({type:'saveRecords'});f.accounts[1].capturedAt='2026-10-06T00:00:00Z';await f.send({type:'reuseTask',taskId:f.original.id});assert.deepEqual(f.disk().draft,before.draft);delete f.accounts[1].capturedAt;f.setEndpoint('production');await f.send({type:'reuseTask',taskId:f.original.id});assert.deepEqual(f.disk().draft,before.draft);assert.equal(f.runs.length,0);
 });
+
+test('history reuse and protected draft restore retain absent original model and require an explicit replacement',async t=>{
+ const f=await fixture(t);f.setModels([{id:'replacement-image-model',label:'Replacement'}]);await f.send({type:'reuseTask',taskId:f.original.id});assert.equal(f.latest().draft.modelId,model);assert.equal(f.latest().accountBlocked,true);await f.send({type:'generate',...f.latest().draft});assert.equal(f.runs.length,0);
+ await f.send({type:'draft',...f.latest().draft,modelId:'replacement-image-model'});assert.equal(f.latest().accountBlocked,false);await f.send({type:'restoreDraft',id:f.disk().savedDrafts[0].id});assert.equal(f.latest().draft.modelId,model);assert.equal(f.latest().accountBlocked,true);assert.equal(f.runs.length,0);
+});
+test('history reuse preserves an available original model despite a different remembered model for that saved account',async t=>{
+ const f=await fixture(t);f.setModels([{id:model,label:'Original'},{id:'other-image-model',label:'Other'}]);await f.send({type:'selectAccount',selection:B,...f.latest().draft});await f.send({type:'draft',...f.latest().draft,modelId:'other-image-model'});await f.send({type:'reuseTask',taskId:f.original.id});assert.equal(f.latest().draft.modelId,model);assert.equal(f.runs.length,0);
+});

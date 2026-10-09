@@ -23,32 +23,34 @@ export class WakeEngine {
   async enable(enabled: boolean): Promise<void> {
     await this.store.transaction(s => {
       if (enabled && !s.consent) throw Error('WAKE_CONSENT_REQUIRED');
+      if (s.enabled !== enabled) for (const t of s.tasks) { t.revision = randomUUID(); delete t.recovery; }
       s.enabled = enabled;
       // Resuming never catches up runs that occurred while disabled.
       if (enabled) for (const t of s.tasks) { t.nextDue = wakeOccurrences(t.schedule, this.now())[0]!; delete t.recovery; }
     });
     if (!enabled) for (const a of this.active.values()) a.abort(); this.changed();
   }
-  async save(task: WakeTask): Promise<void> {
+  async save(task: WakeTask, expectedRevision?: string): Promise<void> {
     const next = parseWakeTask({ ...task, revision: randomUUID(), nextDue: wakeOccurrences(task.schedule, this.now())[0] });
     delete next.recovery;
     if (this.execution.fingerprint(next.accountId) !== next.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
     await this.store.transaction(s => {
       if (next.enabled && !s.consent) throw Error('WAKE_CONSENT_REQUIRED');
       const index = s.tasks.findIndex(t => t.id === next.id);
+      if (expectedRevision !== undefined && (index < 0 || s.tasks[index]!.revision !== expectedRevision)) throw Error('WAKE_TASK_CHANGED');
       if (index < 0) { if (s.tasks.length >= 50) throw Error('WAKE_TASK_LIMIT'); s.tasks.push(next); } else s.tasks[index] = next;
     });
     this.active.get(next.id)?.abort(); this.changed();
   }
-  async pause(id: string, enabled = false): Promise<void> {
+  async pause(id: string, enabled = false, expectedRevision?: string): Promise<void> {
     await this.store.transaction(s => {
-      const task = s.tasks.find(t => t.id === id); if (!task) return;
+      const task = s.tasks.find(t => t.id === id); if (expectedRevision !== undefined && (!task || task.revision !== expectedRevision)) throw Error('WAKE_TASK_CHANGED'); if (!task) return;
       if (enabled && !s.consent) throw Error('WAKE_CONSENT_REQUIRED');
       delete task.recovery; task.enabled = enabled; task.revision = randomUUID(); task.nextDue = wakeOccurrences(task.schedule, this.now())[0]!;
     }); this.active.get(id)?.abort(); this.changed();
   }
-  async remove(id: string): Promise<void> { await this.store.transaction(s => { s.tasks = s.tasks.filter(t => t.id !== id); }); this.active.get(id)?.abort(); this.changed(); }
-  async cancel(id: string): Promise<void> { await this.pause(id); }
+  async remove(id: string, expectedRevision?: string): Promise<void> { await this.store.transaction(s => { const task = s.tasks.find(t => t.id === id); if (expectedRevision !== undefined && (!task || task.revision !== expectedRevision)) throw Error('WAKE_TASK_CHANGED'); s.tasks = s.tasks.filter(t => t.id !== id); }); this.active.get(id)?.abort(); this.changed(); }
+  async cancel(id: string, expectedRevision?: string): Promise<void> { await this.pause(id, false, expectedRevision); }
   private claim(s: WakeState, task: WakeTask, due: number, manual: boolean): WakeInstance | undefined {
     // A single durable execution slot is shared by all windows and accounts.
     if (s.instances.some(running)) return;
@@ -62,11 +64,12 @@ export class WakeEngine {
     if (completed.length > 400) { const drop = new Set(completed.slice(0, completed.length - 400).map(i => i.id)); s.instances = s.instances.filter(i => !drop.has(i.id)); }
     return structuredClone(instance);
   }
-  async test(id: string): Promise<void> {
+  async test(id: string, expectedRevision?: string): Promise<void> {
     if (this.disposed || this.active.has(id)) return;
     const claimed = await this.store.transaction(s => {
       if (!s.consent) throw Error('WAKE_CONSENT_REQUIRED');
       const task = s.tasks.find(t => t.id === id); if (!task) throw Error('WAKE_TASK_MISSING');
+      if (expectedRevision !== undefined && task.revision !== expectedRevision) throw Error('WAKE_TASK_CHANGED');
       const instance = this.claim(s, task, this.now(), true); return instance ? { task: structuredClone(task), instance } : undefined;
     });
     if (claimed) await this.execute(claimed.task, claimed.instance);

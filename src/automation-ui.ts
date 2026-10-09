@@ -64,23 +64,24 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         if (!entry || entry.accountId !== m.accountId || entry.endpoint !== m.endpoint || entry.fingerprint !== accounts.fingerprint(entry.accountId) || now() - entry.queriedAt >= 300_000 || typeof m.modelId !== 'string' || !entry.models.includes(m.modelId)) throw Error('WAKE_MODEL_SELECTION_STALE');
         const state = await store.read(), existing = state.tasks.find(t => t.id === m.id);
         if (m.id !== '' && (!existing || existing.revision !== m.revision)) throw Error('WAKE_TASK_CHANGED');
-        await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 });
+        await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 }, existing?.revision);
         await post({ type: 'notice', text: tr('automation.paused') });
       } else if (type === 'preview') { await post({ type: 'preview', labels: [...((m.schedule as { mode?: string }).mode === 'quota-recovery' ? [tr('advanced.previewChecks')] : []), ...wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5).map(t => format(t, (m.schedule as { timezone: string }).timezone))] }); }
       else if (type === 'enable') { if (typeof m.enabled !== 'boolean') return; if (!m.enabled || await consent()) { if (panel === owner && !disposed) await engine.enable(m.enabled); } }
       else if (['pause', 'resume', 'test', 'cancel', 'remove'].includes(type)) {
         const before = (await store.read()).tasks.find(t => t.id === m.id);
         if (typeof m.id !== 'string' || !before) throw Error('WAKE_TASK_MISSING');
+        if (typeof m.revision !== 'string' || m.revision !== before.revision) throw Error('WAKE_TASK_CHANGED');
         const approved = async () => {
           if (!await consent() || disposed || panel !== owner) return false;
           if (!(await store.read()).tasks.some(t => t.id === before.id && t.revision === before.revision)) throw Error('WAKE_TASK_CHANGED');
           return true;
         };
-        if (type === 'pause') await engine.pause(m.id);
-        if (type === 'resume' && await approved()) { const previous = (await store.read()).instances.some(i => i.taskId === m.id && i.phase === 'unknown'); if (previous) await post({ type: 'notice', text: tr('automation.confirmUnknown') }); await engine.pause(m.id, true); }
-        if (type === 'test' && await approved()) await engine.test(m.id);
-        if (type === 'cancel') await engine.cancel(m.id);
-        if (type === 'remove') await engine.remove(m.id);
+        if (type === 'pause') await engine.pause(m.id, false, before.revision);
+        if (type === 'resume' && await approved()) { const previous = (await store.read()).instances.some(i => i.taskId === m.id && i.phase === 'unknown'); if (previous) await post({ type: 'notice', text: tr('automation.confirmUnknown') }); await engine.pause(m.id, true, before.revision); }
+        if (type === 'test' && await approved()) await engine.test(m.id, before.revision);
+        if (type === 'cancel') await engine.cancel(m.id, before.revision);
+        if (type === 'remove') await engine.remove(m.id, before.revision);
       } else if (type === 'alerts') {
         if (typeof m.low !== 'boolean' || typeof m.exhausted !== 'boolean' || typeof m.recovered !== 'boolean' || !Number.isInteger(m.threshold) || Number(m.threshold) < 1 || Number(m.threshold) > 99) throw Error('ALERT_SETTINGS_INVALID');
         await store.transaction(s => { s.alerts = { low: m.low as boolean, exhausted: m.exhausted as boolean, recovered: m.recovered as boolean, threshold: m.threshold as number }; });

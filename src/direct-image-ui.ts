@@ -85,7 +85,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
   let outputDirectory = '';
   let references: string[] = [];
   let referenceRevision = 0;
-  let origin: ImageOrigin | undefined, modelUnavailable = false, actionNotice = '';
+  let origin: ImageOrigin | undefined, modelUnavailable = false, actionNotice = '', preserveRestoredModel = false;
   const savedDrafts: SavedDraft[] = [];
   let comparison: { taskId: string; index: number; versions: ImageVersion[]; left: string; right: string; unavailable: Record<string, string> } | undefined;
   let draft = { prompt: '', accountId: '', modelId: '', ratio: '1:1', count: 1, size: 'auto', quality: 'auto', followCurrent: true };
@@ -107,7 +107,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     try {
       const restored = await session.load();
       if (restored) {
-        draft = restored.draft; outputDirectory = restored.outputDirectory; references = restored.references;
+        draft = restored.draft; preserveRestoredModel = !!draft.modelId; outputDirectory = restored.outputDirectory; references = restored.references;
         origin = restored.origin; savedDrafts.push(...(restored.savedDrafts ?? []));
         if (origin?.legacyUnverified) actionNotice = imageActionMessage(Error('IMAGE_EDIT_SOURCE_UNVERIFIED'));
         tasks.push(...restored.tasks); await checkSessionImages(tasks); images.push(...tasks.flatMap(task => task.images));
@@ -210,7 +210,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     draft.accountId = selection ?? choices.accounts.find(x => x.active)?.id ?? '';
     draft.followCurrent = !selection;
     const remembered = selectedModels.get(selection ?? '@current');
-    if (origin) modelUnavailable = !choices.models.some(x => x.id === draft.modelId);
+    if (origin || preserveRestoredModel) modelUnavailable = !choices.models.some(x => x.id === draft.modelId);
     else if (next.readiness !== 'error') { modelUnavailable = false;
       if (remembered && choices.models.some(x => x.id === remembered)) draft.modelId = remembered;
       else if (!choices.models.some(x => x.id === draft.modelId)) draft.modelId = choices.models[0]?.id ?? '';
@@ -257,6 +257,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       if (!Number.isSafeInteger(message.draftRevision) || Number(message.draftRevision) < draftRevision) return false;
       draftRevision = Number(message.draftRevision);
     }
+    if (message.modelId !== draft.modelId && choices.models.some(model => model.id === message.modelId)) preserveRestoredModel = false;
     draft = { prompt: message.prompt, accountId: selectedSavedId ?? choices.accounts.find(x => x.active)?.id ?? '', modelId: message.modelId, ratio: message.ratio,
       count: Number(message.count), size: message.size, quality: message.quality, followCurrent: !selectedSavedId };
     if (choices.models.some(x => x.id === draft.modelId)) selectedModels.set(selectedSavedId ?? '@current', draft.modelId);
@@ -282,7 +283,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     }
     // Continuing an image or restoring a saved draft is an explicit replacement,
     // unlike a delayed echo of the user's edits.
-    ++draftEpoch;
+    ++draftEpoch; preserveRestoredModel = true;
     choices = { accounts: direct.listAccounts?.() ?? choices.accounts, models: [] }; modelUnavailable = false; accountBlocked = true;
     checkSuspended = false; refreshPending = true;
     try { if (selectedSavedId) direct.selectSavedAccount(selectedSavedId); }
@@ -366,7 +367,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       if (selection === selectedSavedId && choicesLoading && !choicesAbort?.signal.aborted) return;
       stopRetry(true); restoringSaved = undefined;
       choicesAbort?.abort(); ++choicesRevision;
-      selectedSavedId = selection;
+      selectedSavedId = selection; preserveRestoredModel = false;
       if (origin) { origin = undefined; modelUnavailable = false; actionNotice = tr("directImageUi.69b0f51238"); }
       currentIdentityChanged = false;
       draft.followCurrent = !selectedSavedId; draft.accountId = selectedSavedId ?? choices.accounts.find(x => x.active)?.id ?? '';

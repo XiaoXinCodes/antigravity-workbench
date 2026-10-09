@@ -11,3 +11,20 @@ const snapshot=(id,model,endpoint,fraction=.8,queriedAt=new Date(now).toISOStrin
 test('recommendations use only exact fresh positive selected model quotas; unknown/old/zero/wrong models never chosen',async()=>{for(const bad of [null,0,.996]){const f=recommendation(async(id,m,_s,e)=>snapshot(id,m,e,bad));await f.r.start('image-model','daily');assert.equal(!!f.r.choose(f.accounts[0].id),bad===.996)}for(const change of [s=>({...s,modelId:'other'}),s=>({...s,queriedAt:new Date(now-60000).toISOString()}),s=>({...s,endpoint:'production'})]){const f=recommendation(async(id,m,_s,e)=>change(snapshot(id,m,e)));await f.r.start('image-model','daily');assert.equal(f.r.choose(f.accounts[0].id),undefined)}});
 test('duplicate requests are bounded and serialized, cancel can restart immediately and late results are isolated',async()=>{let resolve,calls=0,active=0,max=0;const f=recommendation(async(id,m,_s,e)=>{calls++;active++;max=Math.max(max,active);if(calls===1)await new Promise(r=>resolve=r);active--;return snapshot(id,m,e)});const first=f.r.start('old-model','daily');assert.equal(f.r.start('old-model','daily'),first);f.r.cancel();assert.equal(f.r.getState().rows[0].phase,'cancelled');const next=f.r.start('new-model','daily');await next;resolve();await first;assert.equal(f.r.getState().modelId,'new-model');assert.ok(f.r.getState().rows.every(r=>r.snapshot.modelId==='new-model'));assert.equal(calls,4);assert.equal(f.observed.length,3);assert.ok(max<=2);const bounded=recommendation(async(id,m,_s,e)=>snapshot(id,m,e));bounded.accounts.push(...Array.from({length:60},(_,i)=>({...bounded.accounts[0],id:String(i)})));await bounded.r.start('model','daily');assert.equal(bounded.r.getState().rows.length,50)});
 test('replaced accounts cannot receive delayed recommendation result or be selected',async()=>{let resolve;const f=recommendation(async(id,m,_s,e)=>{await new Promise(r=>resolve=r);return snapshot(id,m,e)});f.accounts.splice(1);const pending=f.r.start('model','daily');f.accounts[0].capturedAt='replaced';resolve();await pending;assert.equal(f.r.choose(f.accounts[0].id),undefined);assert.equal(f.r.getState().rows[0].phase,'error')});
+test('independent processes deduplicate history, preserve clear watermarks and reject a delayed deleted account',async()=>{
+ const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process'),{PrivateState}=require('../out/private-state');
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'ag-history-processes-'));
+ try{
+  const account={id:A,expectedEmail:'synthetic@example.test',hostCurrent:true,capturedAt:'2026-10-01T00:00:00Z'};
+  await fs.writeFile(path.join(root,'accounts.json'),JSON.stringify([account]));
+  const store=new PrivateState(path.join(root,'private'),parseQuotaHistory,initialQuotaHistory);
+  const launch=action=>new Promise((resolve,reject)=>{const child=spawn(process.execPath,[path.join(__dirname,'fixtures/history-worker.cjs'),root,action],{stdio:['ignore','ignore','pipe']});let errors='';child.stderr.on('data',d=>errors+=d);child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(errors)))});
+  await Promise.all([launch('record'),launch('record')]);assert.equal((await store.read()).rows.length,1);
+  await Promise.all([launch('clear'),launch('record')]);assert.equal((await store.read()).rows.length,0);assert.equal((await store.read()).seen.length,1);
+  const delayed=launch('held-record');let ready=false;
+  for(let i=0;i<500;i++){try{await fs.stat(path.join(root,'ready'));ready=true;break}catch{await new Promise(resolve=>setTimeout(resolve,10))}}
+  assert.equal(ready,true);await fs.writeFile(path.join(root,'accounts.json'),'[]');
+  const cleanup=launch('reconcile');await fs.writeFile(path.join(root,'release'),'synthetic');await Promise.all([cleanup,delayed]);
+  assert.equal((await store.read()).rows.length,0);assert.equal((await store.read()).seen.length,0);
+ }finally{await fs.rm(root,{recursive:true,force:true})}
+});

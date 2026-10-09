@@ -16,3 +16,23 @@ test('two windows share a single metadata check and recovery request; edits, can
 test('missed recovery checks reset the baseline and never turn sleep into a catchup request',async()=>{const f=fixture();await enabled(f);f.setFraction(.2);await next(f);f.setFraction(1);f.setTime((await f.store.read()).tasks[0].nextDue+6*60000);await f.engine.tick();assert.equal(f.calls,0);assert.equal((await f.store.read()).tasks[0].recovery,undefined);await next(f);assert.equal(f.calls,0);assert.equal((await f.store.read()).instances.at(-2).code,'WAKE_TOO_LATE')});
 test('recovery confirmation that expires during preparation prevents the durable sent marker and actual model request',async()=>{const f=fixture();await enabled(f);f.setFraction(.1);await next(f);f.setFraction(1);f.holdRun(async()=>f.setTime(f.now+60000));await next(f);assert.equal(f.calls,0);assert.equal((await f.store.read()).instances.at(-1).code,'WAKE_QUOTA_STALE');assert.equal((await f.store.read()).instances.at(-1).phase,'failed')});
 test('interval and cron execution share preview times and skip missed runs without changing model/account/budget',async()=>{for(const schedule of [interval,cron('*/15 * * * *')]){const f=fixture(schedule);await enabled(f);const due=(await f.store.read()).tasks[0].nextDue;assert.equal(due,wakeOccurrences(schedule,NOW)[0]);await next(f);assert.equal(f.calls,1);f.setTime((await f.store.read()).tasks[0].nextDue+6*60000);await f.engine.tick();assert.equal(f.calls,1);assert.equal((await f.store.read()).instances.at(-1).phase,'skipped')}});
+
+test('stale displayed task revisions cannot silently test, enable, mutate, delete or recreate another account and budget',async()=>{
+ const f=fixture(interval);await f.engine.save(f.task);await f.engine.consent();const old=(await f.store.read()).tasks[0],B='44444444-4444-4444-8444-444444444444';f.execution.fingerprint=id=>id===A?old.fingerprint:'synthetic-B';
+ await f.engine.save({...old,accountId:B,fingerprint:'synthetic-B',modelId:'synthetic-model-B',outputBudget:64},old.revision);const changed=(await f.store.read()).tasks[0];
+ for(const action of [()=>f.engine.test(T,old.revision),()=>f.engine.pause(T,true,old.revision),()=>f.engine.pause(T,false,old.revision),()=>f.engine.cancel(T,old.revision),()=>f.engine.remove(T,old.revision),()=>f.engine.save(old,old.revision)])await assert.rejects(action(),/TASK_CHANGED/);
+ assert.deepEqual((await f.store.read()).tasks[0],changed);assert.equal(f.calls,0);assert.equal((await f.store.read()).instances.length,0);
+ await f.engine.remove(T,changed.revision);await assert.rejects(f.engine.save(changed,changed.revision),/TASK_CHANGED/);assert.equal((await f.store.read()).tasks.length,0);
+});
+test('revision comparison runs inside a queued save transaction so concurrent deletion never resurrects a task',async()=>{
+ const f=fixture(interval);await f.engine.save(f.task);const old=(await f.store.read()).tasks[0],original=f.store.transaction.bind(f.store);let release;f.store.transaction=async fn=>{await new Promise(r=>release=r);return original(fn)};
+ const save=f.engine.save({...old,outputBudget:64},old.revision);while(!release)await tick();await original(s=>s.tasks.splice(0));release();await assert.rejects(save,/TASK_CHANGED/);assert.equal((await f.store.read()).tasks.length,0);
+});
+test('Cronie wildcard-step DOM/DOW preserve weekly and monthly cadence instead of silently broadening paid runs',()=>{
+ assert.deepEqual(wakeOccurrences(cron('0 8 */1 * MON'),NOW,3),wakeOccurrences(cron('0 8 * * MON'),NOW,3));assert.equal(new Date(wakeOccurrences(cron('0 8 1 * */1'),NOW)[0]).toISOString(),'2026-11-01T08:00:00.000Z');assert.deepEqual(wakeOccurrences(cron('0 8 */2 * MON'),NOW,3).map(t=>new Date(t).toISOString().slice(0,10)),['2026-10-19','2026-11-09','2026-11-23']);
+ for(const anchor of ['2026-10-09T08:00:00','2026-10-09','10/09/2026','2026-02-30T08:00:00Z','2026-13-01T08:00:00Z','2026-10-09T24:00:00Z','2026-10-09T08:00:00+24:00'])assert.throws(()=>validateWakeSchedule({...interval,anchor}),/INVALID/);
+});
+
+test('cross-window off then on retires an old preparing claim even before its periodic guard observes the disabled state',async()=>{
+ const f=fixture();await enabled(f);f.setFraction(.2);await next(f);f.setFraction(1);let release;f.holdRun(()=>new Promise(r=>release=r));f.setTime((await f.store.read()).tasks[0].nextDue);const pending=f.engine.tick();while(!release)await tick();const other=new WakeEngine(f.store,f.execution,()=>{},()=>f.now);await other.enable(false);await other.enable(true);release();await pending;assert.equal(f.calls,0);assert.equal((await f.store.read()).instances.at(-1).phase,'cancelled');assert.ok((await f.store.read()).tasks[0].nextDue>f.now);other.dispose();
+});

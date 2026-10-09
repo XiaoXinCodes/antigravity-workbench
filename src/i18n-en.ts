@@ -1123,4 +1123,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "advanced.WAKE_QUOTA_STALE": "Recovery observation expired; no request sent",
   "advanced.baselineInvalid": "Baseline invalid; awaiting a new observation",
   "advanced.endpoint": "Service endpoint",
+  "recommend.unknown": "Unknown quota; not recommended",
+  "recommend.exhausted": "Quota exhausted; not recommended",
+  "recommend.staleOnly": "Stale data; not recommended",
 };

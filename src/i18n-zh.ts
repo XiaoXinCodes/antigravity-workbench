@@ -1123,5 +1123,8 @@ export const zhCN = {
   "advanced.WAKE_QUOTA_STALE": "恢复观察已过期，未发送",
   "advanced.baselineInvalid": "基线已失效，等待重新观察",
   "advanced.endpoint": "请求服务",
+  "recommend.unknown": "未知额度，不作推荐",
+  "recommend.exhausted": "额度已耗尽，不作推荐",
+  "recommend.staleOnly": "旧数据，不作推荐",
 } as const;
 export type MessageKey = keyof typeof zhCN;

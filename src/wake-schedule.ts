@@ -27,14 +27,22 @@ function cronField(raw: string, min: number, max: number, family?: 'month' | 'we
 export function parseWakeCron(expression: string) {
   if (typeof expression !== 'string' || expression.length > 200) invalid();
   const fields = expression.trim().split(/\s+/); if (fields.length !== 5) invalid();
-  return { minute: cronField(fields[0]!,0,59), hour: cronField(fields[1]!,0,23), day: cronField(fields[2]!,1,31), month: cronField(fields[3]!,1,12,'month'), weekday: cronField(fields[4]!,0,7,'weekday'), anyDay: fields[2] === '*', anyWeekday: fields[4] === '*' };
+  return { minute: cronField(fields[0]!,0,59), hour: cronField(fields[1]!,0,23), day: cronField(fields[2]!,1,31), month: cronField(fields[3]!,1,12,'month'), weekday: cronField(fields[4]!,0,7,'weekday'), anyDay: fields[2]!.startsWith('*'), anyWeekday: fields[4]!.startsWith('*') };
+}
+function intervalAnchor(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 64) invalid();
+  const match = /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value as string);
+  if (!match) invalid();
+  const [year, month, day] = match!.slice(1, 4).map(Number), date = new Date(0);
+  date.setUTCFullYear(year!, month! - 1, day!);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day || !Number.isFinite(Date.parse(value as string))) invalid();
+  return new Date(value as string).toISOString();
 }
 export function validateWakeSchedule(value: WakeSchedule): WakeSchedule {
   if (!value || typeof value.timezone !== 'string' || value.timezone.length > 100 || !value.timezone) invalid();
   try { formatter(value.timezone).format(0); } catch { throw Error('WAKE_TIMEZONE_INVALID'); }
   if (value.mode === 'interval') {
-    if (typeof value.anchor !== 'string' || value.anchor.length > 64 || !Number.isFinite(Date.parse(value.anchor))) invalid();
-    return { mode: 'interval', timezone: value.timezone, times: [], weekdays: [], intervalMinutes: bounded(value.intervalMinutes,1,1440), anchor: new Date(value.anchor!).toISOString() };
+    return { mode: 'interval', timezone: value.timezone, times: [], weekdays: [], intervalMinutes: bounded(value.intervalMinutes,1,1440), anchor: intervalAnchor(value.anchor) };
   }
   if (value.mode === 'quota-recovery') return { mode: value.mode, timezone: value.timezone, times: [], weekdays: [], pollMinutes: bounded(value.pollMinutes,15,1440) };
   if (value.mode === 'cron') { parseWakeCron(value.cron!); return { mode: value.mode, timezone: value.timezone, times: [], weekdays: [], cron: value.cron!.trim().replace(/\s+/g,' ') }; }
@@ -56,7 +64,7 @@ export function wakeOccurrences(schedule: WakeSchedule, after: number, count=1):
   // Annual cron expressions can need several years to provide a useful preview.
   for(let day=0;day<(cron?366*25:32)&&result.length<count;day++) {
     const date=new Date(start+day*86_400_000),weekday=date.getUTCDay();
-    if(cron) { if(!cron.month.includes(date.getUTCMonth()+1))continue;const dom=cron.day.includes(date.getUTCDate()),dow=cron.weekday.includes(weekday);if(!(cron.anyDay?dow:cron.anyWeekday?dom:dom||dow))continue; }
+    if(cron) { if(!cron.month.includes(date.getUTCMonth()+1))continue;const dom=cron.day.includes(date.getUTCDate()),dow=cron.weekday.includes(weekday);if(!(cron.anyDay||cron.anyWeekday?dom&&dow:dom||dow))continue; }
     else if(!s.weekdays.includes(weekday))continue;
     const times=cron?cron.hour.flatMap(h=>cron.minute.map(m=>[h,m])):s.times.map(t=>t.split(':').map(Number));
     for(const [hour,minute] of times) { const wall=Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate(),hour!,minute!);if(wall<after-36*3_600_000)continue;const instant=wallInstant(wall,s.timezone);if(instant!==undefined&&instant>after)result.push(instant);if(result.length>=count)break; }
