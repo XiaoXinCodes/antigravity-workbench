@@ -49,7 +49,7 @@ test('expired leases do not reclaim an abandoned sent instance; preparation expi
  for(const phase of ['preparing','sent']){const f=fixture();await enabled(f);await f.store.transaction(s=>{s.instances.push({id:'old',taskId:T,revision:s.tasks[0].revision,accountId:A,modelId:'synthetic-model-a',due:NOW,manual:false,nonce:R,leaseUntil:NOW,phase,code:''});s.tasks[0].nextDue=NOW+3600_000});await f.engine.tick();assert.equal(f.calls,0);assert.equal((await f.store.read()).instances[0].phase,phase==='sent'?'unknown':'skipped')}
 });
 test('persistent state has atomic disk claims across independent stores and rejects unsafe state',async()=>{
- const root=await fs.mkdtemp(path.join(os.tmpdir(),'ag-automation-core-'));try{const directory=path.join(root,'private'),store=new PrivateState(directory,parseWakeState,initialWakeState),other=new PrivateState(directory,parseWakeState,initialWakeState);await store.transaction(s=>{s.consent=true});await other.transaction(s=>{s.enabled=true});assert.equal((await store.read()).enabled,true);
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ag-automation-core-')));try{const directory=path.join(root,'private'),store=new PrivateState(directory,parseWakeState,initialWakeState),other=new PrivateState(directory,parseWakeState,initialWakeState);await store.transaction(s=>{s.consent=true});await other.transaction(s=>{s.enabled=true});assert.equal((await store.read()).enabled,true);
   const f=fixture(store);await enabled(f);await f.engine.tick();const restart=fixture(other);restart.setTime(NOW+60_000);await restart.engine.tick();assert.equal(f.calls+restart.calls,1);assert.ok((await fs.stat(path.join(directory,'state.json'))).mode&0o600);
   await assert.rejects(store.transaction(s=>{s.tasks[0].outputBudget=0}),/INVALID/);assert.equal((await store.read()).tasks[0].outputBudget,8);
   const link=path.join(root,'link');await fs.symlink(directory,link);await assert.rejects(new PrivateState(link,parseWakeState,initialWakeState).read(),/UNSAFE/);
@@ -78,7 +78,7 @@ test('privacy aliases stay distinct across Chinese/English and never mutate inte
 
 test('embedded automation UI script parses in both languages',()=>{for(const language of ['zh-CN','en']){setLanguage(language);const html=require('../out/automation-view').automationHtml('vscode-resource:');new(require('node:vm').Script)(html.match(/<script[^>]*>([\s\S]*)<\/script>/)[1]);assert.match(html,/Content-Security-Policy/)}setLanguage('zh-CN')});
 test('independent host processes cannot send the same scheduled instance twice',async()=>{
- const root=await fs.mkdtemp(path.join(os.tmpdir(),'ag-automation-processes-'));try{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ag-automation-processes-')));try{
   const store=new PrivateState(path.join(root,'private'),parseWakeState,initialWakeState),f=fixture(store);await enabled(f);
   const launch=()=>new Promise((resolve,reject)=>{const child=require('node:child_process').spawn(process.execPath,[path.join(__dirname,'fixtures/automation-worker.cjs'),path.join(root,'private'),String(NOW+60_000)],{stdio:['ignore','ignore','pipe']});let errors='';child.stderr.on('data',d=>errors+=d);child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(errors)))});
   await Promise.all([launch(),launch()]);assert.equal((await fs.readFile(path.join(root,'private','synthetic-sends.txt'),'utf8')).trim().split('\n').length,1);assert.equal((await store.read()).instances.length,1);

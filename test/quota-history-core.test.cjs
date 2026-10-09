@@ -13,7 +13,7 @@ test('duplicate requests are bounded and serialized, cancel can restart immediat
 test('replaced accounts cannot receive delayed recommendation result or be selected',async()=>{let resolve;const f=recommendation(async(id,m,_s,e)=>{await new Promise(r=>resolve=r);return snapshot(id,m,e)});f.accounts.splice(1);const pending=f.r.start('model','daily');f.accounts[0].capturedAt='replaced';resolve();await pending;assert.equal(f.r.choose(f.accounts[0].id),undefined);assert.equal(f.r.getState().rows[0].phase,'error')});
 test('independent processes deduplicate history, preserve clear watermarks and reject a delayed deleted account',async()=>{
  const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process'),{PrivateState}=require('../out/private-state');
- const root=await fs.mkdtemp(path.join(os.tmpdir(),'ag-history-processes-'));
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ag-history-processes-')));
  try{
   const account={id:A,expectedEmail:'synthetic@example.test',hostCurrent:true,capturedAt:'2026-10-01T00:00:00Z'};
   await fs.writeFile(path.join(root,'accounts.json'),JSON.stringify([account]));

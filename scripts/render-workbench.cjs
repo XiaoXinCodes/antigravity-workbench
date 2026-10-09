@@ -245,7 +245,7 @@ async function inspectLayouts(cases, screenshots) {
         const clickFlow = await send('Runtime.evaluate', { awaitPromise: true, returnByValue: true, expression: `(async () => {
           const messages = window.__fixture.messages, failures = [];
           const complete = (items = messages) => items.forEach(message => window.dispatchEvent(new MessageEvent('message', {data:{type:'complete',command:message.command,requestId:message.requestId}})));
-          const independent = new Set(['live.quotaCancel','debug.toggle','debug.preview','debug.exportPreview','debug.copyDirectory','debug.openDirectory','openHelp','openOfficialExtension','openWorkbenchExtension','openHostSettings','locations.copyExtension','locations.copyCredentials','locations.copyImageOutput','locations.openExtension','openSettings']);
+          const independent = new Set(['quota.quickPick','quota.cancel','quota.unpin','quota.pin','quota.favorite','quota.history','automation.open','privacy.toggle','live.quotaCancel','debug.toggle','debug.preview','debug.exportPreview','debug.copyDirectory','debug.openDirectory','openHelp','openOfficialExtension','openWorkbenchExtension','openHostSettings','locations.copyExtension','locations.copyCredentials','locations.copyImageOutput','locations.openExtension','openSettings']);
           const requestIds = new Set();
           const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
           const details = [...document.querySelectorAll('details')];
@@ -263,7 +263,7 @@ async function inspectLayouts(cases, screenshots) {
             }
             checkedEnabled++;
             const request = messages.at(-1);
-            const expected = {command:button.dataset.command,requestId:request?.requestId,...(button.dataset.id?{accountId:button.dataset.id}:{})};
+            const expected = {command:button.dataset.command,requestId:request?.requestId,...(button.dataset.id?{accountId:button.dataset.id}:{}),...(button.dataset.quotaKey?{quotaKey:button.dataset.quotaKey}:{})};
             if (messages.length !== start+1 || !same(messages.at(-1),expected)) failures.push('Wrong click payload: ' + button.dataset.command);
             if (typeof request?.requestId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(request.requestId) || requestIds.has(request.requestId)) failures.push('Missing or reused request ID: ' + button.dataset.command);
             requestIds.add(request?.requestId);
