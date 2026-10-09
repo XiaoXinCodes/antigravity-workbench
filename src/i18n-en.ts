@@ -665,7 +665,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "officialProcess.unownedHub": "Another official backend blocks switching. Review the processes below, rescan, or select a specific backend to end.",
   "officialProcess.unverifiedOwner": "An agy process has unverified ownership. Switching is blocked and no process was terminated automatically. Confirm other backend or CLI tasks have ended and exited, then retry.",
   "officialProcess.missingCurrentHub": "The official process for this window's Hub could not be verified. Wait for the official component to finish starting, then recheck. This does not imply another window is open.",
-  "officialProcess.stopTimeout": "The official backend did not finish exiting within the waiting period. Further steps were stopped. Recheck backend and recovery status; no other process was terminated automatically.",
+  "officialProcess.stopTimeout": "The official backend did not finish exiting within the waiting period. Further steps were stopped. Reload this window, check backend and recovery status, then retry; no other process was terminated automatically.",
   "liveUi.a2212b3cf0": "Exit all agy backends and CLI processes before inspecting stale locks.",
   "liveUi.48b983ce10": "The official backend process state could not be established. Check process inspection permissions, close other windows and retry.",
   "liveUi.117b4a7721": "The official backend is still running. Recovery retained. Finish tasks and stop other backends, then run Restore previous login.",

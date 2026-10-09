@@ -546,7 +546,7 @@ export const zhCN = {
   "officialProcess.unownedHub": "另一个官方后台阻止切号。请查看下方进程，重新检查或选择结束指定后台。",
   "officialProcess.unverifiedOwner": "检测到无法核实归属的 agy 进程，已阻止继续切号，未自动终止任何进程。请确认其他后台或 CLI 的任务已结束并退出后重试。",
   "officialProcess.missingCurrentHub": "未能验证当前窗口 Hub 对应的官方进程。请等待官方组件启动完成后重新检查；这不表示存在其他窗口。",
-  "officialProcess.stopTimeout": "官方后台未在等待时间内完成退出，已停止继续操作。请重新检查后台与恢复状态；未自动终止其他进程。",
+  "officialProcess.stopTimeout": "官方后台未在等待时间内完成退出，已停止继续操作。请重新加载当前窗口，检查后台与恢复状态后再重试；未自动终止其他进程。",
   "liveUi.a2212b3cf0": "请先退出所有 agy 后台和 CLI，再检查遗留锁。",
   "liveUi.48b983ce10": "无法确认官方后台进程状态。请检查系统进程查看权限，关闭其他窗口后重试。",
   "liveUi.117b4a7721": "官方后台仍在运行。已保留恢复记录；请结束任务和其他后台，再运行“恢复切换前的登录”。",

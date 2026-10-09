@@ -33,7 +33,9 @@ import { OfficialProcessRecovery, type ProcessConflictState } from './official-p
 const INDEX = 'live-switch.accounts.v1', PENDING = 'live-switch.pending.v1';
 const OFFICIAL_ID = 'google.google-antigravity';
 const localRequire = createRequire(__filename);
-export function loadedDeactivator(filename: string, cache: NodeJS.Dict<NodeModule> = localRequire.cache): (() => Promise<void>) | null {
+const pendingOfficialStops = new WeakMap<() => unknown, Promise<void>>();
+const pendingOfficialStopPaths = new Map<string, Promise<void>>();
+export function loadedDeactivator(filename: string, cache: NodeJS.Dict<NodeModule> = localRequire.cache, options: { timeoutMs?: number } = {}): (() => Promise<void>) | null {
   // Never load/re-evaluate another extension. Only use the module already loaded by this host.
   const canonical = (value: string): string => {
     let resolved: string;
@@ -46,7 +48,32 @@ export function loadedDeactivator(filename: string, cache: NodeJS.Dict<NodeModul
   if (candidates.length !== 1) return null;
   const module = candidates[0]![1]!;
   if (typeof module.exports?.deactivate !== 'function') return null;
-  return () => Promise.resolve(module.exports.deactivate());
+  const deactivate: () => unknown = module.exports.deactivate;
+  const receiver: unknown = module.exports;
+  const pending = (): boolean => pendingOfficialStops.has(deactivate) || pendingOfficialStopPaths.has(target);
+  if (pending()) throw new LiveError('OFFICIAL_BACKEND_STOP_TIMEOUT');
+  return async () => {
+    // A deadline bounds our wait, not the official call. Retain this guard until
+    // the actual hook settles so retries/reconnect cannot race its late stop.
+    if (pending()) throw new LiveError('OFFICIAL_BACKEND_STOP_TIMEOUT');
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new LiveError('PROCESS_CHECK_FAILED');
+    const actual = Promise.resolve().then(() => deactivate.call(receiver)).then(() => undefined);
+    pendingOfficialStops.set(deactivate, actual); pendingOfficialStopPaths.set(target, actual);
+    const clear = (): void => {
+      if (pendingOfficialStops.get(deactivate) === actual) pendingOfficialStops.delete(deactivate);
+      if (pendingOfficialStopPaths.get(target) === actual) pendingOfficialStopPaths.delete(target);
+    };
+    // Both handlers consume late rejection. Neither schedules any restart,
+    // credential mutation, callback or second stop on actual completion.
+    void actual.then(clear, clear);
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([actual, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new LiveError('OFFICIAL_BACKEND_STOP_TIMEOUT')), timeoutMs);
+      })]);
+    } finally { clearTimeout(timer); }
+  };
 }
 async function processCount(): Promise<number> {
   if (process.platform === 'win32') {
