@@ -40,5 +40,11 @@
   "setting.endpoint.description": "Advanced troubleshooting: override the image endpoint. Keep Daily for normal use; Production is not guaranteed to fix requests. Reads global user settings only. Projects and models are verified for the chosen endpoint. Changing it makes no request; failures do not trigger endpoint fallback or retries.",
   "setting.endpoint.option.0": "Manual troubleshooting only; image request stability is unverified.",
   "setting.endpoint.option.1": "Default endpoint; no change needed for normal use.",
-  "setting.language.description": "Language / 语言: manually choose Workbench interface language. Defaults to Simplified Chinese. Updates open views without reloading; account data, prompts and tasks are retained. Command Palette titles follow VS Code display language."
+  "setting.language.description": "Language / 语言: manually choose Workbench interface language. Defaults to Simplified Chinese. Updates open views without reloading; account data, prompts and tasks are retained. Command Palette titles follow VS Code display language.",
+  "command.quota.quickPick": "Quick quota view",
+  "command.quota.refreshAll": "Refresh all account quotas",
+  "command.quota.cancel": "Cancel quota refresh",
+  "command.quota.unpin": "Unpin quota from status bar",
+  "command.quota.favorite": "Favorite quota item",
+  "command.quota.pin": "Pin quota item"
 }

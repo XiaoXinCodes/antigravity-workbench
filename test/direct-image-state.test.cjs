@@ -197,3 +197,11 @@ test('cancelling a pending native generation consent releases this task before t
  await f.send({type:'cancel'});await tick();assert.equal(f.states.at(-1).busy,false);assert.equal(f.states.at(-1).tasks[0].phase,'cancelled');assert.equal(f.runs.length,0);
  f.decide();await tick();assert.equal(f.runs.length,0);f.panels.at(-1).close();await f.controller.flush();
 });
+
+test('model favorites persist exact available IDs without generating or querying another catalog',async t=>{
+ const storage=new Map(),f=await fixture(t,storage);await f.send({type:'ready'});const before=f.reading();
+ await f.send({type:'favoriteModel',modelId});assert.deepEqual(f.states.at(-1).imageFavorites,[modelId]);assert.equal(f.reading(),before);assert.equal(f.runs.length,0);
+ await f.send({type:'favoriteModel',modelId:'unknown-or-quota-label'});assert.deepEqual(f.states.at(-1).imageFavorites,[modelId]);
+ f.panels.at(-1).close();await f.open();assert.deepEqual(f.states.at(-1).imageFavorites,[modelId]);
+ await f.send({type:'favoriteModel',modelId});assert.deepEqual(f.states.at(-1).imageFavorites,[]);assert.equal(f.runs.length,0);
+});

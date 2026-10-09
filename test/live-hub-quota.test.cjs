@@ -28,7 +28,7 @@ test('fresh quota explicitly clears official cache and brackets request with sam
     const proof = await queryFreshQuota(api, 'A@example.test');
     assert.equal(proof.email, 'a@example.test'); assert.equal(proof.generation, generation(api));
     assert.equal(proof.quotaSource, 'server'); assert.equal(proof.authValid, true);
-    assert.deepEqual(proof.buckets, [{ label: 'Models · Model A · 5 hours', remaining: 0.25, resetAt: '2026-10-01T08:00:00Z' }]);
+    assert.deepEqual(proof.buckets, [{ bucketId: 'test', window: '5 hours', label: 'Models · Model A · 5 hours', remaining: 0.25, resetAt: '2026-10-01T08:00:00Z' }]);
     assert.deepEqual(seen.map(x => x.method), ['GetAuthStatus', 'GetUserStatus', 'RetrieveUserQuotaSummary', 'GetAuthStatus', 'GetUserStatus']);
     assert.deepEqual(seen[2].body, { forceRefresh: true });
     assert.ok(seen.every(x => x.path === '/exa.language_server_pb.LanguageServerService/' + x.method && x.csrf === api.csrfToken));
@@ -74,7 +74,7 @@ test('groups take precedence over deprecated buckets and preserve zero, disabled
     { displayName: 'zero', remainingFraction: 0 }, { displayName: 'credits', remainingAmount: '9223372036854775807' }, { displayName: 'disabled', disabled: true },
   ] }] } });
   assert.equal(rows.length, 3); assert.equal(rows[0].remaining, 0); assert.equal(rows[1].remaining, null); assert.equal(rows[1].remainingAmount, '9223372036854775807'); assert.equal(rows[2].disabled, true);
-  assert.deepEqual(parseFreshQuota({ response: { buckets: [{ bucketId: 'legacy', remainingAmount: 0 }] } }), [{ label: 'legacy', remaining: null, remainingAmount: '0', resetAt: null }]);
+  assert.deepEqual(parseFreshQuota({ response: { buckets: [{ bucketId: 'legacy', remainingAmount: 0 }] } }), [{ bucketId: 'legacy', label: 'legacy', remaining: null, remainingAmount: '0', resetAt: null }]);
 });
 test('malformed fractions, oneofs, counters, structures and excessive rows fail closed', () => {
   for (const bucket of [null, {}, { remainingFraction: -0.01 }, { remainingFraction: 1.01 }, { remainingFraction: NaN }, { remainingFraction: '0.5' }, { remainingFraction: 0, remainingAmount: '1' }, { remainingAmount: '-1' }, { remainingAmount: '1.5' }, { remainingAmount: '9223372036854775808' }, { remainingAmount: Number.MAX_SAFE_INTEGER + 1 }, { disabled: 'true' }]) {

@@ -1,4 +1,5 @@
 import { localizeMessage, t as tr } from './i18n';
+import { accountDisplayFingerprint } from './quota-presentation';
 import { verifiedCurrentAccountId } from './current-account';
 import { beginDebugOperation, debugErrorCode, debugErrorData, debugFailureOutcome, type DebugOperation, type DebugSpan } from './debug-events';
 import { LAST_ACCOUNT_FAILURE, readLastAccountFailure, type LastAccountFailure, type AccountFailureStage } from './last-account-failure';
@@ -480,7 +481,7 @@ type LifecycleResolver = (requireRunning?: boolean, startForLogin?: boolean) => 
 export interface LiveUiDependencies { service?: LiveSwitchService; locks?: LiveLocks; lifecycle?: LifecycleResolver; processCount?: typeof processCount; changed?: () => void; savedQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<HubProof>; importQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<ImportedAccountQuota>; currentQuota?: (expectedEmail: string, signal?: AbortSignal) => Promise<HubProof>; currentIdentity?: (signal?: AbortSignal) => Promise<HubProof | undefined>; verificationClock?: VerificationClock; processRecovery?: Pick<OfficialProcessRecovery, 'scan' | 'end' | 'invalidate'> & Partial<Pick<OfficialProcessRecovery, 'endMany' | 'currentProcessIdentity'>> }
 /** Quota stays in memory and is attached only to the returned identity on this host. */
 export interface LiveQuotaSnapshot { email: string; observedAt: string; source: 'server' | 'hub-status'; buckets: HubProof['buckets'] }
-export interface LiveQuotaState { phase: 'loading' | 'ready' | 'error' | 'mismatch'; snapshot?: LiveQuotaSnapshot; message?: string }
+export interface LiveQuotaState { accountFingerprint?: string; phase: 'loading' | 'ready' | 'error' | 'mismatch'; snapshot?: LiveQuotaSnapshot; message?: string }
 export type LiveAccountView = SavedLogin & { hostCurrent?: boolean; quota?: LiveQuotaState; active?: boolean; activeVerifiedAt?: string };
 export type LiveRecoveryPhase = 'checking' | 'none' | 'authorizing' | 'prepared' | 'installed' | 'restored' | 'locked' | 'unavailable';
 export interface LiveUiState { recoveryPhase: LiveRecoveryPhase; status: string; busy: boolean; pending: boolean; identityChecking?: boolean; identityVerifiedDuringRecovery?: boolean; currentLoginSave?: 'saved' | 'update'; lastKnownAccountId?: string; error?: string; lastFailure?: LastAccountFailure; environment: NativeHostStatus; official: NativeHostStatus; storageMode?: string; accountStorageReady: boolean; currentQuota?: LiveQuotaState; activeEmail?: string; activeVerifiedAt?: string; processConflicts?: ProcessConflictState; processSwitchTarget?: string }
@@ -627,6 +628,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   const identityHash = (email: string): string => createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
   let importAbort: AbortController | undefined;
   let quotaAbort: AbortController | undefined;
+  let quotaCancelRevision = 0, quotaStartedRevision = 0;
   context.subscriptions.push({ dispose: () => { disposed = true; verification.dispose(); clearTimeout(identityTimer); identityAbort?.abort(); loginAbort?.abort(); quotaAbort?.abort(); importAbort?.abort(); processAbort?.abort(); processRecovery?.invalidate(); blockedSwitch = undefined; } });
   const items = (): SavedLogin[] => validIndex(context.globalState.get(INDEX, []));
   const index = { read: items, write: async (accounts: SavedLogin[]): Promise<void> => { await context.globalState.update(INDEX, accounts); } };
@@ -1188,7 +1190,9 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   }
   const register = (name: string, fn: (argument?: unknown) => Promise<boolean | void>, unlocked = false): void => {
     context.subscriptions.push(vscode.commands.registerCommand(`antigravityAccounts.live.${name}`, async (argument?: unknown) => {
-      if (busy || disposed) return; busy = true; identityAbort?.abort(); identityStatus = undefined; errorMessage = undefined; if (['login', 'switch', 'restore'].includes(name)) identityVerifiedDuringRecovery = false; dependencies.changed?.();
+      if (busy || disposed) return; if (name === 'quota') quotaStartedRevision = quotaCancelRevision; busy = true; identityAbort?.abort(); identityStatus = undefined; errorMessage = undefined; if (['login', 'switch', 'restore'].includes(name)) identityVerifiedDuringRecovery = false; dependencies.changed?.();
+      const quotaTarget = name === 'quota' && typeof argument === 'string' ? items().find(account => account.id === argument) : undefined;
+      const quotaIdentity = quotaTarget && accountDisplayFingerprint(quotaTarget);
       operationAction = name; operationStage = 'command'; operationFailure = undefined;
       const diagnostic = ['login', 'capture', 'switch', 'verify', 'quota', 'restore', 'remove', 'export', 'import'].includes(name) ? beginDebugOperation(`account.${name}` as DebugOperation) : undefined;
       debugSpan = diagnostic; diagnostic?.event('preparing');
@@ -1210,6 +1214,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         }
         if (['switch', 'login', 'restore', 'processEnd', 'processEndAll', 'processContinue'].includes(name)) releaseAccountChange = enterAccountChange();
         if (unlocked) { try { completed = await fn(argument) === true; } finally { if (!disposed) await refreshRecovery(false, diagnostic); } } else await locks.withOperation(async () => {
+          if (name === 'quota' && quotaTarget && !items().some(account => account.id === quotaTarget.id && accountDisplayFingerprint(account) === quotaIdentity)) throw new LiveError('ACCOUNT_QUOTA_ACCOUNT_CHANGED');
           // Finish or roll back a crashed import before another credential operation.
           if (name !== 'quota' && name !== 'export') {
             const journal = await service!.journal();
@@ -1234,10 +1239,11 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
           // Read-only queries report locally, never as modal/toast/editor notifications.
           // Invalid/unbound caller-supplied ids must not redirect errors to a different card.
           const target = typeof argument === 'string' ? items().find(account => account.id === argument) : undefined;
-          if (target && activeEmail?.toLowerCase() === target.expectedEmail.toLowerCase() && ['ACCOUNT_QUOTA_IDENTITY_MISMATCH', 'HUB_QUOTA_ACCOUNT_MISMATCH', 'HUB_AUTH_INVALID', 'HUB_CHANGED_DURING_QUERY'].includes(code)) { activeEmail = undefined; activeVerifiedAt = undefined; activeGeneration = undefined; }
+          const ownsTarget = target && quotaIdentity === accountDisplayFingerprint(target);
+          if (ownsTarget && activeEmail?.toLowerCase() === target.expectedEmail.toLowerCase() && ['ACCOUNT_QUOTA_IDENTITY_MISMATCH', 'HUB_QUOTA_ACCOUNT_MISMATCH', 'HUB_AUTH_INVALID', 'HUB_CHANGED_DURING_QUERY'].includes(code)) { activeEmail = undefined; activeVerifiedAt = undefined; activeGeneration = undefined; }
           const previous = target ? quotas.get(target.id) : currentQuota;
-          const result: LiveQuotaState = { phase: 'error', message: errorMessage, ...(previous?.snapshot ? { snapshot: previous.snapshot } : {}) };
-          if (!disposed) { if (target) quotas.set(target.id, result); else currentQuota = result; }
+          const result: LiveQuotaState = { phase: 'error', message: errorMessage, ...(previous?.snapshot && (!target || !previous.accountFingerprint || previous.accountFingerprint === accountDisplayFingerprint(target)) ? { snapshot: previous.snapshot } : {}), ...(target ? { accountFingerprint: accountDisplayFingerprint(target) } : {}) };
+          if (!disposed) { if (ownsTarget) quotas.set(target.id, result); else if (argument === undefined) currentQuota = result; }
           errorMessage = undefined;
           await recordAcceptance('quota-failed');
         } else {
@@ -1355,7 +1361,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
           phase: phase => { if (disposed) return; status = phase === 'refreshing' ? tr("liveUi.3902f9e3d5") : phase === 'saving' ? tr("liveUi.a7f79e9176") : tr('liveUi.importChecking'); dependencies.changed?.(); },
           quota: (account, result) => {
             if (disposed) return;
-            quotas.set(account.id, result.quotaError ? { phase: 'error', message: liveErrorMessage(result.quotaError) } : { phase: 'ready', snapshot: { email: result.proof.email, observedAt: result.proof.observedAt, source: 'server', buckets: result.proof.buckets.map(bucket => ({ ...bucket })) } });
+            quotas.set(account.id, result.quotaError ? { accountFingerprint: accountDisplayFingerprint(account), phase: 'error', message: liveErrorMessage(result.quotaError) } : { accountFingerprint: accountDisplayFingerprint(account), phase: 'ready', snapshot: { email: result.proof.email, observedAt: result.proof.observedAt, source: 'server', buckets: result.proof.buckets.map(bucket => ({ ...bucket })) } });
           },
         });
       } finally { cancel.dispose(); }
@@ -1654,17 +1660,20 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (proof.quotaSource !== 'server') return [];
     const snapshot: LiveQuotaSnapshot = { email: proof.email, observedAt: proof.observedAt, source: proof.quotaSource === 'server' ? 'server' : 'hub-status', buckets: proof.buckets.map(bucket => ({ ...bucket })) };
     const matching = items().filter(account => (!service!.hostIsCurrent || service!.hostIsCurrent(account)) && account.expectedEmail.trim().toLowerCase() === proof.email.trim().toLowerCase());
-    for (const account of matching) quotas.set(account.id, { phase: 'ready', snapshot });
+    for (const account of matching) quotas.set(account.id, { accountFingerprint: accountDisplayFingerprint(account), phase: 'ready', snapshot });
     currentQuota = matching.length ? undefined : { phase: 'ready', snapshot, message: tr("liveUi.aa9c92f9f7") };
     return matching;
   }
   register('verify', async () => { verificationSuspended = false; return await reconcileLogin(undefined, true, true); });
-  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.live.quotaCancel', () => quotaAbort?.abort()));
+  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.live.quotaCancel', () => { ++quotaCancelRevision; quotaAbort?.abort(); }));
   register('quota', async argument => {
+    if (quotaStartedRevision !== quotaCancelRevision) throw new LiveError('QUOTA_QUERY_CANCELLED');
+    const activeAtStart = activeEmail;
     const target = accountArgument(argument, items());
     if (target && service!.hostIsCurrent && !service!.hostIsCurrent(target)) throw new LiveError(target.hostId ? 'HOST_ACCOUNT_MISMATCH' : 'HOST_ACCOUNT_UNBOUND');
     const previous = target ? quotas.get(target.id) : currentQuota;
-    const loading: LiveQuotaState = { phase: 'loading', ...(previous?.snapshot ? { snapshot: previous.snapshot } : {}) };
+    const fingerprint = target ? accountDisplayFingerprint(target) : undefined;
+    const loading: LiveQuotaState = { phase: 'loading', ...(fingerprint ? { accountFingerprint: fingerprint } : {}), ...(previous?.snapshot && (!fingerprint || !previous.accountFingerprint || previous.accountFingerprint === fingerprint) ? { snapshot: previous.snapshot } : {}) };
     if (target) quotas.set(target.id, loading); else currentQuota = loading;
     dependencies.changed?.();
     quotaAbort = new AbortController();
@@ -1676,7 +1685,6 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       const backend = dependencies.currentQuota ? undefined : await resolveOfficialReadOnlyHub(context);
       proof = await (dependencies.currentQuota ? dependencies.currentQuota(target.expectedEmail, abort.signal) : backend!.quota(target.expectedEmail, abort.signal));
       if (!proof.authValid || proof.quotaSource !== 'server' || proof.email.toLowerCase() !== target.expectedEmail.toLowerCase() || backend && proof.generation !== backend.generation) throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');
-      activeEmail = proof.email; activeVerifiedAt = proof.observedAt; activeGeneration = proof.generation;
     } else if (target) {
       // The explicit Refresh action requests this account's query. Loading,
       // results and errors stay on its card without another confirmation.
@@ -1693,7 +1701,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
           commit: async (expected, next) => { committed = await service!.commitQuotaRefresh(target.id, expected, next); pendingSlots = undefined; },
         },
         phase: phase => {
-          if (disposed) return;
+          if (disposed || abort.signal.aborted) return;
           loading.message = phase === 'refreshing' ? tr("liveUi.3902f9e3d5") : phase === 'saving' ? tr("liveUi.a7f79e9176") : tr("liveUi.3e89495d05");
           dependencies.changed?.();
         },
@@ -1710,10 +1718,15 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     }
     if (abort.signal.aborted) throw new LiveError('QUOTA_QUERY_CANCELLED');
     if (disposed) return;
-    if (target && !items().some(item => item.id === target.id && item.expectedEmail === target.expectedEmail)) throw new LiveError('ACCOUNT_QUOTA_ACCOUNT_CHANGED');
+    if (target && !items().some(item => item.id === target.id && accountDisplayFingerprint(item) === fingerprint)) throw new LiveError('ACCOUNT_QUOTA_ACCOUNT_CHANGED');
+    if (!Number.isFinite(Date.parse(proof.observedAt))) throw new LiveError('ACCOUNT_QUOTA_RESPONSE_INVALID');
+    if (target && activeAtStart?.toLowerCase() === target.expectedEmail.toLowerCase()) {
+      if (activeEmail !== activeAtStart) throw new LiveError('ACCOUNT_QUOTA_ACCOUNT_CHANGED');
+      activeEmail = proof.email; activeVerifiedAt = proof.observedAt; activeGeneration = proof.generation;
+    }
     if (target) {
       // Isolate even duplicate same-email copies; never repaint a different saved account.
-      quotas.set(target.id, { phase: 'ready', snapshot: { email: proof.email, observedAt: proof.observedAt, source: 'server', buckets: proof.buckets.map(bucket => ({ ...bucket })) } });
+      quotas.set(target.id, { phase: 'ready', ...(fingerprint ? { accountFingerprint: fingerprint } : {}), snapshot: { email: proof.email, observedAt: proof.observedAt, source: 'server', buckets: proof.buckets.map(bucket => ({ ...bucket })) } });
     } else recordProof(proof);
     await recordAcceptance('quota-ready');
     return true;
@@ -1800,6 +1813,6 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   return { refresh, recheck, ensureIdentity, getStatus: () => localizeMessage(status), getAccounts: () => {
     const accounts = items().map(account => ({ ...account, ...(service?.hostIsCurrent ? { hostCurrent: service.hostIsCurrent(account) } : {}) }));
     const currentId = verifiedCurrentAccountId(accounts, activeEmail, pending && !identityVerifiedDuringRecovery);
-    return accounts.map(account => ({ ...account, ...(account.id === currentId ? { active: true, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}), ...(quotas.has(account.id) ? { quota: quotas.get(account.id)! } : {}) }));
+    return accounts.map(account => ({ ...account, ...(account.id === currentId ? { active: true, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}), ...(quotas.has(account.id) && (!quotas.get(account.id)!.accountFingerprint || quotas.get(account.id)!.accountFingerprint === accountDisplayFingerprint(account)) ? { quota: quotas.get(account.id)! } : {}) }));
   }, getState: () => ({ accountStorageReady: !!service || !!setupError, ...(lastKnownAccountId() ? { lastKnownAccountId: lastKnownAccountId()! } : {}), identityChecking, identityVerifiedDuringRecovery, ...(currentSaveProjection() ? { currentLoginSave: currentSaveProjection()! } : {}), status: !busy && recoveryPhase === 'none' && identityStatus ? localizeMessage(identityStatus) : localizeMessage(status), busy, pending, recoveryPhase, ...(errorMessage ? { error: localizeMessage(errorMessage) } : {}), ...(lastFailure ? { lastFailure } : {}), environment: environmentStatus(), official: officialAvailability(context), ...(storageMode ? { storageMode } : {}), ...(currentQuota ? { currentQuota } : {}), ...(activeEmail ? { activeEmail, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}), ...(processConflicts ? { processConflicts } : {}), ...(blockedSwitch && items().some(item => item.id === blockedSwitch!.id && JSON.stringify(item) === blockedSwitch!.fingerprint) ? { processSwitchTarget: items().find(item => item.id === blockedSwitch!.id)!.expectedEmail } : {}) }) };
 }

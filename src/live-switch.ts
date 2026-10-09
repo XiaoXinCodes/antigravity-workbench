@@ -16,7 +16,7 @@ export interface SavedLogin { id: string; label: string; expectedEmail: string; 
 export interface LiveAccount extends SavedLogin { slots: TokenSlots }
 export interface VerificationState { state: 'pending' | 'retry' | 'verified'; attempts: number; checkedAt?: string; code?: string }
 export interface Journal { schema: 1; id: string; revision?: number; writeId?: string; phase: 'authorizing' | 'prepared' | 'installed' | 'restored'; operation?: 'login'; backup: TokenSlots; loginCurrent?: TokenSlots; target: SavedLogin; oldGeneration: string; hostId?: string; loginMode?: 'save-only'; original?: { email: string | null }; restoreGeneration?: string; verification?: VerificationState }
-export interface HubProof { email: string; generation: string; observedAt: string; authValid: boolean; quotaSource?: 'server'; buckets: { label: string; remaining: number | null; resetAt: string | null; remainingAmount?: string; disabled?: boolean }[] }
+export interface HubProof { email: string; generation: string; observedAt: string; authValid: boolean; quotaSource?: 'server'; buckets: { bucketId?: string; groupId?: string; window?: string; label: string; remaining: number | null; resetAt: string | null; remainingAmount?: string; disabled?: boolean }[] }
 export interface SignedOutProof { generation: string; authValid: false }
 export interface Lifecycle { stop(): Promise<void>; reload(): Promise<void>; proof(signal?: AbortSignal): Promise<HubProof>; signedOutProof?(signal?: AbortSignal): Promise<SignedOutProof>; generation: string; restartMode?: 'component' | 'unavailable' }
 export interface VerificationGuard { id: string; phase: Journal['phase']; assertCurrent(): void }

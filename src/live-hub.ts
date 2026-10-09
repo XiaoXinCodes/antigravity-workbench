@@ -96,6 +96,9 @@ export async function queryHub(api: OfficialApi, signal?: AbortSignal): Promise<
 function quotaLabel(value: unknown): string {
   return typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 120) : '';
 }
+function quotaIdentifier(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[a-zA-Z0-9_.:/-]{1,128}$/u.test(value) ? value : undefined;
+}
 /** Official agy 1.2.14 quota_summary.proto; this is distinct from cached model config quotaInfo. */
 export function parseFreshQuota(value: unknown): HubProof['buckets'] {
   const summary = object(object(value).response);
@@ -103,19 +106,20 @@ export function parseFreshQuota(value: unknown): HubProof['buckets'] {
   const groups = Array.isArray(summary.groups) ? summary.groups : [];
   const legacy = Array.isArray(summary.buckets) ? summary.buckets : [];
   if (groups.length > 100 || legacy.length > 200) throw new LiveError('HUB_QUOTA_RESPONSE_INVALID');
-  const rows: { group: string; value: unknown }[] = [];
+  const rows: { group: string; groupId?: string; value: unknown }[] = [];
   for (const item of groups) {
     const group = object(item);
     if (group.buckets !== undefined && !Array.isArray(group.buckets)) throw new LiveError('HUB_QUOTA_RESPONSE_INVALID');
     for (const bucket of Array.isArray(group.buckets) ? group.buckets : []) {
-      rows.push({ group: quotaLabel(group.displayName), value: bucket });
+      const groupId = quotaIdentifier(group.groupId);
+      rows.push({ group: quotaLabel(group.displayName), ...(groupId ? { groupId } : {}), value: bucket });
       if (rows.length > 200) throw new LiveError('HUB_QUOTA_RESPONSE_INVALID');
     }
   }
   // The top-level buckets field is deprecated. Do not double-count when groups are present.
   if (!rows.length) for (const bucket of legacy) rows.push({ group: '', value: bucket });
   if (!rows.length) throw new LiveError('HUB_QUOTA_EMPTY');
-  return rows.map(({ group, value: row }) => {
+  return rows.map(({ group, groupId, value: row }) => {
     const bucket = object(row), fraction = bucket.remainingFraction, amount = bucket.remainingAmount;
     if (!Object.keys(bucket).length || fraction != null && (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction < 0 || fraction > 1) || fraction != null && amount != null || bucket.disabled !== undefined && typeof bucket.disabled !== 'boolean') throw new LiveError('HUB_QUOTA_RESPONSE_INVALID');
     let remainingAmount: string | undefined;
@@ -127,6 +131,8 @@ export function parseFreshQuota(value: unknown): HubProof['buckets'] {
     const label = quotaLabel(bucket.displayName) || quotaLabel(bucket.bucketId) || tr("liveHub.32ce9f0658");
     const window = quotaLabel(bucket.window);
     return {
+      ...(quotaIdentifier(bucket.bucketId) ? { bucketId: quotaIdentifier(bucket.bucketId)! } : {}),
+      ...(groupId ? { groupId } : {}), ...(window ? { window } : {}),
       label: [group, label, window].filter((part, index, all) => part && all.indexOf(part) === index).join(' · ').slice(0, 120),
       remaining: typeof fraction === 'number' ? fraction : null,
       resetAt: typeof bucket.resetTime === 'string' && Number.isFinite(Date.parse(bucket.resetTime)) ? bucket.resetTime : null,

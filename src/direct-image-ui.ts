@@ -17,6 +17,7 @@ import { IMAGE_LAYOUT_KEY, readImageLayout } from './direct-image-layout';
 import { ImageSessionStore, checkSessionImages, sessionWarning, SESSION_MAX_DRAFTS, type ImageSessionStorage, type ImageSession, type ImageTask, type SavedImage, type ImageOrigin, type SavedDraft } from './image-session-store';
 import { resultImage, checkedResult, prepareImageOrigin, verifyImageOrigin, imageVersions, inspectVersion, imageActionMessage, type ImageVersion } from './image-iteration';
 import { ImageProjectActions } from './image-project-actions';
+import { QuotaPreferences } from './quota-preferences';
 import { ImageQuotaQuery, imageQuotaErrorText } from './image-quota';
 
 type Direct = ReturnType<typeof createDirectImageIntegration>;
@@ -34,7 +35,7 @@ function nativePath(uri: vscode.Uri): string | undefined {
 }
 
 /** Only handles UI state; account binding, HTTP, image validation and saving live outside the webview. */
-export function registerDirectImageUi(context: vscode.ExtensionContext, direct: Direct, outputChanged?: () => void, sessionStorage?: ImageSessionStorage) {
+export function registerDirectImageUi(context: vscode.ExtensionContext, direct: Direct, outputChanged?: () => void, sessionStorage?: ImageSessionStorage, preferences = new QuotaPreferences(context.globalState)) {
   const storageRoot = context.storageUri?.fsPath ?? context.globalStorageUri?.fsPath;
   const session = sessionStorage ?? new ImageSessionStore(storageRoot ? path.join(storageRoot, context.storageUri ? 'image-session' : 'image-session-no-workspace') : undefined);
   let initialized: Promise<void> | undefined, loaded = false, storageNotice = '', saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -134,6 +135,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     iteration: origin ? { taskId: origin.taskId, imageIndex: origin.imageIndex, name: path.basename(origin.file), modelUnavailable } : undefined,
     savedDrafts: savedDrafts.map(s => ({ id: s.id, savedAt: s.savedAt, summary: s.draft.prompt.slice(0, 80) || tr("directImageUi.de5f067d27") })),
     comparison: comparison ? { versions: comparison.versions.map(v => ({ key: v.key, label: localizeMessage(v.label) })), left: compareSide(comparison.left), right: compareSide(comparison.right) } : undefined,
+    imageFavorites: preferences.getState().imageFavorites,
     imageQuota: { ...quota.getState(), error: localizeImageFailure(quota.getState().error ?? '') }, accountRetryPending: !!retryTimer, accountStatus: localizeImageFailure(accountStatus), accountBlocked: accountBlocked || choicesLoading || modelUnavailable, choicesLoading, canCheckAccount: !!selectedSavedId || !officialBlocked,
     recentDiagnostic: formatRecentImageFailure(recent.get()), operationHistory: localizeLines(operationHistory), choices: {
     accounts: choices.accounts.map(x => ({ id: x.id, label: x.label + (x.id === currentId ? tr("directImageUi.d381a6a80a") : ''), active: x.id === currentId, unavailable: x.hostCurrent === false || x.migrationState === 'pending' })), models: choices.models },
@@ -350,6 +352,13 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       stopRetry(true); checkSuspended = false; await refresh(true); return;
     }
     if (msg.type === 'ready') { await refresh(); return; }
+    if (msg.type === 'favoriteModel') {
+      if (!busy && typeof msg.modelId === 'string' && choices.models.some(model => model.id === msg.modelId)) {
+        try { await preferences.favoriteImage(msg.modelId); actionNotice = ''; } catch { actionNotice = tr('quota.preferencesFailed'); }
+        emit(false);
+      }
+      return;
+    }
     if (msg.type === 'draft') { if (!busy) saveDraft(msg); return; }
     if (msg.type === 'cancel') { cancel(); return; }
     if (busy) { emit(); return; }
