@@ -4,6 +4,17 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.6](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.6) — 2026-10-09
+
+修复导出账号包时，确认覆盖后仍无法保存同名文件的问题。
+
+- 先选择目录与文件名，再一次确认导出范围和已有文件替换。
+- 同名导出成功时替换旧账号包；写入或替换失败时保留旧文件。
+- 检测确认后的文件变化与并发导出，并提示重新确认或稍后重试。
+- 中英文提示同步更新，取消导出不会更改账号状态。
+
+[Release notes](docs/RELEASE_0.1.6.md) · [Validation scope](docs/VALIDATION_0.1.6.md)
+
 ## [0.1.5](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.5) — 2026-10-09
 
 导入账号后立即核验服务器身份并查询额度，重复账号可选择覆盖或跳过。

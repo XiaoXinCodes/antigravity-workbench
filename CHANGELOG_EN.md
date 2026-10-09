@@ -4,6 +4,17 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.6](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.6) — 2026-10-09
+
+Fix exporting to an existing account archive after confirming replacement.
+
+- Choose a folder and filename, then confirm the export scope and replacement together.
+- Replace the previous archive on success and retain it if writing or replacement fails.
+- Detect file changes after confirmation and concurrent exports, with prompts to confirm again or retry later.
+- Update Chinese and English messages; canceling export leaves account state unchanged.
+
+[Release notes](docs/RELEASE_0.1.6.md) · [Validation scope](docs/VALIDATION_0.1.6.md)
+
 ## [0.1.5](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.5) — 2026-10-09
 
 Verify server identity and query quota during import, with replace or skip choices for duplicate accounts.

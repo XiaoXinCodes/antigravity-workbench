@@ -227,7 +227,7 @@ async function exportFilesystemFixture(t, options = {}) {
       const stat = await realStat(...args);
       descriptorStats++;
       const mode = descriptorStats >= 3 ? options.finalMode ?? options.mode : options.mode;
-      if (descriptorStats >= 2 && mode !== undefined) stat.mode = (stat.mode & ~0o777) | mode;
+      if (descriptorStats >= 2 && mode !== undefined) stat.mode = typeof stat.mode === 'bigint' ? (stat.mode & ~0o777n) | BigInt(mode) : (stat.mode & ~0o777) | mode;
       return stat;
     };
     handle.writeFile = async data => {

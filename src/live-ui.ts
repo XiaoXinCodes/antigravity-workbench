@@ -20,7 +20,7 @@ import { EnvironmentTokenSlots, resolveOfficialStorageMode, assertWslBackendExec
 import { LiveSwitchService, type HubProof, type Lifecycle, type SavedLogin, type LiveAccount } from './live-switch';
 import { generation, hasOfficialHubApi, queryHub, queryFreshQuota, queryFreshIdentity, querySignedOutHub, loginWithOfficialHub, type OfficialApi } from './live-hub';
 import { normalizeLabel } from './core';
-import { encryptAccountArchive, decryptAccountArchive, readMigrationArchive, writeMigrationArchive } from './account-migration';
+import { encryptAccountArchive, decryptAccountArchive, readMigrationArchive, prepareMigrationExport, writeMigrationArchive } from './account-migration';
 import { assertOfficialEntrypoint, diagnosticBackendVersion, officialEntryPath } from './official-contract';
 import { assertNativeHost, resolveCredentialHostId, hostLabel, sameNativeHost, nativeHostStatus, type NativeHostStatus } from './native-host';
 import { matchesOfficialExtension, pinOfficialExtension } from './official-extension-identity';
@@ -369,6 +369,9 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     MIGRATION_ARCHIVE_TOO_LARGE: tr("liveUi.9ddd2f7c0f"),
     MIGRATION_FILE_CHANGED: tr("liveUi.2277a87341"),
     MIGRATION_EXPORT_FILE_CHANGED: tr("liveUi.exportFileChanged"),
+    MIGRATION_EXPORT_CONFIRM_REQUIRED: tr('liveUi.exportConfirmRequired'),
+    MIGRATION_EXPORT_BUSY: tr('liveUi.exportBusy'),
+    MIGRATION_EXPORT_NAME_INVALID: tr('liveUi.exportNameInvalid'),
     MIGRATION_DUPLICATE_ACCOUNT: tr("liveUi.bd9b09b0b8"),
     MIGRATION_TOKEN_CONFLICT: tr("liveUi.9ef77d2bca"),
   };
@@ -1059,22 +1062,36 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (!selected?.length) return;
     const ids = [...new Set(selected.map(item => item.id))];
     if (ids.some(id => !available.some(account => account.id === id))) throw new LiveError('ACCOUNT_ID_INVALID');
-    const consent = tr("liveUi.cf7a6b1088");
-    if (await vscode.window.showWarningMessage(tr("liveUi.4d84e77bf4", { p0: ids.length }), { modal: true }, consent) !== consent) return;
-    const destination = await vscode.window.showSaveDialog({ title: tr("liveUi.1bee1cdafe", { p0: hostLabel(context, vscode.env.remoteName) }), defaultUri: vscode.Uri.file(path.join(os.homedir(), 'antigravity-accounts.agwenc')), filters: { [tr("liveUi.3a1f17615e")]: ['agwenc'] }, saveLabel: tr("liveUi.d195c2e977") });
-    if (!destination) return;
-    const filename = migrationFilePath(destination);
+    // The save API returns only a URI, with no overwrite-consent proof or option
+    // to suppress the native overwrite prompt. Folder + name gives one explicit
+    // confirmation bound to our target snapshot, including credential consent.
+    const destinations = await vscode.window.showOpenDialog({ title: tr("liveUi.1bee1cdafe", { p0: hostLabel(context, vscode.env.remoteName) }), defaultUri: vscode.Uri.file(os.homedir()), canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: tr('liveUi.exportDirectory') });
+    if (!destinations?.length || disposed) return;
+    const directory = migrationFilePath(destinations[0]!);
+    const nameError = (value: string): string | null => !value || value !== value.trim() || Buffer.byteLength(value, 'utf8') > 240 ||
+      /[\p{Cc}\p{Bidi_Control}\p{Zl}\p{Zp}<>:"/\\|?*]/u.test(value) || !/^.+\.agwenc$/iu.test(value) ||
+      /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/iu.test(value) ? tr('liveUi.exportNameInvalid') : null;
+    const name = await vscode.window.showInputBox({ title: tr('liveUi.exportFilename'), prompt: tr('liveUi.exportNamePrompt', { p0: directory }), value: 'antigravity-accounts.agwenc', ignoreFocusOut: true, validateInput: nameError });
+    if (name === undefined || disposed) return;
+    if (nameError(name)) throw new LiveError('MIGRATION_EXPORT_NAME_INVALID');
+    const filename = path.join(directory, name), target = await prepareMigrationExport(filename);
+    if (disposed) return;
+    const consent = target.exists ? tr('liveUi.exportReplaceAction') : tr("liveUi.cf7a6b1088");
+    const warning = tr("liveUi.4d84e77bf4", { p0: ids.length }) + (target.exists ? '\n\n' + tr('liveUi.exportReplace', { p0: filename }) : '');
+    if (await vscode.window.showWarningMessage(warning, { modal: true }, consent) !== consent || disposed) return;
     const password = await vscode.window.showInputBox({ title: tr("liveUi.c583de5d3c"), prompt: tr("liveUi.bc0c53d7e9"), password: true, ignoreFocusOut: true, validateInput: migrationPasswordError });
-    if (password === undefined) return;
+    if (password === undefined || disposed) return;
     if (migrationPasswordError(password)) throw new LiveError('MIGRATION_PASSWORD_INVALID');
     const repeated = await vscode.window.showInputBox({ title: tr("liveUi.1d8d388f8b"), prompt: tr("liveUi.cf409f8c7c"), password: true, ignoreFocusOut: true, validateInput: value => value === password ? null : tr("liveUi.64eff9d196") });
-    if (repeated === undefined) return;
+    if (repeated === undefined || disposed) return;
     if (repeated !== password) throw new LiveError('MIGRATION_PASSWORD_MISMATCH');
     assertNativeHost(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName);
     const accounts = await service!.exportAccounts(ids);
+    if (disposed) return;
     const encrypted = await encryptAccountArchive(accounts, password);
+    if (disposed) return;
     assertNativeHost(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName);
-    await writeMigrationArchive(filename, encrypted);
+    await writeMigrationArchive(filename, encrypted, target);
     status = tr("liveUi.de5d922641", { p0: accounts.length });
     void vscode.window.showInformationMessage(status);
     return true;

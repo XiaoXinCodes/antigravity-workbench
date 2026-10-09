@@ -5,13 +5,15 @@
 ## 导出账号
 
 1. 回到账号原保存宿主，在 Workbench 点击“导出账号”。
-2. 选择要导出的账号，确认本次导出范围。
-3. 选择新的 `.agwenc` 文件，设置至少 12 个字符的密码并再次输入。
+2. 选择要导出的账号、保存文件夹和 `.agwenc` 文件名。
+3. 确认本次导出范围；已有同名文件时，同一次确认会明确显示要替换的文件。设置至少 12 个字符的密码并再次输入。
 4. 通过可信方式传送加密文件，密码另行传送。
 
-只提供加密导出。已有文件不覆盖；输入时取消不会保存半成品。密码遗失无法恢复。
+只提供加密导出。确认后可替换已有同名文件；取消或新密文写入、校验、提交失败时保留旧文件。文件替换只改变这一个导出文件，与导入同账号时的覆盖选择无关。密码遗失无法恢复。
 
-密码加密后的 `.agwenc` 迁移包可导出到系统允许读写的本地目录，包括 Windows 目录和 WSL 中的 Windows 挂载目录。创建时仍请求私有权限作为默认值，但不检查实际权限模式、不限定文件系统，也不更改目标目录权限或挂载设置；系统拒绝访问时仍会停止。此规则仅用于密文导出，不改变内部凭据、明文或日志的私有存储要求。导出会检查文件和父目录身份、完整写入长度，并从同一文件句柄读回校验密文字节；文件被替换、内容损坏或目录变化时停止，不覆盖或删除别人的替换文件。
+密码加密后的 `.agwenc` 迁移包可导出到系统允许读写的本地目录，包括 Windows 目录和 WSL 中的 Windows 挂载目录。创建时仍请求私有权限作为默认值，但不检查实际权限模式、不限定文件系统，也不更改目标目录权限或挂载设置；系统拒绝访问时仍会停止。此规则仅用于密文导出，不改变内部凭据、明文或日志的私有存储要求。
+
+新文件仍排他创建。替换已有文件时，先完整保存并校验同目录的密文临时文件，再复核确认时的目标内容、文件和父目录身份后提交；不会先删除或截断旧文件。检测到目标变化或并发导出时停止，只清理能确认归属的临时文件和事务标记。进程中断可能留下密文临时文件或未完成的文件事务；不确定的事务不会被强行接管，可先使用新文件名导出。
 
 ## 导入到目标宿主
 
@@ -41,6 +43,10 @@
 [账号管理](INDEPENDENT_ACCOUNTS.md) · [切换与恢复](ACCOUNT_SWITCHING.md) · [运行环境](ENVIRONMENTS.md) · [文档目录](README.md)
 
 ## English
+
+To export, select accounts, a destination folder and an `.agwenc` filename. One confirmation covers the export scope and, if the file exists, explicitly identifies the file to replace. Enter a password of at least 12 characters twice. File replacement is separate from replacing an account during import.
+
+Cancellation or an encryption, staging, verification or commit failure preserves the original file. New destinations use exclusive creation. Replacement writes, syncs and reads back an encrypted temporary file in the same directory before checking the confirmed target and committing by rename; it never first deletes or truncates the original. No POSIX mode or mount policy is imposed, including Windows folders and WSL Windows mounts. Changed targets and concurrent exports stop. Interrupted processes may leave encrypted staging files or an unfinished claim; uncertain claims are not forcibly taken over, and a different filename can be used.
 
 Import checks the selected candidate credentials for server identity and quota while keeping the current official login unchanged. Matching email and host records can be replaced or skipped. If several legacy records share the same email, choose the exact replacement target. Replacement preserves its ID and list position; capacity counts only additions.
 
