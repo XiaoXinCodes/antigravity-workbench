@@ -14,8 +14,7 @@ import type { ImageEndpoint } from './direct-image-protocol';
 import type { ImageModelChoice } from './direct-image-binding';
 import type { WakeExecution } from './wake-engine';
 import { sendWake } from './wake-transport';
-import { generation, hasOfficialHubApi, hubRpc } from './live-hub';
-import { matchesOfficialExtension, pinOfficialExtension } from './official-extension-identity';
+import { passiveCurrentEmail } from './passive-current-identity';
 /** Callable IDs come from this account's models map, never quota bucket labels.
  * Explicit image-only IDs are excluded; unfamiliar text IDs remain visible. */
 export function wakeModelsFromCatalog(value: unknown): ImageModelChoice[] {
@@ -38,17 +37,7 @@ export function createWakeAccounts(context: vscode.ExtensionContext, live: LiveU
   const saved = new SavedImageAccounts({ accounts, withOperation: work => locks.withOperation(async () => {
     // Read an already-running official Hub inside the credential lock. Never
     // activate it, start a backend, or trust a stale active flag for grant rotation.
-    currentEmail = undefined;
-    try {
-      const ext = vscode.extensions.getExtension('google.google-antigravity');
-      if (ext?.isActive && hasOfficialHubApi(ext.exports)) {
-        const descriptor = pinOfficialExtension(ext), api = { port: ext.exports.port, csrfToken: ext.exports.csrfToken }, pinned = generation(api), abort = new AbortController();
-        const auth = await hubRpc(api, 'GetAuthStatus', abort.signal) as { authResult?: { hasValidAuth?: unknown } };
-        const identity = await hubRpc(api, 'GetUserStatus', abort.signal) as { userStatus?: { email?: unknown } };
-        const next = vscode.extensions.getExtension('google.google-antigravity'), email = identity?.userStatus?.email;
-        if (auth?.authResult?.hasValidAuth === true && typeof email === 'string' && /^[^\s@<>]+@[^\s@<>]+$/.test(email) && next?.isActive && matchesOfficialExtension(descriptor, next) && hasOfficialHubApi(next.exports) && generation(next.exports) === pinned) currentEmail = email.toLowerCase();
-      }
-    } catch { /* Without fresh current identity, all saved grant refreshes stay disabled. */ }
+    currentEmail = await passiveCurrentEmail();
     return work();
   }), store: () => savedAccountStore(context, locks, available), project: resolveEndpointImageProject,
     models: readSavedImageModels, parseModels: wakeModelsFromCatalog, refreshAllowed: a => !a.active && !!currentEmail && currentEmail !== a.expectedEmail.toLowerCase() });
@@ -56,12 +45,18 @@ export function createWakeAccounts(context: vscode.ExtensionContext, live: LiveU
   return {
     fingerprint,
     async models(id, endpoint, signal) { if (!available()) throw Error('WAKE_ACCOUNT_UNAVAILABLE'); saved.selectForWindow(id); return saved.choices(id, signal, endpoint, true); },
+    async quota(task, signal) {
+      if (!available() || fingerprint(task.accountId) !== task.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
+      return saved.observeQuota(task.accountId, task.modelId, signal, task.endpoint, async () => {
+        if (!available() || fingerprint(task.accountId) !== task.fingerprint || signal.aborted) throw Error('WAKE_ACCOUNT_CHANGED');
+      });
+    },
     async run(task, signal, beforeSend) {
       if (!available() || fingerprint(task.accountId) !== task.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
       saved.selectForWindow(task.accountId);
       // Requery this account before every actual send; a stale catalog is not a membership proof.
       await saved.choices(task.accountId, signal, task.endpoint, true);
-      const binding = await saved.bind(task.accountId, task.modelId, signal, task.endpoint);
+      const binding = await saved.bind(task.accountId, task.modelId, signal, task.endpoint, task.schedule.mode === 'quota-recovery');
       return locks.withOperation(async () => {
         if (!available() || fingerprint(task.accountId) !== task.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
         return sendWake({ ...binding, endpoint: task.endpoint }, task.outputBudget, signal, async () => {

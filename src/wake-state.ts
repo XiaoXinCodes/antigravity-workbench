@@ -1,6 +1,7 @@
+import { quotaFraction } from './quota-presentation';
 import { validateWakeSchedule, type WakeSchedule } from './wake-schedule';
 import type { ImageEndpoint } from './direct-image-protocol';
-export interface WakeTask { id: string; revision: string; accountId: string; fingerprint: string; modelId: string; endpoint: ImageEndpoint; schedule: WakeSchedule; enabled: boolean; outputBudget: number; nextDue: number }
+export interface WakeTask { id: string; revision: string; accountId: string; fingerprint: string; modelId: string; endpoint: ImageEndpoint; schedule: WakeSchedule; enabled: boolean; outputBudget: number; nextDue: number; recovery?: { fraction: number | null; observedAt: number; valid?: boolean } }
 export type WakeOutcome = 'preparing' | 'sent' | 'succeeded' | 'failed' | 'unknown' | 'cancelled' | 'skipped';
 export interface WakeInstance { id: string; taskId: string; revision: string; accountId: string; modelId: string; due: number; manual: boolean; nonce: string; leaseUntil: number; phase: WakeOutcome; code: string; outputTokens?: number; totalTokens?: number }
 export interface AlertSettings { low: boolean; exhausted: boolean; recovered: boolean; threshold: number }
@@ -17,8 +18,10 @@ const rows = (v: unknown, max: number): unknown[] => Array.isArray(v) && v.lengt
 export function parseWakeTask(value: unknown): WakeTask {
   const v = obj(value), outputBudget = number(v.outputBudget, 64), modelId = text(v.modelId, 128);
   if (!outputBudget || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/.test(modelId) || !['daily', 'production'].includes(String(v.endpoint))) bad();
+  let recovery: WakeTask['recovery'];
+  if (v.recovery !== undefined) { const r = obj(v.recovery), fraction = quotaFraction(r.fraction); if (r.fraction !== null && fraction === null) bad(); recovery = { fraction, observedAt: number(r.observedAt), valid: r.valid === undefined ? true : bool(r.valid) }; }
   return { id: uuid(v.id), revision: uuid(v.revision), accountId: uuid(v.accountId), fingerprint: text(v.fingerprint, 2000), modelId, endpoint: v.endpoint as ImageEndpoint,
-    schedule: validateWakeSchedule(v.schedule as WakeSchedule), enabled: bool(v.enabled), outputBudget, nextDue: number(v.nextDue) };
+    schedule: validateWakeSchedule(v.schedule as WakeSchedule), enabled: bool(v.enabled), outputBudget, nextDue: number(v.nextDue), ...(recovery ? { recovery } : {}) };
 }
 export function parseWakeState(value: unknown): WakeState {
   const v = obj(value), a = obj(v.alerts), threshold = number(a.threshold, 99); if (v.schema !== 1 || !threshold) bad();

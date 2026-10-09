@@ -1,3 +1,4 @@
+import { quotaPercent } from './quota-presentation';
 import { randomBytes } from 'node:crypto';
 import { clientI18n, ht, locale } from './i18n';
 export function quotaHistoryHtml(): string {
@@ -11,7 +12,8 @@ export function quotaHistoryHtml(): string {
   for(const key of ['account-filter','kind-filter','series-filter','days-filter'])if(prior[key])$(key).value=prior[key];
   const send=(type,data={})=>api.postMessage({type,...data});const save=()=>api.setState(Object.fromEntries(['account-filter','kind-filter','series-filter','days-filter'].map(id=>[id,$(id).value])));
   const option=(text,value)=>new Option(text,value),series=r=>JSON.stringify([r.kind,r.key]);
-  const date=t=>new Date(t).toLocaleString(language),reading=r=>r.status==='ready'?((r.fraction*100).toFixed(2)+'%'):tr('history.status.'+r.status),kind=r=>tr(r.kind==='bucket'?'history.bucket':'history.image');
+  const percent=value=>(${quotaPercent.toString()})(value,tr('imageQuota.bafbf5e6f8'));
+  const date=t=>new Date(t).toLocaleString(language),reading=r=>r.status==='ready'?percent(r.fraction):tr('history.status.'+r.status),kind=r=>tr(r.kind==='bucket'?'history.bucket':'history.image');
   const details=r=>r.accountLabel+' · '+kind(r)+' · '+r.label+'\\n'+tr(r.observedAt?'history.observed':'history.failedAt',{p0:date(r.observedAt||r.eventAt)})+' · '+reading(r)+(r.resetAt?'\\n'+tr('quota.reset',{p0:date(r.resetAt)}):'');
   const sync=(id,choices)=>{const value=!restored&&prior[id]?prior[id]:$(id).value;$(id).replaceChildren(...choices.map(([label,key])=>option(label,key)));$(id).value=choices.some(x=>x[1]===value)?value:''};
   function render(){

@@ -7,6 +7,7 @@ import { PrivateState, type LocalState } from './private-state';
 import { initialWakeState, parseWakeState, type WakeState } from './wake-state';
 import { WakeEngine } from './wake-engine';
 import { createWakeAccounts, type WakeAccounts } from './wake-accounts';
+import { quotaPercent } from './quota-presentation';
 import { wakeOccurrences } from './wake-schedule';
 import { automationHtml } from './automation-view';
 import { accountDisplayFingerprint, accountQuotaSnapshot, quotaEntries } from './quota-presentation';
@@ -29,8 +30,8 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
       const rows = live.getAccounts();
       const label = (id: string) => { const a = rows.find(a => a.id === id); return a ? displayAccount(a) : identityAlias(id); };
       await owner.webview.postMessage({ type: 'state', state: { enabled: state.enabled, hidden: identityHidden(), alerts: state.alerts, accounts: rows.filter(a => accounts.fingerprint(a.id)).map(a => ({ id: a.id, label: displayAccount(a) })),
-        tasks: state.tasks.map(t => ({ ...t, fingerprint: undefined, accountLabel: label(t.accountId), nextLabel: format(t.nextDue, t.schedule.timezone), running: state.instances.some(i => i.taskId === t.id && ['sent', 'preparing'].includes(i.phase)) })),
-        instances: state.instances.slice(-100).reverse().map(i => ({ id: i.id, label: `${label(i.accountId)} · ${i.modelId} · ${format(i.due)} · ${tr(i.manual ? 'automation.manual' : 'automation.scheduled')} · ${tr(`automation.phase.${i.phase}`)}${i.code && i.phase !== 'succeeded' ? ` (${i.code})` : ''}\n${tr('automation.usage', { p0: i.outputTokens ?? tr('automation.unknownUsage'), p1: i.totalTokens ?? tr('automation.unknownUsage') })}` })) } });
+        tasks: state.tasks.map(t => ({ ...t, fingerprint: undefined, accountLabel: label(t.accountId), nextLabel: format(t.nextDue, t.schedule.timezone), triggerLabel: tr(`advanced.${t.schedule.mode ?? 'calendar'}`), recoveryLabel: t.recovery ? tr('advanced.baseline', { p0: format(t.recovery.observedAt, t.schedule.timezone), p1: t.recovery.fraction === null ? tr('automation.unknownUsage') : quotaPercent(t.recovery.fraction) }) + (t.recovery.valid === false ? ' · ' + tr('advanced.baselineInvalid') : '') : '', running: state.instances.some(i => i.taskId === t.id && ['sent', 'preparing'].includes(i.phase)) })),
+        instances: state.instances.slice(-100).reverse().map(i => ({ id: i.id, label: `${label(i.accountId)} · ${i.modelId} · ${format(i.due)} · ${tr(i.manual ? 'automation.manual' : 'automation.scheduled')} · ${tr(`automation.phase.${i.phase}`)}${i.code && i.phase !== 'succeeded' ? ` (${['WAKE_QUOTA_WAITING','WAKE_QUOTA_UNAVAILABLE','WAKE_QUOTA_NOT_FULL','WAKE_QUOTA_STALE'].includes(i.code) ? tr(`advanced.${i.code as 'WAKE_QUOTA_WAITING'}`) : i.code})` : ''}\n${tr('automation.usage', { p0: i.outputTokens ?? tr('automation.unknownUsage'), p1: i.totalTokens ?? tr('automation.unknownUsage') })}` })) } });
     } catch (e) { if (owner === panel) await owner.webview.postMessage({ type: 'notice', text: tr('automation.failed', { p0: safeCode(e) }) }); }
   };
   const engine = new WakeEngine(store, accounts, () => { void emit(); }, now);
@@ -65,7 +66,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         if (m.id !== '' && (!existing || existing.revision !== m.revision)) throw Error('WAKE_TASK_CHANGED');
         await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 });
         await post({ type: 'notice', text: tr('automation.paused') });
-      } else if (type === 'preview') { await post({ type: 'preview', labels: wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5).map(t => format(t, (m.schedule as { timezone: string }).timezone)) }); }
+      } else if (type === 'preview') { await post({ type: 'preview', labels: [...((m.schedule as { mode?: string }).mode === 'quota-recovery' ? [tr('advanced.previewChecks')] : []), ...wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5).map(t => format(t, (m.schedule as { timezone: string }).timezone))] }); }
       else if (type === 'enable') { if (typeof m.enabled !== 'boolean') return; if (!m.enabled || await consent()) { if (panel === owner && !disposed) await engine.enable(m.enabled); } }
       else if (['pause', 'resume', 'test', 'cancel', 'remove'].includes(type)) {
         const before = (await store.read()).tasks.find(t => t.id === m.id);

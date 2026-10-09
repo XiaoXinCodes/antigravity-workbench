@@ -149,3 +149,15 @@ test('image quota always bypasses catalog cache, binds selected model, and prese
  assert.equal(first.queriedAt,new Date(NOW).toISOString());assert.doesNotMatch(JSON.stringify(first),/synthetic-access|project-/);
  await assert.rejects(f.engine.quota(B,ma,f.signal,'daily'),/MODEL_UNVERIFIED/);
 });
+
+test('full recovery binding rechecks exact chosen model quota and rejects 99.6%, unknown or stale before any send',async()=>{
+ const f=fixture();let remaining=.996;f.deps.models=async()=>({imageGenerationModelIds:[mb],models:{[mb]:{quotaInfo:{remainingFraction:remaining}},other:{quotaInfo:{remainingFraction:1}}}});f.engine.selectForWindow(B);
+ await f.engine.choices(B,f.signal,'daily',true);await assert.rejects(f.engine.bind(B,mb,f.signal,'daily',true),/NOT_FULL/);remaining=null;await f.engine.choices(B,f.signal,'daily',true);await assert.rejects(f.engine.bind(B,mb,f.signal,'daily',true),/NOT_FULL/);
+ remaining=1;await f.engine.choices(B,f.signal,'daily',true);assert.equal((await f.engine.bind(B,mb,f.signal,'daily',true)).accountId,B);f.setNow(NOW+60000);await assert.rejects(f.engine.bind(B,mb,f.signal,'daily',true),/NOT_FULL/);assert.equal(f.exchanges,0);
+});
+
+test('explicit quota observation does not select an image account; refresh guard protects current saved grant while other grants reuse locks',async()=>{
+ const f=fixture({expired:true});f.deps.refreshAllowed=a=>!a.active;const engine=new SavedImageAccounts(f.deps);
+ await assert.rejects(engine.observeQuota(A,ma,f.signal,'daily',async()=>{}),/REAUTH_REQUIRED/);assert.equal(f.exchanges,0);assert.equal(engine.isSelected(A),false);
+ const snapshot=await engine.observeQuota(B,mb,f.signal,'daily',async()=>{});assert.equal(snapshot.modelId,mb);assert.equal(snapshot.remainingFraction,null);assert.equal(f.exchanges,1);assert.equal(engine.isSelected(B),false);assert.equal(f.vault.has(QUOTA_PENDING_PREFIX+B),false);
+});

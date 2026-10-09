@@ -1,4 +1,5 @@
 import { accountDisplayFingerprint } from './quota-presentation';
+import { passiveCurrentEmail } from './passive-current-identity';
 import { savedAccountStore } from './saved-account-store';
 import { t as tr } from './i18n';
 import { diagnoseImageCatalog } from './image-catalog-diagnostic';
@@ -49,6 +50,12 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
     project: resolveEndpointImageProject, models: readSavedImageModels, parseModels: imageModelsFromCatalog,
     store: () => savedAccountStore(context, locks(), () => status().available),
   });
+  let observationCurrentEmail: string | undefined;
+  const observedSaved = new SavedImageAccounts({ accounts: summaries, withOperation: work => locks().withOperation(async () => {
+    observationCurrentEmail = await passiveCurrentEmail(); return work();
+  }), project: resolveEndpointImageProject, models: readSavedImageModels, parseModels: imageModelsFromCatalog,
+    store: () => savedAccountStore(context, locks(), () => status().available),
+    refreshAllowed: a => !a.active && !!observationCurrentEmail && observationCurrentEmail !== a.expectedEmail.toLowerCase() });
   const assertAccountsReady = () => { if (runtime.accountsReady?.() === false) throw Error('IMAGE_ACCOUNT_INITIALIZING'); };
   const session = () => {
     assertAccountsReady();
@@ -179,7 +186,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
     };
     await assertCurrent();
-    const result = account.active ? await readImageQuota(id, model, signal) : await saved.observeQuota(id, model, signal, endpoint, assertCurrent);
+    const result = account.active ? await readImageQuota(id, model, signal) : await observedSaved.observeQuota(id, model, signal, endpoint, assertCurrent);
     await assertCurrent(); return result;
   };
   const check = async (signal: AbortSignal, allowProjectLookup: boolean, expectedEndpoint?: ImageEndpoint) => {

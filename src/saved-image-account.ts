@@ -146,9 +146,10 @@ export class SavedImageAccounts {
   async diagnoseCatalog(id: string, signal: AbortSignal, endpoint: ImageEndpoint, assertCurrent: () => Promise<void>): Promise<CatalogSummary> {
     return (await this.prepare(id, signal, endpoint, true, { assertCurrent })).catalog;
   }
-  async bind(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<BoundImageAccount> {
+  async bind(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint, requireFull = false): Promise<BoundImageAccount> {
     const prepared = await this.prepare(id, signal, endpoint), model = prepared.models.find(x => x.id === modelId);
     if (!model) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+    if (requireFull && (prepared.quota.find(row => row.modelId === modelId)?.remainingFraction !== 1 || this.now() - Date.parse(prepared.queriedAt) >= 60_000)) throw Error('WAKE_QUOTA_NOT_FULL');
     return Object.freeze({ token: prepared.token, projectId: prepared.projectId, modelId: model.id, accountId: id,
       endpoint, projectSource: 'loadCodeAssist' as const, modelSource: 'saved-account' as const,
       ...(model.modelEnum ? { modelEnum: model.modelEnum } : {}), verify: prepared.verify });
