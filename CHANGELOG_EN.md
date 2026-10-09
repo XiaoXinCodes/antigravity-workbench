@@ -4,6 +4,17 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.7](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.7) — 2026-10-09
+
+Improve background handling for account operations and fix account and image interactions.
+
+- Switch, add and restore accounts with one confirmation covering this window's background processes and verified leftovers. Show recovery details for conflicts and a clear error when stopping takes too long.
+- Fix local-host detection, login state after quota refresh, removing foreign-host copies while signed out, and concurrent account snapshot saves on Windows.
+- Preserve image drafts during rapid typing, clarify missing-input and stopped-request messages, and update existing error text when the language changes.
+- Clarify task conflicts during import and export, and wait for confirmed Workbench image tasks to release their resources.
+
+[Release notes](docs/RELEASE_0.1.7.md) · [Validation scope](docs/VALIDATION_0.1.7.md)
+
 ## [0.1.6](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.6) — 2026-10-09
 
 Fix exporting to an existing account archive after confirming replacement.

@@ -6,6 +6,7 @@ import * as fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { DebugLogStore, sanitizeDebugStorageError } from './debug-log-store';
 import { DebugRecorder, installDebugRecorder, type DebugStore } from './debug-events';
+import { isNativeStorageUri } from './native-host';
 
 export interface DebugUiState { enabled: boolean; storageUnavailable: boolean; available: boolean; directory?: string; canOpen: boolean; host: 'local' | 'wsl' | 'remote' | 'web'; previewReady?: boolean; catalogBusy?: boolean; catalogStopping?: boolean; catalogReport?: string }
 type Context = Pick<vscode.ExtensionContext, 'extension' | 'globalStorageUri'>;
@@ -16,7 +17,7 @@ function nativePath(value: unknown, platform: NodeJS.Platform): value is string 
 /** Current extension-host storage only; never derive a path on the UI's other host. */
 export function resolveDebugLocation(context: Context, runtime: DebugRuntime): Omit<DebugUiState, 'enabled' | 'storageUnavailable'> {
   const host = !runtime.desktop ? 'web' : context.extension.extensionKind === 2 && runtime.remoteName ? runtime.remoteName === 'wsl' ? 'wsl' : 'remote' : 'local';
-  const available = runtime.desktop && ['win32', 'darwin', 'linux'].includes(runtime.platform) && [1, 2].includes(context.extension.extensionKind) && context.globalStorageUri.scheme === 'file' && context.globalStorageUri.authority === '' && nativePath(context.globalStorageUri.fsPath, runtime.platform);
+  const available = runtime.desktop && ['win32', 'darwin', 'linux'].includes(runtime.platform) && [1, 2].includes(context.extension.extensionKind) && isNativeStorageUri(context.globalStorageUri, context.extension.extensionKind, runtime.remoteName, runtime.platform) && nativePath(context.globalStorageUri.fsPath, runtime.platform);
   return { available, host, canOpen: available && (context.extension.extensionKind === 1 || !runtime.remoteName), ...(available ? { directory: (runtime.platform === 'win32' ? path.win32 : path.posix).join(context.globalStorageUri.fsPath, 'debug-logs') } : {}) };
 }
 const stages = () => ({

@@ -28,6 +28,44 @@ def home(pid):
         return values[0].decode('utf-8', errors='strict') if len(values) == 1 else None
     except (OSError, UnicodeError): return None
 
+def scope(parent, birth, owner):
+    # An exact advertised capability identifies the current Hub separately.
+    # For older Hubs, only a stable same-UID ancestry back to this host or an
+    # actual init-adopted process authorizes an automatic stop. A live foreign
+    # parent is never evidence that its window has finished its tasks.
+    if parent == 1: return 'detached'
+    try:
+        owner_stat = stat(owner)
+        if os.stat('/proc/%d' % owner).st_uid != os.getuid(): return 'unknown'
+    except (OSError, ValueError): return 'unknown'
+    chain, visited, child_birth = [], set(), int(birth)
+    cursor = parent
+    for _ in range(64):
+        if cursor < 1 or cursor in visited: return 'unknown'
+        visited.add(cursor)
+        try:
+            value = stat(cursor)
+            uid = os.stat('/proc/%d' % cursor).st_uid
+        except (OSError, ValueError): return 'unknown'
+        if int(value[1]) > child_birth or uid != os.getuid(): return 'unknown'
+        chain.append((cursor, value, uid))
+        if cursor == owner:
+            for pid, expected, expected_uid in chain:
+                if stat(pid) != expected or os.stat('/proc/%d' % pid).st_uid != expected_uid: raise ValueError()
+            return 'current-window'
+        if cursor == owner_stat[0]:
+            if stat(owner) != owner_stat: raise ValueError()
+            return 'other-window'
+        if cursor == 1: return 'other-window'
+        child_birth, cursor = int(value[1]), value[0]
+    return 'unknown'
+
+def eligible(row):
+    return row['kind'] == 'unowned-hub' and row['scope'] in ('current-window', 'detached')
+
+def match(current, target):
+    if any(current[k] != target[k] for k in ('pid', 'parentPid', 'startTicks', 'bootId', 'commandHash', 'scope')) or not eligible(current): raise ValueError()
+
 def inspect(pid, request, boot_id):
     base = '/proc/%d' % pid
     before = stat(pid)
@@ -44,7 +82,8 @@ def inspect(pid, request, boot_id):
     process_home = home(pid) if official else None
     official = official and process_home == request.get('home') and process_home is not None
     advertised = official and port == str(request.get('port')) and csrf == request.get('csrfToken')
-    current = advertised and before[0] == request['ownerPid']
+    current = advertised
+    ownership = 'current-window' if current else scope(before[0], before[1], request['ownerPid']) if official else 'unknown'
     parent_state = 'unknown'
     try:
         stat(before[0]); parent_state = 'alive'
@@ -59,14 +98,14 @@ def inspect(pid, request, boot_id):
     except (OSError, ValueError, StopIteration, OverflowError): pass
     with open(base + '/cmdline', 'rb') as f: after = f.read(131073)
     if before != stat(pid) or uid != os.stat(base).st_uid or executable != os.readlink(base + '/exe') or raw != after or boot_id != boot() or process_home is not None and home(pid) != process_home: raise ValueError()
-    proof_hash = hashlib.sha256(raw + b'\0HOME=' + (process_home or '').encode('utf-8')).hexdigest()
-    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official and not advertised else 'unverified', 'parentState': parent_state, 'startedAt': started}
+    proof_hash = hashlib.sha256(raw + b'\0HOME=' + (process_home or '').encode('utf-8') + b'\0PPID=' + str(before[0]).encode()).hexdigest()
+    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official else 'unverified', 'scope': ownership, 'parentState': parent_state, 'startedAt': started}
 
 def bind(target, request):
     fd = os.pidfd_open(target['pid'], 0)
     try:
         current = inspect(target['pid'], request, boot())
-        if any(current[k] != target[k] for k in ('pid', 'startTicks', 'bootId', 'commandHash')) or current['kind'] != 'unowned-hub': raise ValueError()
+        match(current, target)
         if select.select([fd], [], [], 0)[0]: raise ProcessLookupError()
         return fd
     except BaseException:
@@ -99,7 +138,7 @@ def run(request):
                     if f.read(128).strip() != 'agy': continue
                 row = inspect(int(name), request, boot_id)
                 row['canEnd'] = False
-                if supported and row['kind'] == 'unowned-hub':
+                if supported and eligible(row):
                     try:
                         fd = bind(row, request); os.close(fd); row['canEnd'] = True
                     except (OSError, ValueError): pass
@@ -113,17 +152,17 @@ def run(request):
         # EOF/cancel from the owning extension prevents either escalation stage.
         authorize('term')
         current = inspect(target['pid'], request, boot())
-        if any(current[k] != target[k] for k in ('pid', 'startTicks', 'bootId', 'commandHash')) or current['kind'] != 'unowned-hub': raise ValueError()
+        match(current, target)
         if select.select([sys.stdin], [], [], 0)[0]: raise InterruptedError()
         signal.pidfd_send_signal(fd, signal.SIGTERM)
         if wait_exit(fd, 4): return {'result': 'exited'}
         # The one modal explicitly authorizes this second stage too. Never replace
         # an expired pidfd, adopt a new birth, or send to a numeric PID here.
         current = inspect(target['pid'], request, boot())
-        if any(current[k] != target[k] for k in ('pid', 'startTicks', 'bootId', 'commandHash')) or current['kind'] != 'unowned-hub': raise ValueError()
+        match(current, target)
         authorize('force')
         current = inspect(target['pid'], request, boot())
-        if any(current[k] != target[k] for k in ('pid', 'startTicks', 'bootId', 'commandHash')) or current['kind'] != 'unowned-hub': raise ValueError()
+        match(current, target)
         if select.select([sys.stdin], [], [], 0)[0]: raise InterruptedError()
         signal.pidfd_send_signal(fd, signal.SIGKILL)
         if not wait_exit(fd, 4): return {'code': 'OFFICIAL_BACKEND_STOP_TIMEOUT'}

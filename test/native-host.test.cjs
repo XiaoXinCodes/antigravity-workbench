@@ -1,11 +1,42 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { credentialHostId, resolveCredentialHostId } = require('../out/native-host');
+const { credentialHostId, resolveCredentialHostId, nativeHostStatus } = require('../out/native-host');
 const { LiveError } = require('../out/live-storage');
 const context = kind => ({ extension: { extensionKind: kind }, extensionUri: {scheme:'file',authority:''}, globalStorageUri:{scheme:'file',authority:''} });
 const machineA = '1'.repeat(32), machineB = '2'.repeat(32);
 const identity = { platform:'linux', hostname:()=> 'same-Windows-host', homedir:()=> '/home/same-user' };
 const unavailable = async () => { throw Error('synthetic machine-id unavailable'); };
+
+test('VS Code native userdata storage keeps local desktop account operations available', () => {
+  const ctx = { ...context(1), globalStorageUri: { scheme: 'vscode-userdata', authority: '', fsPath: '/synthetic/profile/User/globalStorage/workbench' } };
+  assert.equal(nativeHostStatus(ctx, true, true, undefined, 'linux').available, true);
+  assert.equal(nativeHostStatus(ctx, true, true, 'wsl', 'linux').available, true, 'UI extension still runs on the local host in a remote window');
+  const windows = { ...ctx, globalStorageUri: { ...ctx.globalStorageUri, fsPath: 'C:\\synthetic\\profile\\storage' } };
+  assert.equal(nativeHostStatus(windows, true, true, 'wsl', 'win32').available, true);
+  assert.equal(nativeHostStatus({ ...ctx, extension: { extensionKind: 2 } }, true, true, undefined, 'linux').available, true);
+});
+
+test('userdata storage does not bypass trust, desktop, native path or verified host boundaries', () => {
+  const ctx = { ...context(1), globalStorageUri: { scheme: 'vscode-userdata', authority: '', fsPath: '/synthetic/storage' } };
+  assert.equal(nativeHostStatus(ctx, false, true, undefined, 'linux').code, 'WORKSPACE_TRUST_REQUIRED');
+  assert.equal(nativeHostStatus(ctx, true, false, undefined, 'linux').code, 'NATIVE_DESKTOP_REQUIRED');
+  for (const uri of [
+    { ...ctx.globalStorageUri, authority: 'other-host' },
+    { ...ctx.globalStorageUri, scheme: 'vscode-remote' },
+    { ...ctx.globalStorageUri, fsPath: 'relative' },
+    { ...ctx.globalStorageUri, fsPath: '/C:/foreign' },
+    { ...ctx.globalStorageUri, fsPath: 'C:\\foreign' },
+    { ...ctx.globalStorageUri, fsPath: '/synthetic\nforeign' },
+    { ...ctx.globalStorageUri, fsPath: undefined },
+  ]) assert.equal(nativeHostStatus({ ...ctx, globalStorageUri: uri }, true, true, undefined, 'linux').available, false);
+  for (const remoteName of ['ssh-remote', 'wsl']) {
+    assert.equal(nativeHostStatus({ ...ctx, extension: { extensionKind: 2 } }, true, true, remoteName, 'linux').available, false, 'virtual user storage is not proven native on a remote workspace host');
+  }
+  const wsl = { ...context(2), globalStorageUri: { scheme: 'file', authority: '', fsPath: '/synthetic/storage' } };
+  assert.equal(nativeHostStatus(wsl, true, true, 'wsl', 'linux').available, true, 'verified WSL file storage remains supported');
+  assert.equal(nativeHostStatus(wsl, true, true, 'ssh-remote', 'linux').code, 'REMOTE_HOST_UNVERIFIED');
+  assert.equal(nativeHostStatus({ ...ctx, extensionUri: { scheme: 'vscode-userdata', authority: '' } }, true, true, undefined, 'linux').available, false);
+});
 
 test('WSL distro names isolate equal hostname and HOME even with cloned machine IDs', async () => {
   const options = { ...identity, readMachineId:async()=>machineA };

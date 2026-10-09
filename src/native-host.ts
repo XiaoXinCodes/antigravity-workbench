@@ -1,14 +1,26 @@
+/* eslint-disable no-control-regex -- Native storage paths must not contain controls. */
 import { t as tr } from './i18n';
 import type * as vscode from 'vscode';
 import * as os from 'node:os';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { LiveError } from './live-storage';
 
 export interface NativeHostStatus { available: boolean; message: string; code?: string }
 type HostContext = Pick<vscode.ExtensionContext, 'extension' | 'extensionUri' | 'globalStorageUri'>;
 export function isLocalFileUri(uri: Pick<vscode.Uri, 'scheme' | 'authority'> | undefined): boolean {
   return uri?.scheme === 'file' && uri.authority === '';
+}
+/** VS Code may expose local profile storage as vscode-userdata, backed by this native host's fsPath. */
+export function isNativeStorageUri(uri: Pick<vscode.Uri, 'scheme' | 'authority' | 'fsPath'> | undefined, extensionKind: vscode.ExtensionKind, remoteName?: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (isLocalFileUri(uri)) return true;
+  // A remote workspace's virtual user storage belongs to the UI host, not this process.
+  if (uri?.scheme !== 'vscode-userdata' || uri.authority !== '' || ![1, 2].includes(extensionKind) || extensionKind === 2 && !!remoteName) return false;
+  const value = uri.fsPath;
+  if (typeof value !== 'string' || value.length > 8192 || /[\x00-\x1f\x7f]/u.test(value)) return false;
+  if (platform === 'win32') return /^[A-Za-z]:[\\/]/u.test(value) && path.win32.isAbsolute(value);
+  return (platform === 'linux' || platform === 'darwin') && path.posix.isAbsolute(value) && !value.includes('\\') && !/^\/[A-Za-z]:/u.test(value);
 }
 export function hostLabel(context: Pick<HostContext, 'extension'>, remoteName?: string, platform: NodeJS.Platform = process.platform): string {
   const system = platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'macOS' : 'Linux';
@@ -18,7 +30,7 @@ export function hostLabel(context: Pick<HostContext, 'extension'>, remoteName?: 
 export function nativeHostStatus(context: HostContext, trusted: boolean, desktop: boolean, remoteName?: string, platform: NodeJS.Platform = process.platform): NativeHostStatus {
   if (!trusted) return { available: false, code: 'WORKSPACE_TRUST_REQUIRED', message: tr("nativeHost.be87b31a86") };
   if (!desktop) return { available: false, code: 'NATIVE_DESKTOP_REQUIRED', message: tr("nativeHost.dbb1e426cf") };
-  if (![1, 2].includes(context.extension?.extensionKind) || !isLocalFileUri(context.extensionUri) || !isLocalFileUri(context.globalStorageUri)) {
+  if (![1, 2].includes(context.extension?.extensionKind) || !isLocalFileUri(context.extensionUri) || !isNativeStorageUri(context.globalStorageUri, context.extension.extensionKind, remoteName, platform)) {
     return { available: false, code: 'NATIVE_HOST_PATH_REQUIRED', message: tr("nativeHost.baeee23d2a") };
   }
   if (typeof process === 'undefined' || process.release?.name !== 'node' || !['win32', 'darwin', 'linux'].includes(platform)) {

@@ -1,4 +1,4 @@
-import { t as tr } from './i18n';
+import { localizeMessage, t as tr } from './i18n';
 import { validImageRequestId } from './direct-image-protocol';
 import { inspectImageError, safeImageReason, MAX_DIAGNOSTIC_DELAY_SECONDS, type ImageErrorEvidence } from './image-error-evidence';
 import { formatImageMessageSummary } from './image-error-message';
@@ -82,6 +82,11 @@ export function formatImageFailure(error: unknown): string {
   if (!(error instanceof Error) || !/^IMAGE_[A-Z_]+$/u.test(error.message)) return 'IMAGE_DIRECT_REQUEST_FAILED';
   const fields = error as Partial<ImageHttpFailure>;
   const hint: Record<string, string> = {
+    IMAGE_PROMPT_REQUIRED: tr("directImageHttpError.promptRequired"),
+    IMAGE_LOCAL_DIRECTORY_REQUIRED: tr("directImageHttpError.outputRequired"),
+    IMAGE_DIRECT_SCOPE_INVALID: tr("directImageHttpError.scopeInvalid"),
+    IMAGE_DIRECT_OUTCOME_UNKNOWN: tr("directImageHttpError.outcomeUnknown"),
+    IMAGE_CANCELLED: tr("directImageHttpError.cancelled"),
     IMAGE_ACCOUNT_CHECK_TIMEOUT: tr("directImageHttpError.3cacc5a28e"),
     IMAGE_ACCOUNT_CHECK_CANCELLED: tr("directImageHttpError.856e89d10e"),
     IMAGE_SAVED_SELECTION_REQUIRED: tr("directImageHttpError.4d400659b5"),
@@ -131,4 +136,13 @@ export function formatImageFailure(error: unknown): string {
   if (fields.projectSource === 'saved-token') parts.push(tr("directImageHttpError.1b302100e5"));
   if (fields.projectSource === 'loadCodeAssist') parts.push(tr("directImageHttpError.3722e894d5"));
   return parts.join(' · ');
+}
+
+/** Failure strings contain a stable code plus separately generated fixed fields.
+ * Relocalize only that representation; prompts, account labels and paths never
+ * pass through this helper. It also accepts an enclosing generated batch status. */
+export function localizeImageFailure(value: string): string {
+  const translated = localizeMessage(value);
+  if (!/\bIMAGE_[A-Z_]+\b/u.test(value)) return translated;
+  return translated.split(' · ').map(localizeMessage).join(' · ');
 }

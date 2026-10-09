@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { OfficialProcessRecovery, runProcessHelper } = require('../out/official-process-recovery');
 const { LiveError } = require('../out/live-storage');
 const api = { port: 32123, csrfToken: 'synthetic-capability-not-output' };
-const row = (pid = 710, kind = 'unowned-hub', extra = {}) => ({ pid, parentPid: 701, startTicks: '123456', bootId: '11111111-1111-4111-8111-111111111111', commandHash: 'a'.repeat(64), kind, parentState: 'alive', startedAt: '2026-10-08T11:00:00+00:00', canEnd: kind === 'unowned-hub', ...extra });
+const row = (pid = 710, kind = 'unowned-hub', extra = {}) => ({ pid, parentPid: 701, startTicks: '123456', bootId: '11111111-1111-4111-8111-111111111111', commandHash: 'a'.repeat(64), kind, scope: kind === 'unverified' ? 'unknown' : 'current-window', parentState: 'alive', startedAt: '2026-10-08T11:00:00+00:00', canEnd: kind === 'unowned-hub', ...extra });
 function fixture(extra = {}) {
   let current = { ...api }, rows = [row(709, 'current-hub'), row()], response = { result: 'exited' };
   const calls = [];
@@ -11,6 +11,64 @@ function fixture(extra = {}) {
     helper: async request => { calls.push(request); return request.operation === 'scan' ? { supported: true, processes: rows } : response; }, ...extra });
   return { recovery, calls, setApi: value => { current = value; }, setRows: value => { rows = value; }, setResponse: value => { response = value; } };
 }
+test('verified scan reports the current Hub separately without exposing its capability', async () => {
+  const state = await fixture().recovery.scan();
+  assert.equal(state.current.pid, 709); assert.equal(state.currentCount, 1); assert.equal(state.totalCount, 2);
+  assert.equal(state.processes[0].scope, 'current-window');
+  assert.doesNotMatch(JSON.stringify(state), /csrf|synthetic-capability|commandHash|bootId|startTicks/);
+});
+test('host-only current identity detects same-capability PID birth replacement and clears on invalidation', async () => {
+  const f = fixture({ platform: 'win32' });
+  f.setRows([windowsRow(709, 'current-hub')]); await f.recovery.scan();
+  const pinned = f.recovery.currentProcessIdentity(); assert.deepEqual(pinned, { pid: 709, startTicks: '123456' });
+  const copy = f.recovery.currentProcessIdentity(); copy.startTicks = 'mutated';
+  assert.deepEqual(f.recovery.currentProcessIdentity(), pinned);
+  f.setRows([windowsRow(709, 'current-hub', { startTicks: '123457' })]);
+  await f.recovery.scan(); assert.notDeepEqual(f.recovery.currentProcessIdentity(), pinned);
+  f.setApi({ ...api, port: 32124 }); assert.throws(() => f.recovery.currentProcessIdentity(), /HUB_CHANGED/);
+  f.recovery.invalidate(); assert.equal(f.recovery.currentProcessIdentity(), undefined);
+});
+test('an active other-window Hub is a blocker and never an automatic termination target', async () => {
+  const f = fixture(); f.setRows([row(709, 'current-hub'), row(710, 'unowned-hub', { parentPid: 702, scope: 'other-window', canEnd: true })]);
+  const state = await f.recovery.scan(); assert.equal(state.phase, 'blocked'); assert.equal(state.processes[0].canEnd, false);
+  await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
+  assert.equal(f.calls.filter(call => call.operation === 'end').length, 0);
+});
+test('one confirmed batch consumes only the selected scan and ends each original proof in order', async () => {
+  const f = fixture(); f.setRows([row(709, 'current-hub'), row(710), row(711)]);
+  const state = await f.recovery.scan(), ids = state.processes.map(p => p.id);
+  assert.deepEqual(await f.recovery.endMany(ids, new AbortController().signal), ids.map(id => ({ id, result: 'exited' })));
+  assert.deepEqual(f.calls.filter(call => call.operation === 'end').map(call => call.target.pid), [710, 711]);
+  await assert.rejects(f.recovery.endMany(ids, new AbortController().signal), /SELECTION_STALE/);
+});
+test('a confirmed batch rejects duplicate, fabricated and superseded IDs before any signal', async () => {
+  for (const reason of ['duplicate', 'fabricated', 'rescan']) {
+    const f = fixture(); f.setRows([row(709, 'current-hub'), row(710), row(711)]);
+    const ids = (await f.recovery.scan()).processes.map(p => p.id);
+    if (reason === 'duplicate') ids[1] = ids[0];
+    if (reason === 'fabricated') ids[1] = 'unconfirmed-pid';
+    if (reason === 'rescan') await f.recovery.scan();
+    await assert.rejects(f.recovery.endMany(ids, new AbortController().signal), /SELECTION_STALE/);
+    assert.equal(f.calls.filter(call => call.operation === 'end').length, 0);
+  }
+});
+test('batch failure, cancellation, invalidation or Hub adoption never starts a later target', async () => {
+  for (const reason of ['failure', 'cancel', 'dispose', 'hub']) {
+    let current = api, started = [], f; const controller = new AbortController();
+    f = fixture({ api: () => current, helper: async (request, _signal, authorize) => {
+      if (request.operation === 'scan') return { supported: true, processes: [row(709, 'current-hub'), row(710), row(711)] };
+      authorize(); started.push(request.target.pid);
+      if (reason === 'cancel') controller.abort();
+      if (reason === 'dispose') f.recovery.invalidate();
+      if (reason === 'hub') current = { ...api, port: 32124 };
+      return reason === 'failure' ? { code: 'OFFICIAL_PROCESS_END_DENIED' } : { result: 'exited' };
+    } });
+    const ids = (await f.recovery.scan()).processes.map(p => p.id);
+    await assert.rejects(f.recovery.endMany(ids, controller.signal), /END_DENIED|CANCELLED|SELECTION_STALE|HUB_CHANGED/);
+    assert.deepEqual(started, [710]);
+    await assert.rejects(f.recovery.end(ids[1], new AbortController().signal), /SELECTION_STALE/);
+  }
+});
 test('process list exposes proof-backed details and one-use opaque selection, never capabilities or proof hashes', async () => {
   const f = fixture(), state = await f.recovery.scan();
   assert.equal(state.phase, 'blocked'); assert.equal(state.processes.length, 1);
@@ -68,7 +126,7 @@ for (const platform of ['darwin']) test(`${platform} lists actual process metada
   const state = await f.recovery.scan(); assert.equal(state.processes.length, 2); assert.deepEqual(state.processes.map(p => p.pid), [709, 710]); assert.equal(state.limitation, 'platform'); assert.ok(state.processes.every(p => !p.canEnd)); assert.equal(calls.length, 1);
 });
 test('malformed helper output, duplicate PIDs and duplicate current hubs fail closed', async () => {
-  for (const rows of [[row(), row()], [row(709, 'current-hub'), row(710, 'current-hub')], [row(710, 'unowned-hub', { bootId: 'wrong' })]]) {
+  for (const rows of [[row(), row()], [row(709, 'current-hub'), row(710, 'current-hub')], [row(709, 'current-hub', { scope: 'other-window' })], [row(710, 'unowned-hub', { bootId: 'wrong' })]]) {
     const f = fixture(); f.setRows(rows); await assert.rejects(f.recovery.scan(), /PROCESS_CHECK_FAILED/);
   }
   const f = fixture({ helper: async () => { throw new LiveError('PROCESS_CHECK_FAILED'); } }); await assert.rejects(f.recovery.scan(), /PROCESS_CHECK_FAILED/);

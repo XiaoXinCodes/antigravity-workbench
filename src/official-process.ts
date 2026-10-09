@@ -52,7 +52,10 @@ export async function inspectWslProcesses(executable: string, api?: OfficialApi,
         const officialHub = uid === process.getuid() && realExecutable === executable && args.filter(arg => arg.split('=')[0] === '--hub').length === 1 && args.includes('--hub') &&
           single(args, '--app_data_dir', 'antigravity') && hasOfficialHubApi(advertised) && single(args, '--hub-port', String(advertised.port));
         const matches = officialHub && hasOfficialHubApi(api) && single(args, '--hub-port', String(api.port)) && single(args, '--csrf_token', api.csrfToken);
-        const kind = matches && after.parentPid === ownerPid ? 'current-hub' : officialHub ? 'unowned-hub' : 'unverified';
+        // The exports belong to this window's official extension instance. Its
+        // exact local capability is stronger ownership evidence than a direct
+        // PPID: the official launcher may insert an intermediate process.
+        const kind = matches ? 'current-hub' : officialHub ? 'unowned-hub' : 'unverified';
         processes.push({ pid, parentPid: after.parentPid, startTicks: after.startTicks, kind, taskState: 'unknown' });
       } catch (error) {
         // An exit while enumerating is benign; inaccessible/changed proof is not.

@@ -36,11 +36,11 @@ test('previous host exit leaving live Hub blocks before mutation even with one c
   assert.deepEqual(snapshot.processes.find(p => p.pid === 711), { pid: 711, parentPid: 702, startTicks: '100', kind: 'unowned-hub', taskState: 'unknown' });
   assert.throws(() => assertWslProcessExclusivity(snapshot, true), /OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN/);
 });
-test('another host with the same capability is never adopted or assumed idle', async t => {
+test('a verified API capability identifies the current Hub even through an intermediate launcher', async t => {
   const f = await fixture(t); if (!f) return;
   await f.add(710, { parent: 702 }); const snapshot = await f.inspect();
-  assert.equal(snapshot.current, undefined); assert.equal(snapshot.processes[0].taskState, 'unknown');
-  assert.throws(() => assertWslProcessExclusivity(snapshot, true), /OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN/);
+  assert.equal(snapshot.current.pid, 710); assert.equal(snapshot.processes[0].taskState, 'unknown');
+  assert.doesNotThrow(() => assertWslProcessExclusivity(snapshot, true));
 });
 for (const [label, options] of [
   ['different executable', { executable: '/synthetic-other/bin/agy' }],

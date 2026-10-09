@@ -93,10 +93,12 @@ test('cancellation before request sends nothing; during request aborts bounded c
  const b=new AbortController();await serve(()=>{b.abort()},async api=>{await assert.rejects(loginWithOfficialHub(api,b.signal),/LOGIN_CANCELLED/)});
 });
 const Module=require('node:module');
+const activeUis=new Set();
+test.afterEach(()=>{for(const x of activeUis){x.context.subscriptions.forEach(subscription=>subscription.dispose());x.ui.cleanup?.();}activeUis.clear();});
 function uiSetup(options={}){
  const core=options.core||setup(),commands=new Map(),state=options.state||new Map(),warnings=[],progresses=[],events=core.events;
  let cancel,focus;const ui={answer:undefined,trusted:options.trusted??true,restores:0,activeProgress:0,closedProgress:0,changed:0};
- const vscode={UIKind:{Desktop:1},ProgressLocation:{Notification:1},env:{uiKind:1},workspace:{get isTrusted(){return ui.trusted}},commands:{registerCommand(n,fn){commands.set(n,fn);return{dispose(){}}},async executeCommand(n){events.push(n)}},window:{onDidChangeWindowState(callback){focus=callback;return{dispose(){focus=undefined}}},async showWarningMessage(message){warnings.push(message);return ui.answer},async withProgress(options,fn){progresses.push(options);return fn({report(){}},{isCancellationRequested:false,onCancellationRequested(callback){cancel=callback;return{dispose(){cancel=undefined}}}})},async showInformationMessage(){}}};
+ const vscode={UIKind:{Desktop:1},ProgressLocation:{Notification:1},env:{uiKind:1},extensions:{getExtension:()=>undefined},workspace:{get isTrusted(){return ui.trusted},getConfiguration:()=>({get:()=>undefined})},commands:{registerCommand(n,fn){commands.set(n,fn);return{dispose(){}}},async executeCommand(n){events.push(n)}},window:{onDidChangeWindowState(callback){focus=callback;return{dispose(){focus=undefined}}},async showWarningMessage(message){warnings.push(message);return ui.answer},async withProgress(options,fn){progresses.push(options);return fn({report(){}},{isCancellationRequested:false,onCancellationRequested(callback){cancel=callback;return{dispose(){cancel=undefined}}}})},async showInformationMessage(){}}};
  const original=Module._load;Module._load=function(n,...args){return n==='vscode'?vscode:original.call(this,n,...args)};let registerLiveUi;try{const entry=require.resolve('../out/live-ui');delete require.cache[entry];({registerLiveUi}=require(entry));}finally{Module._load=original}
  const context={secrets:core.vault,globalState:{get(k,d){return state.has(k)?state.get(k):d},async update(k,v){state.set(k,v)}},extension:{extensionKind:1},extensionUri:{scheme:'file',authority:''},globalStorageUri:{scheme:'file',authority:'',toString:()=> 'file:///synthetic-login-home'},subscriptions:[]};
  const locks=options.locks||{withOperation:async fn=>{events.push('locked');try{return await fn()}finally{events.push('unlocked')}},hasRecovery:async()=>false,async beginRecovery(){events.push('recovery')},async clearRecovery(){events.push('clear')}};
@@ -105,30 +107,31 @@ function uiSetup(options={}){
  const lifecycle=async(...args)=>{events.push('lifecycle');if(args.length&&!options.component)assert.equal(args[0],true);return backend};
  const progress=vscode.window.withProgress;vscode.window.withProgress=async(...args)=>{ui.activeProgress++;try{return await progress(...args)}finally{ui.activeProgress--;ui.closedProgress++}};
  const diag=registerLiveUi(context,{service:core.service,locks,lifecycle,processCount:async()=>0,changed:()=>ui.changed++});
- return{...core,context,backend,locks,commands,state,warnings,progresses,ui,diag,events,cancel:()=>cancel?.(),focus:()=>focus?.({focused:true}),run:()=>commands.get('antigravityAccounts.live.login')()};
+ const result={...core,context,backend,locks,commands,state,warnings,progresses,ui,diag,events,cancel:()=>cancel?.(),focus:()=>focus?.({focused:true}),run:()=>commands.get('antigravityAccounts.live.login')()};activeUis.add(result);return result;
 }
 const consent='添加并保存';
 const settleLogin=()=>new Promise(setImmediate);
+async function waitLogin(predicate,description){const until=Date.now()+2000;while(!predicate()&&Date.now()<until)await settleLogin();assert.ok(predicate(),description);}
 test('browser progress closes before delayed identity, secure saving and final proof; list refreshes immediately after save',async()=>{
  const x=uiSetup({component:true});x.ui.answer=consent;await x.diag.refresh();
  const originalProof=x.backend.proof,store=x.vault.store;let proofs=0,releaseProof,releaseSave;
  x.backend.proof=async(...args)=>{if(++proofs===2||proofs===3)await new Promise(resolve=>releaseProof=resolve);return originalProof(...args)};
  x.vault.store=async(key,value)=>{if(key.startsWith(ACCOUNT_PREFIX))await new Promise(resolve=>releaseSave=resolve);return store(key,value)};
- const pending=x.run();await settleLogin();assert.equal(proofs,2);assert.equal(x.ui.activeProgress,0);assert.equal(x.ui.closedProgress,1);assert.equal(x.diag.getAccounts().length,0);assert.match(x.diag.getStatus(),/核验/);
- releaseProof();await settleLogin();assert.equal(typeof releaseSave,'function');assert.equal(x.ui.activeProgress,0);assert.equal(x.diag.getAccounts().length,0,'pending storage is not saved');
- const before=x.ui.changed;releaseSave();await settleLogin();assert.equal(proofs,3);assert.equal(x.diag.getAccounts().length,1);assert.ok(x.ui.changed>before);assert.match(x.diag.getStatus(),/已安全保存.*确认/);assert.equal(x.ui.activeProgress,0);
+ x.ui.cleanup=()=>{releaseProof?.();releaseSave?.();};const pending=x.run();await waitLogin(()=>proofs===2,'post-browser proof started');assert.equal(proofs,2);assert.equal(x.ui.activeProgress,0);assert.equal(x.ui.closedProgress,1);assert.equal(x.diag.getAccounts().length,0);assert.match(x.diag.getStatus(),/核验/);
+ releaseProof();await waitLogin(()=>typeof releaseSave==='function','secure save started');assert.equal(typeof releaseSave,'function');assert.equal(x.ui.activeProgress,0);assert.equal(x.diag.getAccounts().length,0,'pending storage is not saved');
+ const before=x.ui.changed;releaseSave();await waitLogin(()=>proofs===3,'post-save proof started');assert.equal(proofs,3);assert.equal(x.diag.getAccounts().length,1);assert.ok(x.ui.changed>before);assert.match(x.diag.getStatus(),/已安全保存.*确认/);assert.equal(x.ui.activeProgress,0);
  releaseProof();await pending;assert.equal(x.ui.activeProgress,0);assert.equal(x.ui.closedProgress,2);assert.equal(await x.service.journal(),null);assert.equal(x.diag.getState().busy,false);
 });
 test('cancelled browser request cannot save a late authenticated result and always closes its progress',async()=>{
  const x=uiSetup();x.ui.answer=consent;let finish;
  x.backend.login=async()=>{x.events.push('login');await new Promise(resolve=>finish=resolve);x.set(B)};
- const pending=x.run();await settleLogin();assert.equal(x.ui.activeProgress,1);x.cancel();finish();await pending;
+ x.ui.cleanup=()=>finish?.();const pending=x.run();await waitLogin(()=>typeof finish==='function','browser request started');assert.equal(x.ui.activeProgress,1);x.cancel();finish();await pending;
  assert.equal(x.diag.getAccounts().length,0);assert.equal(x.ui.activeProgress,0);assert.equal(x.diag.getState().busy,false);assert.deepEqual(x.current(),B);assert.ok(!x.events.includes('stop')&&!x.events.includes('write'));assert.equal((await x.service.journal()).phase,'authorizing');
 });
 test('a replacement transaction rejects late login proof without saving, restoring or clearing its journal',async()=>{
  const x=uiSetup();x.ui.answer=consent;const original=x.backend.proof;let proofs=0,finish;
  x.backend.proof=async(...args)=>{if(++proofs===2)await new Promise(resolve=>finish=resolve);return original(...args)};
- const pending=x.run();await settleLogin();const replacement={...await x.service.journal(),id:'00000000-0000-4000-8000-000000000099'};replacement.target={...replacement.target,id:replacement.id};const raw=JSON.stringify(replacement);x.data.set(JOURNAL_KEY,raw);finish();await pending;
+ x.ui.cleanup=()=>finish?.();const pending=x.run();await waitLogin(()=>typeof finish==='function','post-browser proof started');const replacement={...await x.service.journal(),id:'00000000-0000-4000-8000-000000000099'};replacement.target={...replacement.target,id:replacement.id};const raw=JSON.stringify(replacement);x.data.set(JOURNAL_KEY,raw);finish();await pending;
  assert.equal(x.data.get(JOURNAL_KEY),raw);assert.equal(x.diag.getAccounts().length,0);assert.ok(!x.events.includes('stop')&&!x.events.includes('write')&&!x.events.includes('clear'));assert.equal(x.ui.activeProgress,0);assert.equal(x.diag.getState().busy,false);assert.match(x.diag.getStatus(),/事务|记录/);
 });
 test('post-browser identity failure closes progress and preserves unowned changed slots for explicit recovery',async()=>{
@@ -145,21 +148,21 @@ for(const cancelled of [false,true])test(`component OAuth ${cancelled?'cancellat
  assert.equal(x.events.filter(e=>e==='component-restart').length,1);assert.ok(!x.events.includes('workbench.action.reloadWindow'));assert.equal(x.warnings.length,1);
 });
 test('login button dismissal never starts backend, browser or backup',async()=>{
- const x=uiSetup();await x.run();assert.deepEqual(x.events,['locked','unlocked']);assert.equal(x.data.size,0);
+ const x=uiSetup();await x.run();assert.deepEqual(x.events,['lifecycle']);assert.ok(!x.events.some(event=>['login','stop','write','recovery'].includes(event)));assert.equal(x.data.size,0);
 });
 test('complete add flow saves B and restores A, reloads after unlock, with one consent only',async()=>{
- const x=uiSetup();x.ui.answer=consent;await x.run();assert.deepEqual(x.events,['locked','lifecycle','recovery','login','stop','write','unlocked','workbench.action.reloadWindow']);assert.deepEqual(x.current(),A);assert.equal(x.diag.getAccounts().length,1);assert.equal((await x.service.journal()).phase,'restored');assert.deepEqual(x.progresses.map(x=>x.cancellable),[true,false]);assert.ok(!JSON.stringify([...x.state.values()]).includes('synthetic-refresh'));assert.match(x.diag.getStatus(),/恢复.*自动检查/);assert.equal(x.warnings.length,1);
+ const x=uiSetup();x.ui.answer=consent;await x.run();assert.deepEqual(x.events,['lifecycle','locked','recovery','login','stop','write','unlocked','workbench.action.reloadWindow']);assert.deepEqual(x.current(),A);assert.equal(x.diag.getAccounts().length,1);assert.equal((await x.service.journal()).phase,'restored');assert.deepEqual(x.progresses.map(x=>x.cancellable),[true,false]);assert.ok(!JSON.stringify([...x.state.values()]).includes('synthetic-refresh'));assert.match(x.diag.getStatus(),/恢复.*自动检查/);assert.equal(x.warnings.length,1);
 });
 
 test('browser cancellation restores originals and performs the already-consented reload without another dialog',async()=>{
- const x=uiSetup();x.ui.answer=consent;x.backend.login=signal=>new Promise((_resolve,reject)=>{x.events.push('login');signal.addEventListener('abort',()=>reject(new LiveError('LOGIN_CANCELLED')));setImmediate(x.cancel)});await x.run();assert.deepEqual(x.events,['locked','lifecycle','recovery','login','stop','write','unlocked','workbench.action.reloadWindow']);assert.deepEqual(x.current(),A);assert.equal(x.diag.getAccounts().length,0);assert.equal((await x.service.journal()).phase,'restored');assert.match(x.diag.getStatus(),/已取消添加账号.*原凭据已恢复/);assert.equal(x.warnings.length,1);assert.equal(x.diag.getState().recoveryPhase,'restored');assert.equal(x.diag.getState().pending,true);
+ const x=uiSetup();x.ui.answer=consent;x.backend.login=signal=>new Promise((_resolve,reject)=>{x.events.push('login');signal.addEventListener('abort',()=>reject(new LiveError('LOGIN_CANCELLED')));setImmediate(x.cancel)});await x.run();assert.deepEqual(x.events,['lifecycle','locked','recovery','login','stop','write','unlocked','workbench.action.reloadWindow']);assert.deepEqual(x.current(),A);assert.equal(x.diag.getAccounts().length,0);assert.equal((await x.service.journal()).phase,'restored');assert.match(x.diag.getStatus(),/已取消添加账号.*原凭据已恢复/);assert.equal(x.warnings.length,1);assert.equal(x.diag.getState().recoveryPhase,'restored');assert.equal(x.diag.getState().pending,true);
 });
 
 test('timeout or Google denial restores rather than calling login a second time',async()=>{
  for(const code of ['LOGIN_TIMEOUT','LOGIN_NOT_AUTHENTICATED']){const x=uiSetup();x.ui.answer=consent;x.backend.login=async()=>{x.events.push('login');throw new LiveError(code)};await x.run();assert.equal(x.events.filter(s=>s==='login').length,1);assert.deepEqual(x.current(),A);assert.equal((await x.service.journal()).phase,'restored');}
 });
 test('repeated Add clicks do not create second OAuth request',async()=>{
- const x=uiSetup();x.ui.answer=consent;let done,started;const ready=new Promise(r=>started=r);x.backend.login=async()=>{x.events.push('login');started();await new Promise(r=>done=r);x.set(B)};const first=x.run();await ready;await x.run();done();await first;assert.equal(x.events.filter(s=>s==='login').length,1);assert.equal(x.diag.getAccounts().length,1);
+ const x=uiSetup();x.ui.answer=consent;let done;x.ui.cleanup=()=>done?.();x.backend.login=async()=>{x.events.push('login');await new Promise(r=>done=r);x.set(B)};const first=x.run();await waitLogin(()=>typeof done==='function','first OAuth request started');await x.run();done();await first;assert.equal(x.events.filter(s=>s==='login').length,1);assert.equal(x.diag.getAccounts().length,1);
 });
 test('backup failure never invokes Login, and restore failure retains pending state',async()=>{
  const x=uiSetup();x.ui.answer=consent;x.vault.store=async()=>{throw Error('private')};await x.run();assert.ok(!x.events.includes('login'));assert.ok(x.events.includes('clear'));assert.equal(x.state.get('live-switch.pending.v1'),false);assert.ok(!x.warnings.at(-1).includes('private'));
@@ -189,7 +192,7 @@ test('inaccessible WSL mutation store blocks before Login and keeps both origina
 // OAUTH_CANCELLATION_RECOVERY: synthetic vault/slots only, no browser or credentials.
 test('cancel reports truthful inline state and reloads only after mutex release',async()=>{
  const x=uiSetup();x.ui.answer=consent;x.backend.login=async()=>{x.events.push('login');throw new LiveError('LOGIN_CANCELLED')};
- await x.run();assert.deepEqual(x.events,['locked','lifecycle','recovery','login','stop','write','unlocked','workbench.action.reloadWindow']);
+ await x.run();assert.deepEqual(x.events,['lifecycle','locked','recovery','login','stop','write','unlocked','workbench.action.reloadWindow']);
  assert.match(x.diag.getStatus(),/已取消添加账号.*原凭据已恢复/);assert.equal(x.warnings.length,1);assert.equal((await x.service.journal()).phase,'restored');assert.deepEqual(x.current(),A);
 });
 

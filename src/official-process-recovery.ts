@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { generation, hasOfficialHubApi } from './live-hub';
-import { inspectWslProcesses } from './official-process';
+import { inspectWslProcesses, type OfficialProcessIdentity } from './official-process';
 import { LiveError, runPrivate } from './live-storage';
 import { LINUX_PROCESS_HELPER } from './official-process-helper';
 import { WINDOWS_PROCESS_BOOTSTRAP, WINDOWS_PROCESS_HELPER } from './official-process-windows';
@@ -13,15 +13,18 @@ export interface ProcessConflict {
   owner: 'current' | 'other' | 'detached' | 'unknown';
   parentState: 'alive' | 'gone' | 'unknown'; taskState: 'unknown'; canEnd: boolean;
   endMode?: 'force';
+  scope?: 'current-window' | 'detached' | 'other-window' | 'unknown';
 }
 export interface ProcessConflictState {
   phase: 'blocked' | 'clear'; processes: ProcessConflict[];
   limitation?: 'platform' | 'helper' | 'windows-helper'; canContinue: boolean;
+  current?: ProcessConflict; currentCount?: number; totalCount?: number;
 }
 interface Target {
   pid: number; parentPid: number; startTicks?: string; bootId?: string; commandHash?: string; platform?: 'win32';
   kind: 'current-hub' | 'unowned-hub' | 'unverified';
   parentState: 'alive' | 'gone' | 'unknown'; startedAt?: string; canEnd: boolean;
+  scope: NonNullable<ProcessConflict['scope']>;
 }
 type HelperRequest = Record<string, unknown>;
 export interface ProcessRecoveryRuntime {
@@ -113,15 +116,18 @@ function target(value: unknown, platform: NodeJS.Platform): Target {
   if (!integer(row.pid) || typeof row.parentPid !== 'number' || !Number.isSafeInteger(row.parentPid) || row.parentPid < 0 ||
     !['current-hub', 'unowned-hub', 'unverified'].includes(String(row.kind)) || !['alive', 'gone', 'unknown'].includes(String(row.parentState)) || typeof row.canEnd !== 'boolean') throw new LiveError('PROCESS_CHECK_FAILED');
   if (row.kind !== 'unverified' && (typeof row.startTicks !== 'string' || !/^\d{1,30}$/.test(row.startTicks) || typeof row.commandHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.commandHash) || (platform === 'win32' ? row.platform !== 'win32' || row.bootId !== undefined : typeof row.bootId !== 'string' || !/^[a-f0-9-]{36}$/.test(row.bootId)))) throw new LiveError('PROCESS_CHECK_FAILED');
+  const scope = ['current-window', 'detached', 'other-window', 'unknown'].includes(String(row.scope)) ? row.scope as Target['scope'] : 'unknown';
+  if (row.kind === 'current-hub' && scope !== 'current-window') throw new LiveError('PROCESS_CHECK_FAILED');
   return { pid: row.pid, parentPid: row.parentPid,
     ...(typeof row.startTicks === 'string' ? { startTicks: row.startTicks } : {}), ...(typeof row.bootId === 'string' ? { bootId: row.bootId } : {}), ...(typeof row.commandHash === 'string' ? { commandHash: row.commandHash } : {}), ...(platform === 'win32' ? { platform: 'win32' } : {}),
-    kind: row.kind as Target['kind'], parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub', ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
+    kind: row.kind as Target['kind'], scope, parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub' && ['current-window', 'detached'].includes(scope), ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
 }
 /** Selection IDs and complete process proof live only in the host. No UI message
  * can choose a PID, command, path or signal. Every scan invalidates old IDs. */
 export class OfficialProcessRecovery {
   private readonly targets = new Map<string, Target>();
   private selectedGeneration: string | undefined;
+  private currentIdentity: OfficialProcessIdentity | undefined;
   private revision = 0;
   private ending = false;
   private readonly platform: NodeJS.Platform;
@@ -136,7 +142,14 @@ export class OfficialProcessRecovery {
   }
   private currentGeneration(): string { const api = this.runtime.api(); return hasOfficialHubApi(api) ? generation(api) : 'stopped'; }
   private helper(): NonNullable<ProcessRecoveryRuntime['helper']> { return this.runtime.helper ?? (this.platform === 'win32' ? runWindowsProcessHelper : runProcessHelper); }
-  invalidate(): void { ++this.revision; this.targets.clear(); this.selectedGeneration = undefined; }
+  invalidate(): void { ++this.revision; this.targets.clear(); this.selectedGeneration = undefined; this.currentIdentity = undefined; }
+  /** Host-only identity from the latest verified scan. Keep it out of Webview
+   * state; the public process list deliberately omits process birth proof. */
+  currentProcessIdentity(): OfficialProcessIdentity | undefined {
+    this.runtime.assertCurrent();
+    if (this.selectedGeneration !== undefined && this.selectedGeneration !== this.currentGeneration()) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+    return this.currentIdentity ? { ...this.currentIdentity } : undefined;
+  }
   async scan(): Promise<ProcessConflictState> {
     if (this.ending) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     this.invalidate(); this.runtime.assertCurrent();
@@ -149,7 +162,7 @@ export class OfficialProcessRecovery {
         if (value.code === 'OFFICIAL_PROCESS_END_UNAVAILABLE') throw new LiveError('OFFICIAL_PROCESS_END_UNAVAILABLE');
         if (!Array.isArray(value.processes) || value.processes.length > 1024) throw new LiveError('PROCESS_CHECK_FAILED');
         rows = value.processes.map(row => target(row, this.platform));
-        if (value.supported !== true || rows.some(row => row.kind !== 'current-hub' && !row.canEnd)) limitation = this.platform === 'win32' ? 'windows-helper' : 'helper';
+        if (value.supported !== true || rows.some(row => row.scope !== 'other-window' && row.kind !== 'current-hub' && !row.canEnd)) limitation = this.platform === 'win32' ? 'windows-helper' : 'helper';
         if (value.supported !== true) rows = rows.map(row => ({ ...row, canEnd: false }));
       } catch (error) {
         if (!(error instanceof LiveError) || error.code !== 'OFFICIAL_PROCESS_END_UNAVAILABLE') throw error;
@@ -177,18 +190,30 @@ export class OfficialProcessRecovery {
     const processes: ProcessConflict[] = rows.length ? rows.map(row => {
       const id = randomUUID(); if (row.canEnd) this.targets.set(id, row);
       return { id, pid: row.pid, parentPid: row.parentPid, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
-        owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' ? 'unknown' : row.parentPid === 1 ? 'detached' : 'other',
-        parentState: row.parentState, taskState: 'unknown', canEnd: row.canEnd, ...(this.platform === 'win32' && row.canEnd ? { endMode: 'force' as const } : {}) };
+        owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' ? 'unknown' : row.scope === 'detached' ? 'detached' : 'other',
+        scope: row.scope, parentState: row.parentState, taskState: 'unknown', canEnd: row.canEnd, ...(this.platform === 'win32' && row.canEnd ? { endMode: 'force' as const } : {}) };
     }) : fallback;
     this.selectedGeneration = before;
+    const currentTarget = rows.find(row => row.kind === 'current-hub');
+    this.currentIdentity = currentTarget ? { pid: currentTarget.pid, startTicks: currentTarget.startTicks! } : undefined;
     const verifiedPlatform = this.platform === 'linux' || this.platform === 'win32';
     const conflicts = verifiedPlatform ? processes.filter(row => row.owner !== 'current') : processes.length > (before === 'stopped' ? 0 : 1) ? processes : [];
     const ready = inspected && !conflicts.length && (!verifiedPlatform || (before === 'stopped' ? processes.length === 0 : processes.some(row => row.owner === 'current')));
-    return { phase: ready ? 'clear' : 'blocked', processes: conflicts, canContinue: ready, ...(limitation ? { limitation } : {}) };
+    const current = processes.find(row => row.owner === 'current');
+    return { phase: ready ? 'clear' : 'blocked', processes: conflicts, canContinue: ready, ...(current ? { current } : {}),
+      ...(inspected && verifiedPlatform ? { currentCount: processes.filter(row => row.owner === 'current').length } : {}),
+      ...(inspected ? { totalCount: processes.length } : {}), ...(limitation ? { limitation } : {}) };
   }
   async end(id: unknown, signal: AbortSignal): Promise<'exited' | 'forced' | 'gone'> {
-    const selected = typeof id === 'string' ? this.targets.get(id) : undefined;
-    if (!selected || signal.aborted || this.ending) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    return (await this.endMany([id], signal))[0]!.result;
+  }
+  /** Consume exactly the caller-confirmed selection set. The first failure
+   * stops the batch; no rescan, new PID or replacement birth is adopted. */
+  async endMany(ids: unknown, signal: AbortSignal): Promise<{ id: string; result: 'exited' | 'forced' | 'gone' }[]> {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 1024 || new Set(ids).size !== ids.length || this.ending) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    const selected = ids.map(id => ({ id, target: typeof id === 'string' ? this.targets.get(id) : undefined }));
+    if (selected.some(row => !row.target)) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    if (signal.aborted) throw new LiveError('OFFICIAL_PROCESS_END_CANCELLED');
     this.targets.clear(); this.runtime.assertCurrent();
     const expected = this.selectedGeneration, revision = this.revision;
     if (expected !== this.currentGeneration()) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
@@ -200,12 +225,17 @@ export class OfficialProcessRecovery {
         if (revision !== this.revision) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
         if (expected !== this.currentGeneration()) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
       };
-      const result = object(await this.helper()({ ...this.request('end'), target: selected }, signal, authorize));
-      authorize();
-      const codes = ['OFFICIAL_PROCESS_END_UNAVAILABLE', 'OFFICIAL_PROCESS_SELECTION_STALE', 'OFFICIAL_PROCESS_END_CANCELLED', 'OFFICIAL_PROCESS_END_DENIED', 'OFFICIAL_BACKEND_STOP_TIMEOUT', 'PROCESS_CHECK_FAILED'];
-      if (typeof result.code === 'string' && codes.includes(result.code)) throw new LiveError(result.code);
-      if (!['exited', 'forced', 'gone'].includes(String(result.result))) throw new LiveError('PROCESS_CHECK_FAILED');
-      return result.result as 'exited' | 'forced' | 'gone';
+      const outcomes: { id: string; result: 'exited' | 'forced' | 'gone' }[] = [];
+      for (const row of selected) {
+        authorize();
+        const result = object(await this.helper()({ ...this.request('end'), target: row.target }, signal, authorize));
+        authorize();
+        const codes = ['OFFICIAL_PROCESS_END_UNAVAILABLE', 'OFFICIAL_PROCESS_SELECTION_STALE', 'OFFICIAL_PROCESS_END_CANCELLED', 'OFFICIAL_PROCESS_END_DENIED', 'OFFICIAL_BACKEND_STOP_TIMEOUT', 'PROCESS_CHECK_FAILED'];
+        if (typeof result.code === 'string' && codes.includes(result.code)) throw new LiveError(result.code);
+        if (!['exited', 'forced', 'gone'].includes(String(result.result))) throw new LiveError('PROCESS_CHECK_FAILED');
+        outcomes.push({ id: row.id as string, result: result.result as 'exited' | 'forced' | 'gone' });
+      }
+      return outcomes;
     } finally { this.ending = false; }
   }
   private async nativeSnapshot(): Promise<ProcessConflict[]> {

@@ -183,7 +183,12 @@ test('migration repeated commands coalesce while native password dialog is open'
 });
 test('pending imported copy displays uncertainty before the explicit normal switch confirmation', async () => {
   const f = fixture(); f.state.set(INDEX, [saved(1, { label: 'Already verified (user label)', migrationState: 'pending' })]); f.ui.consent = false;
-  await f.call('switch', saved(1).id); assert.match(f.messages.at(-1), /迁移副本/); assert.match(f.messages.at(-1), /自动核验新身份/); assert.match(f.messages.at(-1), /保留原登录备份/); noMutation(f);
+  const before = structuredClone([...f.state]);
+  await f.call('switch', saved(1).id); assert.match(f.messages.at(-1), /迁移副本/); assert.match(f.messages.at(-1), /自动核验新身份/); assert.match(f.messages.at(-1), /保留原登录备份/);
+  assert.equal(f.events.filter(event => event === 'lifecycle').length, 1);
+  assert.ok(f.events.indexOf('lifecycle') < f.events.indexOf('confirm'));
+  assert.ok(!f.events.some(event => ['stop', 'install', 'import', 'index-write', 'write-file', 'recovery', 'clear-recovery', 'pending-write'].includes(event)));
+  assert.equal(f.writes.length, 0); assert.deepEqual([...f.state], before);
 });
 test('automatic verification records imported identity and clears backup without a success confirmation', async () => {
   for (const consent of [false,true]) {

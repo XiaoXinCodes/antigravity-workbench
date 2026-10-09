@@ -99,6 +99,68 @@ test('older concurrent captures never regress stored quota', async t => {
   await Promise.all(snapshots.map(snapshot => files.writeSnapshotFile(directory, snapshot)));
   assert.deepEqual((await files.readSnapshotDirectory(directory)).snapshots, [snapshots[0]]);
 });
+test('local writers wait through lock cleanup instead of racing a Windows delete-pending lock', { timeout: 5000 }, async t => {
+  const directory = await temporary(t), lock = path.join(directory, '.write.lock');
+  const open = fs.open, unlink = fs.unlink, events = [];
+  let deleting = false, releaseDelete, denied = 0, pauseOnce = true, first, second;
+  fs.open = async function (name, ...args) {
+    if (name === lock && deleting) { denied++; throw Object.assign(Error('synthetic delete-pending lock'), { code: 'EPERM' }); }
+    return open.call(this, name, ...args);
+  };
+  fs.unlink = async function (name, ...args) {
+    if (name === lock && pauseOnce) {
+      pauseOnce = false; deleting = true;
+      await new Promise(resolve => { releaseDelete = resolve; });
+      deleting = false;
+    }
+    return unlink.call(this, name, ...args);
+  };
+  try {
+    first = files.withDirectoryLock(directory, async () => { events.push('first'); });
+    const until = Date.now() + 2000;
+    while (!deleting && Date.now() < until) await new Promise(setImmediate);
+    assert.equal(deleting, true);
+    second = files.withDirectoryLock(directory, async () => { events.push('second'); });
+    void second.catch(() => {});
+    await new Promise(setImmediate);
+    assert.equal(denied, 0, 'the second local writer must not open during predecessor cleanup');
+    assert.deepEqual(events, ['first']);
+    releaseDelete(); await Promise.all([first, second]);
+    assert.deepEqual(events, ['first', 'second']);
+    await assert.rejects(fs.stat(lock), { code: 'ENOENT' });
+  } finally {
+    releaseDelete?.(); await Promise.allSettled([first, second]);
+    fs.open = open; fs.unlink = unlink;
+  }
+});
+test('permission failure never becomes a successful lock or suppresses a later valid retry', async t => {
+  const directory = await temporary(t), lock = path.join(directory, '.write.lock');
+  const open = fs.open, denied = Object.assign(Error('synthetic access denied'), { code: 'EPERM' });
+  let calls = 0;
+  fs.open = async function (name, ...args) { if (name === lock) throw denied; return open.call(this, name, ...args); };
+  try { await assert.rejects(files.withDirectoryLock(directory, async () => { calls++; }), error => error === denied); }
+  finally { fs.open = open; }
+  assert.equal(calls, 0);
+  await files.withDirectoryLock(directory, async () => { calls++; });
+  assert.equal(calls, 1);
+});
+test('a timed-out local waiter never runs after its predecessor eventually releases the lock', { timeout: 5000 }, async t => {
+  const directory = await temporary(t);
+  let release, late = 0, first, second;
+  try {
+    first = files.withDirectoryLock(directory, () => new Promise(resolve => { release = resolve; }));
+    const until = Date.now() + 2000;
+    while (!release && Date.now() < until) await new Promise(setImmediate);
+    assert.equal(typeof release, 'function');
+    second = files.withDirectoryLock(directory, async () => { late++; });
+    await assert.rejects(second, /STORAGE_BUSY/);
+    assert.equal(late, 0);
+    release(); await first; await new Promise(setImmediate);
+    assert.equal(late, 0, 'deadline must cancel the queued operation rather than only its caller');
+    await files.withDirectoryLock(directory, async () => { late++; });
+    assert.equal(late, 1);
+  } finally { release?.(); await Promise.allSettled([first, second]); }
+});
 test('concurrent account mutations reload persisted state under a lock', async t => {
   const directory = await temporary(t);
   await Promise.all(Array.from({ length: 12 }, (_, index) => files.mutateAccounts(directory, accounts => core.addAccount(accounts, `account${index}`, `Label${index}`))));

@@ -6,6 +6,11 @@ const {resolveWorkbenchLocations,registerWorkbenchLocations}=require('../out/wor
 const file=fsPath=>({scheme:'file',authority:'',fsPath});
 const context=(kind=1,extensionPath='/extension')=>({extension:{extensionKind:kind},extensionUri:file(extensionPath),globalStorageUri:file('/storage'),subscriptions:[]});
 const runtime={platform:'linux',home:'/home/synthetic',desktop:true};
+test('native VS Code userdata storage does not hide local installed extension and output paths',()=>{
+ const c=context();c.globalStorageUri={scheme:'vscode-userdata',authority:'',fsPath:'/synthetic/profile/storage'};
+ const result=resolveWorkbenchLocations(c,'/synthetic/output',runtime);
+ assert.equal(result.extensionPath,'/extension');assert.equal(result.credentialPath,'/home/synthetic/.gemini/jetski-standalone-oauth-token');assert.equal(result.imageOutputPath,'/synthetic/output');assert.equal(result.canOpenExtension,true);
+});
 test('locations derive installed extension and current-host credential paths without token reads',()=>{
  const result=resolveWorkbenchLocations(context(),'/project/images',runtime);
  assert.deepEqual(result,{host:'本机 Linux',extensionPath:'/extension',credentialPath:'/home/synthetic/.gemini/jetski-standalone-oauth-token',imageOutputPath:'/project/images',canOpenExtension:true});
