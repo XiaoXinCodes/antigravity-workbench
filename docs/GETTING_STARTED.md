@@ -35,7 +35,7 @@ Workbench 与 Google Antigravity 应运行在同一宿主；WSL 窗口应将 VSI
 
 遇到问题时，从命令面板打开“Antigravity Workbench: 高级排障…”，可检查扩展运行位置；开启调试日志复现一次，再关闭，通过“预览 / 导出日志”检查并保存。提交 [Issue](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 时附版本、系统、宿主、复现步骤和错误码，不附凭据文件或账号导出包。日志不会自动上传，详见 [日志说明](DEBUG_LOGS.md)。
 
-[兼容性](COMPATIBILITY.md) · [验证范围](VALIDATION_0.1.1.md) · [项目与服务说明](PROJECT_NOTICES.md)
+[兼容性](COMPATIBILITY.md) · [验证范围](VALIDATION_0.1.7.md) · [项目与服务说明](PROJECT_NOTICES.md)
 
 图片工作室可对所选账号和模型点击“查询额度”，就地查看服务端剩余比例、重置时间与更新时间。再次查询或生成后的旧值会明确标记，不换算图片张数；详见 [图片额度](IMAGE_QUOTA.md)。插件常规选项使用工作台底部“设置”打开 VS Code 标准设置。
 
