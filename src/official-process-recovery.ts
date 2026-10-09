@@ -51,9 +51,15 @@ export function windowsPowerShell(): string {
   const system = process.arch === 'ia32' && process.env.PROCESSOR_ARCHITEW6432 ? 'Sysnative' : 'System32';
   return path.win32.join(process.env.SystemRoot || 'C:\\Windows', system, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
-export function runWindowsProcessHelper(request: HelperRequest, signal?: AbortSignal, authorize?: () => void): Promise<unknown> {
+export function windowsHelperEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH']) if (process.env[name]) env[name] = process.env[name];
+  // Windows PowerShell's module analysis cache uses LOCALAPPDATA. Preserve
+  // system profile paths while keeping authentication and service settings out.
+  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA']) if (environment[name]) env[name] = environment[name];
+  return env;
+}
+export function runWindowsProcessHelper(request: HelperRequest, signal?: AbortSignal, authorize?: () => void): Promise<unknown> {
+  const env = windowsHelperEnvironment();
   return runHelper(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_PROCESS_BOOTSTRAP, 'utf16le').toString('base64')], request, signal, authorize, { stages: ['force'], prefix: `${Buffer.from(WINDOWS_PROCESS_HELPER).toString('base64')}\n`, env, timeout: 45_000 });
 }
 function runHelper(executable: string, args: string[], request: HelperRequest, signal?: AbortSignal, authorize?: () => void, options: { stages?: string[]; prefix?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {}): Promise<unknown> {

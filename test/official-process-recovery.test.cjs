@@ -285,6 +285,18 @@ test('Windows adoption, invalidation and cancellation refuse the force handshake
     assert.equal(forced, 0);
   }
 });
+test('Windows compiler keeps system profile paths without inheriting credentials, service settings or executable search paths', () => {
+  const { windowsHelperEnvironment } = require('../out/official-process-recovery');
+  const env = windowsHelperEnvironment({
+    SystemRoot: 'C:\\Windows', APPDATA: 'C:\\Users\\synthetic\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\synthetic\\AppData\\Local',
+    GOOGLE_API_KEY: 'synthetic-private-auth', ANTIGRAVITY_SERVER_URL: 'synthetic-private-service',
+    PATH: 'synthetic-private-executable-search', PSModulePath: 'synthetic-private-module-search',
+  });
+  assert.equal(env.APPDATA, 'C:\\Users\\synthetic\\AppData\\Roaming');
+  assert.equal(env.LOCALAPPDATA, 'C:\\Users\\synthetic\\AppData\\Local');
+  assert.equal(env.SystemRoot, 'C:\\Windows');
+  assert.doesNotMatch(JSON.stringify(env), /synthetic-private-|GOOGLE_API_KEY|ANTIGRAVITY_SERVER_URL|PSModulePath|PATH/);
+});
 test('Windows transport uses the system helper, short constant argv and stdin source, with a force-only authorization', async t => {
   const { runWindowsProcessHelper } = require('../out/official-process-recovery');
   const { WINDOWS_PROCESS_BOOTSTRAP, WINDOWS_PROCESS_HELPER } = require('../out/official-process-windows');
@@ -319,9 +331,12 @@ test('Windows system PowerShell compiles the shipped native adapter without touc
     const source=WINDOWS_PROCESS_HELPER.replace('Add-Type -TypeDefinition',"[Console]::Error.WriteLine('agw-before-compile')\nAdd-Type -TypeDefinition").replace('$line=[Console]',"[Console]::Error.WriteLine('agw-after-compile')\n$line=[Console]").replace('$r=$line',"[Console]::Error.WriteLine('agw-request-read')\n$r=$line");
     const dir=await fs.mkdtemp(path.join(os.tmpdir(),'agw-probe-transport-'));try{
       const file=path.join(dir,'probe.ps1');await fs.writeFile(file,bootstrap);
-      for(const mode of ['encoded','file','inherited'])await new Promise(resolve=>{
+      for(const mode of ['encoded','file','profile','toolchain','modules','system','inherited'])await new Promise(resolve=>{
         const args=['-NoLogo','-NoProfile','-NonInteractive',...(mode==='file'?['-File',file]:['-EncodedCommand',Buffer.from(bootstrap,'utf16le').toString('base64')])];
         const env={};for(const name of ['SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','HOMEDRIVE','HOMEPATH'])if(process.env[name])env[name]=process.env[name];
+        const groups = { profile: ['APPDATA', 'LOCALAPPDATA'], toolchain: ['ComSpec', 'PATH', 'PATHEXT'], modules: ['PSModulePath', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData', 'ALLUSERSPROFILE'] };
+        const fields = mode === 'system' ? Object.values(groups).flat() : groups[mode] || [];
+        for (const name of fields) if (process.env[name]) env[name] = process.env[name];
         const child=spawn(windowsPowerShell(),args,{stdio:['pipe','pipe','pipe'],windowsHide:true,env:mode==='inherited'?process.env:env});let stdout='',stderr='',before=[];
         const milestones=()=>['agw-start','agw-source-read','agw-before-compile','agw-after-compile','agw-request-read'].filter(x=>stderr.includes(x));
         child.stdout.on('data',b=>{stdout+=b.toString();});child.stderr.on('data',b=>{stderr+=b.toString();});child.stdin.on('error',()=>{});
@@ -359,10 +374,10 @@ test('Windows validates synthetic child identity and force-ends only a separatel
       if (rejectEnd) {
         assert.equal(result.code, undefined);
         assert.equal(result.credentialScopeVerified, false);
-        let checks = 0;
-        const ended = await runWindowsProcessHelper({ ...request, operation: 'end', target: result }, undefined, () => { checks++; });
+        // No authorization callback: an unexpected force handshake must fail
+        // transport validation rather than receive permission to signal.
+        const ended = await runWindowsProcessHelper({ ...request, operation: 'end', target: result });
         assert.equal(ended.code, 'OFFICIAL_PROCESS_SELECTION_STALE');
-        assert.equal(checks, 0, 'unsupported credential scope must reject before host authorization');
         assert.equal(child.exitCode, null, 'unsupported fixture must remain alive after rejected termination');
       }
       if(endFixture){
