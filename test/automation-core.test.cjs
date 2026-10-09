@@ -81,7 +81,8 @@ test('independent host processes cannot send the same scheduled instance twice',
  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ag-automation-processes-')));try{
   const store=new PrivateState(path.join(root,'private'),parseWakeState,initialWakeState),f=fixture(store);await enabled(f);
   const launch=()=>new Promise((resolve,reject)=>{const child=require('node:child_process').spawn(process.execPath,[path.join(__dirname,'fixtures/automation-worker.cjs'),path.join(root,'private'),String(NOW+60_000)],{stdio:['ignore','ignore','pipe']});let errors='';child.stderr.on('data',d=>errors+=d);child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(errors)))});
-  await Promise.all([launch(),launch()]);assert.equal((await fs.readFile(path.join(root,'private','synthetic-sends.txt'),'utf8')).trim().split('\n').length,1);assert.equal((await store.read()).instances.length,1);
+  const results=await Promise.allSettled([launch(),launch()]);assert.deepEqual(results.filter(r=>r.status==='rejected').map(r=>r.reason.message),[]);
+  assert.equal((await fs.readFile(path.join(root,'private','synthetic-sends.txt'),'utf8')).trim().split('\n').length,1);const state=await store.read();assert.equal(state.instances.length,1);assert.equal(state.instances[0].phase,'succeeded');
  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
 test('wake catalog uses exact per-account callable IDs, preserves unfamiliar models and excludes explicit image IDs',()=>{
