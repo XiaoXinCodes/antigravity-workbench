@@ -13,7 +13,7 @@ const trace = [];
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 async function waitForStart(promise) { let timer; try { await Promise.race([promise, new Promise((_, reject) => { timer=setTimeout(()=>reject(new Error('The synthetic batch termination did not start')),2000); })]); } finally { clearTimeout(timer); } }
 const fileUri = value => ({ scheme: 'file', authority: '', query: '', fragment: '', fsPath: value, toString: () => `file://${value}` });
-const detached = (pid, id = `selection-${pid}`) => ({ id, pid, parentPid: 1, startedAt: '2026-10-09T04:00:00Z', owner: 'detached', parentState: 'gone', taskState: 'unknown', canEnd: true, scope: 'detached' });
+const detached = (pid, id = `selection-${pid}`) => ({ id, pid, parentPid: 1, startedAt: '2026-10-09T04:00:00Z', owner: 'detached', parentState: 'gone', taskState: 'unknown', canEnd: true, scope: 'detached', credentialScopeVerified: true });
 
 /** VS Code APIs, Hub responses and account tokens are synthetic. The account
  * transaction and UI command implementation are the production modules. */
@@ -82,7 +82,7 @@ function fixture(t, options = {}) {
     async scan() { record('scan-processes', rows.map(row => row.pid)); selections = new Set(rows.filter(row => row.canEnd).map(row => row.id)); return {
       phase: rows.length ? 'blocked' : 'clear', processes: structuredClone(rows), canContinue: !rows.length,
       currentCount: running ? 1 : 0, totalCount: rows.length + (running ? 1 : 0),
-      ...(running ? {current: {id:'current-selection', pid:1001, parentPid:process.pid, owner:'current', parentState:'alive', taskState:'unknown', canEnd:false, scope:'current-window'}} : {})
+      ...(running ? {current: {id:'current-selection', pid:1001, parentPid:process.pid, owner:'current', parentState:'alive', taskState:'unknown', canEnd:false, scope:'current-window', credentialScopeVerified:true}} : {})
     }; },
     async end(id) { record('end-one', id); throw new LiveError('OFFICIAL_PROCESS_END_UNAVAILABLE'); },
     async endMany(ids, signal) { record('end-many', [...ids]); if (ids.some(id => !selections.has(id)) || rows.some(row => !ids.includes(row.id))) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); if (ui.endMany) return ui.endMany(ids, signal); rows = []; return ids.map(() => 'exited'); },
@@ -91,13 +91,123 @@ function fixture(t, options = {}) {
   const controller = api.registerLiveUi(context, { service, locks, lifecycle: async() => {
     record('resolve-lifecycle'); if (rows.length) throw new LiveError('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN');
     return running ? backend : {...backend, generation:'stopped'};
-  }, currentIdentity: async() => proof(), currentQuota: async() => proof(), processRecovery: recovery, changed: () => record('ui-state') });
+  }, currentIdentity: async() => ({...proof(),generation:load('live-hub').generation(official.exports)}), currentQuota: async() => proof(), processRecovery: recovery, changed: () => record('ui-state') });
   t.after(() => { context.subscriptions.forEach(subscription => subscription.dispose()); trace.push({ test: t.name, synthetic: true, events, warnings, final: controller.getState() }); });
   return { accounts, events, warnings, notifications, ui, state, data, context, controller, backend, service, locks, recovery, record, current: () => structuredClone(currentSlots), email: () => currentEmail, rows: () => rows, setRows: value => { rows = value; }, activity: value => { activity = value; }, call: (name, argument) => commands.get(`antigravityAccounts.live.${name}`)(argument) };
 }
 const count = (f, name) => f.events.filter(row => row.event === name).length;
 const order = (f, before, after) => assert.ok(f.events.findIndex(row => row.event === before) < f.events.findIndex(row => row.event === after), `${before} must precede ${after}`);
 function noBackendMutation(f) { for (const name of ['stop-hub','reload-hub','credential-write','begin-recovery','end-many','end-one']) assert.equal(count(f,name),0,name); }
+async function establishVerifiedA(f) {
+  // Verify reconciles recovery journals only. Initial identity comes from the
+  // same production refresh path used when the sidebar opens.
+  await f.controller.refresh();await f.call('verify');
+  assert.equal(f.controller.getState().activeEmail,'a@example.test');
+}
+test('verified current login plus an unknown-scope extra Hub reports ownership before consent and retains the login', async t => {
+  const f=fixture(t); await establishVerifiedA(f);
+  f.setRows([{id:'unknown-scope-conflict',pid:710,parentPid:702,owner:'other',scope:'unknown',parentState:'alive',taskState:'unknown',canEnd:false,credentialScopeVerified:false}]);
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,0);noBackendMutation(f);assert.equal(f.email(),'a@example.test');
+  assert.equal(f.controller.getState().activeEmail,'a@example.test');
+  assert.match(f.controller.getState().error,/OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED/);
+  assert.equal(f.controller.getState().processConflicts.current.pid,1001);
+  assert.equal(f.controller.getState().processConflicts.processes[0].pid,710);
+});
+
+// Window ancestry is risk information. The native helper separately verifies
+// executable, user, launch and credential scope before offering an opaque ID.
+function verifiedPeer(pid, scope, extra = {}) {
+  return {...detached(pid), parentPid:702, owner:'other', parentState:'alive', scope, credentialScopeVerified:true, ...extra};
+}
+for (const scope of ['other-window','unknown']) test(`new policy: verified credential scope with ${scope} gets one risk consent before the exact batch and account transaction`, async t => {
+  const f=fixture(t,{rows:[verifiedPeer(710,scope)]});
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,1);assert.equal(f.warnings[0].options.modal,true);
+  assert.match(f.warnings[0].message,/PID 710/);assert.match(f.warnings[0].message,/PID 1001/);
+  assert.match(f.warnings[0].message,/其他窗口|other windows?|another window/i);
+  assert.match(f.warnings[0].message,/中断|interrupt/i);
+  assert.deepEqual(f.events.filter(row=>row.event==='end-many').map(row=>row.detail),[['selection-710']]);
+  assert.equal(count(f,'end-one'),0);assert.equal(count(f,'stop-hub'),1);assert.equal(count(f,'credential-write'),1);
+  order(f,'confirmation','end-many');order(f,'end-many','resolve-lifecycle');order(f,'resolve-lifecycle','stop-hub');
+  order(f,'stop-hub','vault-write');order(f,'vault-write','credential-write');order(f,'credential-write','reload-hub');
+  assert.ok(f.events.some(row=>row.event==='proof'&&row.detail==='b@example.test'));
+  assert.equal(f.email(),'b@example.test');assert.equal(f.controller.getState().activeEmail,'b@example.test');
+  assert.equal(f.controller.getState().processConflicts,undefined);assert.equal(await f.service.journal(),null);
+});
+for (const verified of [false,undefined]) test(`new policy: credential scope ${String(verified)} rejects a helper's optimistic canEnd before consent or any stop`, async t => {
+  const f=fixture(t);await establishVerifiedA(f);
+  const credentials=f.current(),index=structuredClone(f.state.get(INDEX));
+  f.setRows([verifiedPeer(710,'unknown',{credentialScopeVerified:verified})]);
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,0);noBackendMutation(f);
+  assert.deepEqual(f.current(),credentials);assert.deepEqual(f.state.get(INDEX),index);assert.equal(f.email(),'a@example.test');
+  assert.equal(f.controller.getState().activeEmail,'a@example.test');assert.ok(f.controller.getState().error);
+});
+test('new policy: cancelling the foreign-window risk consent leaves every backend and the login untouched',async t=>{
+  const f=fixture(t,{rows:[verifiedPeer(710,'other-window'),verifiedPeer(711,'unknown')]});f.ui.consent=false;
+  const credentials=f.current(),index=structuredClone(f.state.get(INDEX));
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,1);assert.match(f.warnings[0].message,/PID 710/);assert.match(f.warnings[0].message,/PID 711/);
+  assert.match(f.warnings[0].message,/其他窗口|other windows?|another window/i);noBackendMutation(f);
+  assert.deepEqual(f.current(),credentials);assert.deepEqual(f.state.get(INDEX),index);assert.equal(f.email(),'a@example.test');
+  assert.deepEqual(f.rows().map(row=>row.pid),[710,711]);
+});
+test('new policy: one unknown credential scope blocks the whole proposed batch before any confirmation or target stop',async t=>{
+  const f=fixture(t,{rows:[verifiedPeer(710,'other-window'),verifiedPeer(711,'unknown',{credentialScopeVerified:false})]});
+  const credentials=f.current();await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,0);noBackendMutation(f);assert.deepEqual(f.current(),credentials);
+  assert.deepEqual(f.rows().map(row=>row.pid),[710,711]);assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);
+});
+test('new policy: an optimistic clear scan cannot bypass an unverified current Hub credential scope',async t=>{
+  const f=fixture(t);await establishVerifiedA(f);
+  const originalScan=f.recovery.scan.bind(f.recovery),credentials=f.current(),index=structuredClone(f.state.get(INDEX));
+  t.mock.method(f.recovery,'scan',async()=>{const state=await originalScan();state.current.credentialScopeVerified=false;state.canContinue=true;state.phase='clear';return state;});
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,0);noBackendMutation(f);assert.deepEqual(f.current(),credentials);assert.deepEqual(f.state.get(INDEX),index);
+  assert.equal(f.controller.getState().activeEmail,'a@example.test');assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);
+});
+test('new policy: a live official API cannot use an optimistic clear scan with no verified current process',async t=>{
+  const f=fixture(t);await establishVerifiedA(f);
+  const originalScan=f.recovery.scan.bind(f.recovery),credentials=f.current();
+  t.mock.method(f.recovery,'scan',async()=>{const state=await originalScan();delete state.current;state.canContinue=true;state.phase='clear';return state;});
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,0);noBackendMutation(f);assert.deepEqual(f.current(),credentials);
+  assert.equal(f.controller.getState().activeEmail,'a@example.test');assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);
+});
+test('new policy: one consent fixes two explicitly identified foreign or unknown-window targets and never sends the current Hub through manual end',async t=>{
+  const f=fixture(t,{rows:[verifiedPeer(710,'other-window'),verifiedPeer(711,'unknown')]});
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,1);assert.match(f.warnings[0].message,/PID 710/);assert.match(f.warnings[0].message,/PID 711/);
+  const selected=f.events.filter(row=>row.event==='end-many').map(row=>row.detail);
+  assert.deepEqual(selected,[['selection-710','selection-711']]);assert.ok(selected.flat().every(id=>id!=='current-selection'));
+  assert.equal(f.email(),'b@example.test');assert.equal(count(f,'stop-hub'),1);assert.equal(count(f,'end-one'),0);
+});
+test('new policy: replacing the second selected backend during consent never adopts its new PID or writes credentials',async t=>{
+  const f=fixture(t,{rows:[verifiedPeer(710,'other-window'),verifiedPeer(711,'unknown')]});
+  f.ui.warning=(_message,action)=>{f.setRows([verifiedPeer(710,'other-window'),verifiedPeer(712,'unknown')]);return action;};
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,1);
+  assert.deepEqual(f.events.filter(row=>row.event==='end-many').map(row=>row.detail),[['selection-710','selection-711']]);
+  for(const name of ['stop-hub','credential-write','reload-hub'])assert.equal(count(f,name),0,name);
+  assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);
+});
+test('new policy: native proof refusal after consent prevents target signalling and every account mutation',async t=>{
+  const f=fixture(t,{rows:[verifiedPeer(710,'other-window')]});
+  f.ui.warning=(_message,action)=>{f.setRows([verifiedPeer(710,'other-window',{credentialScopeVerified:false})]);return action;};
+  f.ui.endMany=async(ids)=>{assert.deepEqual(ids,['selection-710']);assert.equal(f.rows()[0].credentialScopeVerified,false);f.record('native-proof-refused-without-signal');throw new (load('live-storage').LiveError)('OFFICIAL_PROCESS_SELECTION_STALE');};
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,1);assert.equal(count(f,'native-proof-refused-without-signal'),1);
+  for(const name of ['stop-hub','credential-write','reload-hub'])assert.equal(count(f,name),0,name);
+  assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);
+});
+test('new policy: a new backend arriving after the confirmed batch is surfaced and never included in a second automatic end',async t=>{
+  const f=fixture(t,{rows:[verifiedPeer(710,'other-window')]});
+  f.ui.endMany=async(ids)=>{assert.deepEqual(ids,['selection-710']);f.setRows([verifiedPeer(711,'unknown')]);return ['exited'];};
+  await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,1);assert.equal(count(f,'end-many'),1);assert.equal(count(f,'credential-write'),0);assert.equal(count(f,'stop-hub'),0);
+  assert.equal(f.controller.getState().processConflicts.processes[0].pid,711);assert.equal(f.email(),'a@example.test');
+});
 
 test('A to B to A uses one explicit current-window scope confirmation per operation and hides routine process checks', async t => {
   const f = fixture(t);

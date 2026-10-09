@@ -37,9 +37,9 @@ function officialSyncFixture(t){
 
 function processRecoveryFixture(t) {
  const {t:tr}=require('../out/i18n'),{LiveError}=require('../out/live-storage');
- let rows=[{id:'synthetic-process-selection',pid:710,parentPid:1,startedAt:'2026-10-08T11:00:00Z',owner:'detached',scope:'detached',parentState:'gone',taskState:'unknown',canEnd:true}],endHook;
+ let rows=[{id:'synthetic-process-selection',pid:710,parentPid:1,startedAt:'2026-10-08T11:00:00Z',owner:'detached',scope:'detached',credentialScopeVerified:true,parentState:'gone',taskState:'unknown',canEnd:true}],endHook;
  const scans=[],ends=[];
- const recovery={async scan(){scans.push(rows.map(p=>p.pid));return{phase:rows.length?'blocked':'clear',processes:rows.map(p=>({...p})),current:{id:'current',pid:709,parentPid:process.pid,owner:'current',scope:'current-window',parentState:'alive',taskState:'unknown',canEnd:false},currentCount:1,totalCount:rows.length+1,canContinue:!rows.length};},async end(id,signal){ends.push(id);if(endHook)return endHook(id,signal);rows=[];return'exited';},async endMany(ids,signal){ends.push(...ids);if(endHook)return endHook(ids,signal);rows=[];return ids.map(()=>'exited');},invalidate(){}};
+ const recovery={async scan(){scans.push(rows.map(p=>p.pid));return{phase:rows.length?'blocked':'clear',processes:rows.map(p=>({...p})),current:{id:'current',pid:709,parentPid:process.pid,owner:'current',scope:'current-window',credentialScopeVerified:true,parentState:'alive',taskState:'unknown',canEnd:false},currentCount:1,totalCount:rows.length+1,canContinue:!rows.length};},async end(id,signal){ends.push(id);if(endHook)return endHook(id,signal);rows=[];return'exited';},async endMany(ids,signal){ends.push(...ids);if(endHook)return endHook(ids,signal);rows=[];return ids.map(()=>'exited');},invalidate(){}};
  const f=setup({processRecovery:recovery});
  const account={id:'11111111-1111-4111-8111-111111111111',label:'Saved target',expectedEmail:'target@example.test',capturedAt:'2026-10-01T00:00:00Z',identitySource:'hub'};
  f.state.set('live-switch.accounts.v1',[account]); f.ui.answer=tr('liveUi.e0351ba254');
@@ -57,7 +57,7 @@ function provideNativeProcessProof(t, snapshot) {
  if(process.platform==='linux')processes.inspectWslProcesses=async()=>snapshot();
  if(process.platform==='win32')OfficialProcessRecovery.prototype.scan=async()=>{
   const value=await snapshot(),conflicts=value.processes.filter(row=>row.kind!=='current-hub').map(row=>({id:'synthetic-'+row.pid,pid:row.pid,parentPid:row.parentPid,owner:row.kind==='unverified'?'unknown':'other',scope:row.kind==='unverified'?'unknown':'other-window',parentState:'alive',taskState:'unknown',canEnd:false}));
-  return{phase:conflicts.length?'blocked':'clear',processes:conflicts,canContinue:!conflicts.length,currentCount:value.current?1:0,totalCount:value.processes.length,...(value.current?{current:{id:'synthetic-current',pid:value.current.pid,parentPid:value.current.parentPid,owner:'current',scope:'current-window',parentState:'alive',taskState:'unknown',canEnd:false}}:{})};
+  return{phase:conflicts.length?'blocked':'clear',processes:conflicts,canContinue:!conflicts.length,currentCount:value.current?1:0,totalCount:value.processes.length,...(value.current?{current:{id:'synthetic-current',pid:value.current.pid,parentPid:value.current.parentPid,owner:'current',scope:'current-window',credentialScopeVerified:true,parentState:'alive',taskState:'unknown',canEnd:false}}:{})};
  };
  const platform=process.platform;t.after(()=>{if(platform==='linux')processes.inspectWslProcesses=oldInspect;if(platform==='win32')OfficialProcessRecovery.prototype.scan=oldScan;});
 }

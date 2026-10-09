@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { OfficialProcessRecovery, runProcessHelper } = require('../out/official-process-recovery');
 const { LiveError } = require('../out/live-storage');
 const api = { port: 32123, csrfToken: 'synthetic-capability-not-output' };
-const row = (pid = 710, kind = 'unowned-hub', extra = {}) => ({ pid, parentPid: 701, startTicks: '123456', bootId: '11111111-1111-4111-8111-111111111111', commandHash: 'a'.repeat(64), kind, scope: kind === 'unverified' ? 'unknown' : 'current-window', parentState: 'alive', startedAt: '2026-10-08T11:00:00+00:00', canEnd: kind === 'unowned-hub', ...extra });
+const row = (pid = 710, kind = 'unowned-hub', extra = {}) => ({ pid, parentPid: 701, startTicks: '123456', bootId: '11111111-1111-4111-8111-111111111111', commandHash: 'a'.repeat(64), kind, scope: kind === 'unverified' ? 'unknown' : 'current-window', parentState: 'alive', startedAt: '2026-10-08T11:00:00+00:00', canEnd: kind === 'unowned-hub', credentialScopeVerified: kind !== 'unverified', ...extra });
 function fixture(extra = {}) {
   let current = { ...api }, rows = [row(709, 'current-hub'), row()], response = { result: 'exited' };
   const calls = [];
@@ -28,11 +28,39 @@ test('host-only current identity detects same-capability PID birth replacement a
   f.setApi({ ...api, port: 32124 }); assert.throws(() => f.recovery.currentProcessIdentity(), /HUB_CHANGED/);
   f.recovery.invalidate(); assert.equal(f.recovery.currentProcessIdentity(), undefined);
 });
-test('an active other-window Hub is a blocker and never an automatic termination target', async () => {
+test('verified related backends remain blockers but explicit host selections can end them', async () => {
   const f = fixture(); f.setRows([row(709, 'current-hub'), row(710, 'unowned-hub', { parentPid: 702, scope: 'other-window', canEnd: true })]);
-  const state = await f.recovery.scan(); assert.equal(state.phase, 'blocked'); assert.equal(state.processes[0].canEnd, false);
-  await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
-  assert.equal(f.calls.filter(call => call.operation === 'end').length, 0);
+  const state = await f.recovery.scan(); assert.equal(state.phase, 'blocked'); assert.equal(state.processes[0].canEnd, true);
+  assert.equal(f.calls.filter(call => call.operation === 'end').length, 0, 'a scan never ends a process');
+  assert.equal(await f.recovery.end(state.processes[0].id, new AbortController().signal), 'exited');
+  assert.equal(f.calls.filter(call => call.operation === 'end').length, 1);
+});
+test('a root-relay ancestry stays unknown while independently verified targets can be explicitly selected', async () => {
+  for (const platform of ['linux', 'win32']) {
+    const make = platform === 'win32' ? windowsRow : row;
+    const f = fixture({ platform, helper: async request => request.operation === 'scan' ? { supported: true, processes: [make(709, 'current-hub'), make(710, 'unowned-hub', { parentPid: 702, scope: 'unknown', scopeReason: 'ancestor-user-mismatch', credentialScopeVerified: true })] } : { result: platform === 'win32' ? 'forced' : 'exited' } });
+    const state = await f.recovery.scan();
+    assert.equal(state.phase, 'blocked'); assert.equal(state.canContinue, false); assert.equal(state.limitation, undefined);
+    assert.equal(state.processes[0].scope, 'unknown'); assert.equal(state.processes[0].scopeReason, 'ancestor-user-mismatch');
+    assert.equal(state.processes[0].credentialScopeVerified, true); assert.equal(state.processes[0].canEnd, true);
+    assert.equal(state.current.pid, 709); assert.equal(state.current.canEnd, false);
+    assert.equal(await f.recovery.end(state.processes[0].id, new AbortController().signal), platform === 'win32' ? 'forced' : 'exited');
+  }
+});
+test('missing credential proof cannot authorize a target even when helper flags optimistically enable it', async () => {
+  for (const platform of ['linux', 'win32']) for (const verified of [false, undefined]) {
+    const make = platform === 'win32' ? windowsRow : row;
+    const f = fixture({ platform, helper: async () => ({ supported: true, processes: [make(709, 'current-hub'), make(710, 'unowned-hub', { credentialScopeVerified: verified, canEnd: true })] }) });
+    const state = await f.recovery.scan(); assert.equal(state.canContinue, false); assert.equal(state.limitation, 'ownership');
+    assert.equal(state.processes[0].canEnd, false);
+    await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
+  }
+});
+test('an advertised current Hub with unverified credential scope cannot make a clear scan or a usable current proof', async () => {
+  const f = fixture(); f.setRows([row(709, 'current-hub', { credentialScopeVerified: false, credentialScopeReason: 'auth-environment-override' })]);
+  const state = await f.recovery.scan(); assert.equal(state.current.pid, 709); assert.equal(state.current.credentialScopeReason, 'auth-environment-override');
+  assert.equal(state.canContinue, false); assert.equal(state.phase, 'blocked'); assert.equal(state.limitation, 'ownership');
+  assert.equal(f.recovery.currentProcessIdentity(), undefined); assert.equal(state.current.canEnd, false);
 });
 test('one confirmed batch consumes only the selected scan and ends each original proof in order', async () => {
   const f = fixture(); f.setRows([row(709, 'current-hub'), row(710), row(711)]);
@@ -200,9 +228,9 @@ test('Windows holds an opaque single-use force selection with current-host and c
   rows = []; assert.equal((await f.recovery.scan()).canContinue, false, 'current Hub needs an identity-backed process');
 });
 test('Windows helper/capability/permissions missing or malformed identity never enables termination', async () => {
-  for (const [supported, processes] of [[false, [windowsRow()]], [true, [windowsRow(710, 'unverified', { canEnd: true, startTicks: null, commandHash: null })]], [true, [windowsRow(710, 'unowned-hub', { canEnd: false })]]]) {
+  for (const [supported, processes, limitation] of [[false, [windowsRow()], 'windows-helper'], [true, [windowsRow(710, 'unverified', { canEnd: true, startTicks: null, commandHash: null })], 'ownership'], [true, [windowsRow(710, 'unowned-hub', { canEnd: false })], 'end-permission']]) {
     const f = fixture({ platform: 'win32', helper: async () => ({ supported, processes }) });
-    const state = await f.recovery.scan(); assert.equal(state.limitation, 'windows-helper'); assert.ok(state.processes.every(p => !p.canEnd));
+    const state = await f.recovery.scan(); assert.equal(state.limitation, limitation); assert.ok(state.processes.every(p => !p.canEnd));
     for (const selected of state.processes) await assert.rejects(f.recovery.end(selected.id, new AbortController().signal), /SELECTION_STALE/);
   }
   for (const extra of [{ startTicks: null }, { commandHash: null }, { platform: 'linux' }, { bootId: '11111111-1111-4111-8111-111111111111' }]) {
@@ -221,6 +249,25 @@ test('failed fallback enumeration cannot claim no conflicts, even with the offic
 test('missing Linux pidfd forces all ending buttons off, even if a malformed helper advertises them', async () => {
   const f = fixture({ helper: async () => ({ supported: false, processes: [row()] }) });
   const state = await f.recovery.scan(); assert.equal(state.limitation, 'helper'); assert.equal(state.processes[0].canEnd, false);
+  await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
+});
+test('available helper distinguishes unknown ownership from missing platform support without enabling termination', async () => {
+  for (const platform of ['linux', 'win32']) {
+    const make = platform === 'win32' ? windowsRow : row;
+    const f = fixture({ platform, helper: async () => ({ supported: true, processes: [make(709, 'current-hub'), make(710, 'unowned-hub', { scope: 'unknown', scopeReason: 'ancestor-user-mismatch', credentialScopeVerified: false, canEnd: false })] }) });
+    const state = await f.recovery.scan();
+    assert.equal(state.limitation, 'ownership');
+    assert.equal(state.current.pid, 709); assert.equal(state.currentCount, 1);
+    assert.equal(state.processes[0].pid, 710); assert.equal(state.processes[0].scopeReason, 'ancestor-user-mismatch');
+    assert.equal(state.canContinue, false); assert.equal(state.processes[0].canEnd, false);
+    await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
+  }
+});
+test('available helper reports a failed safe binding separately and drops unrecognized scope diagnostics', async () => {
+  const f = fixture({ helper: async () => ({ supported: true, processes: [row(710, 'unowned-hub', { canEnd: false, scopeReason: 'untrusted-private-detail' })] }) });
+  const state = await f.recovery.scan(); assert.equal(state.limitation, 'end-permission');
+  assert.equal(state.processes[0].canEnd, false); assert.equal(state.processes[0].scopeReason, undefined);
+  assert.ok(!JSON.stringify(state).includes('untrusted-private-detail'));
   await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
 });
 test('Windows adoption, invalidation and cancellation refuse the force handshake before any force result', async () => {
@@ -289,14 +336,20 @@ test('Windows system PowerShell compiles the shipped native adapter without touc
 
 test('Windows validates synthetic child identity and force-ends only a separately created fixture child', { skip: process.platform !== 'win32' }, async t => {
   const fs = require('node:fs/promises'), path = require('node:path'), os = require('node:os'), { spawn } = require('node:child_process');
-  const { runWindowsProcessHelper } = require('../out/official-process-recovery');
+  const { runWindowsProcessHelper, windowsPowerShell } = require('../out/official-process-recovery');
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'agw-win-process-fixture-'));
-  const executable = path.join(home, '.gemini', 'bin', 'agy.exe'); await fs.mkdir(path.dirname(executable), { recursive: true }); await fs.copyFile(process.execPath, executable);
+  const executable = path.join(home, '.gemini', 'bin', 'agy.exe'); await fs.mkdir(path.dirname(executable), { recursive: true });
   t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+  // An inert fixture accepts exactly the product's supported Hub launch shape.
+  // It does not authenticate, read credentials, or perform network calls.
+  const source = 'using System.Threading; public static class SyntheticHubFixture { public static void Main(string[] args) { Thread.Sleep(Timeout.Infinite); } }';
+  const compile = `$ErrorActionPreference='Stop'; Add-Type -TypeDefinition '${source}' -Language CSharp -OutputType ConsoleApplication -OutputAssembly '${executable.replace(/'/g, "''")}'`;
+  const compiled = await require('../out/live-storage').runPrivate(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(compile, 'utf16le').toString('base64')], '', 8192);
+  assert.equal(compiled.code, 0, 'system PowerShell must compile the inert synthetic fixture');
   const inspectChild = async (profile, flags, endFixture=false) => {
     // libuv restores missing HOMEDRIVE/HOMEPATH from the parent on Windows.
     // Set the whole synthetic scope explicitly rather than mixing two homes.
-    const child = spawn(executable, ['-e', 'setInterval(()=>{},1000)', '--', '--hub', '--app_data_dir=antigravity', ...flags], { env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: profile, HOMEDRIVE:home.slice(0,2),HOMEPATH:home.slice(2) }, stdio: 'ignore', windowsHide: true });
+    const child = spawn(executable, ['--hub', '--app_data_dir=antigravity', ...flags], { env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: profile, HOMEDRIVE:home.slice(0,2),HOMEPATH:home.slice(2) }, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     const closed = new Promise(resolve => child.once('close', resolve));
     try {
@@ -305,21 +358,23 @@ test('Windows validates synthetic child identity and force-ends only a separatel
       assert.equal(child.exitCode, null, 'read-only fixture inspection must not terminate its target');
       if(endFixture){
         assert.equal(result.code,undefined,JSON.stringify({code:result.code,stage:result.stage}));
+        assert.equal(result.credentialScopeVerified, true);
         let checks=0;const ended=await runWindowsProcessHelper({...request,operation:'end',target:result},undefined,()=>{checks++;});
         assert.deepEqual(ended,{result:'forced'});assert.ok(checks>0,'test host must authorize the force handshake');
         await closed;assert.equal(child.exitCode,1,'held HANDLE termination completes before success');
       }
       return { result, pid: child.pid };
-    } finally { if(child.exitCode===null)child.kill(); await closed; } // Only our own synthetic Node child.
+    } finally { if(child.exitCode===null)child.kill(); await closed; } // Only our own inert synthetic child.
   };
   const normalFlags = ['--hub-port=32124', '--csrf_token=synthetic-foreign-capability'];
   let inspected = await inspectChild(home, normalFlags);
   assert.equal(inspected.result.code,undefined,JSON.stringify({code:inspected.result.code,stage:inspected.result.stage}));
   assert.equal(inspected.result.pid, inspected.pid); assert.equal(inspected.result.parentPid, process.pid); assert.equal(inspected.result.kind, 'unowned-hub');
+  assert.equal(inspected.result.credentialScopeVerified, true);
   assert.match(inspected.result.startTicks, /^\d+$/); assert.match(inspected.result.commandHash, /^[a-f0-9]{64}$/); assert.ok(Number.isFinite(Date.parse(inspected.result.startedAt)));
   assert.doesNotMatch(JSON.stringify(inspected.result), /synthetic-foreign-capability|USERPROFILE|--csrf_token/);
   for (const [profile, flags] of [['.', normalFlags], ['C:relative', normalFlags], [home, ['--hub-port=32124\n', normalFlags[1]]], [home, [normalFlags[0], '--csrf_token=synthetic-foreign-capability\n']], [home, [...normalFlags, '--hub']]]) {
-    inspected = await inspectChild(profile, flags); assert.ok(inspected.result.code, 'relative scope and malformed argv must fail closed');
+    inspected = await inspectChild(profile, flags); assert.ok(inspected.result.code || inspected.result.credentialScopeVerified === false, 'relative scope and malformed argv must fail closed');
   }
   await inspectChild(home,normalFlags,true);
 });

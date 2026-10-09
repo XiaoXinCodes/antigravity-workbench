@@ -18,72 +18,112 @@ def boot():
     if not re.fullmatch(r'[0-9a-f-]{36}', value): raise ValueError()
     return value
 
-def home(pid):
-    # Read only a bounded launch environment in memory, retaining HOME alone.
-    # Unknown/different credential scope is never eligible for termination.
+AUTH_ENV = {'JETSKI_OAUTH_TOKEN', 'JETSKI_TEST_GAIA_TOKEN', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'AGY_ADC_AUTH'}
+CONFIG_ENV = {'ANTIGRAVITY_SERVER_URL', 'AGY_RELEASE_BASE_URL', 'CLOUD_WORKSTATIONS', 'CLOUD_SHELL', 'ANTIGRAVITY_CDE', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'APPDATA', 'LOCALAPPDATA'}
+BUSINESS_PREFIXES = ('AGY_', 'ANTIGRAVITY_', 'JETSKI_', 'GOOGLE_', 'GEMINI_', 'CODEIUM_', 'WINDSURF_', 'CLOUD_')
+HOME_FIELDS = {'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH'}
+OFFICIAL_MARKERS = {'AGY_ENABLE_HUB', 'ANTIGRAVITY_VSCODE_HOST', 'ANTIGRAVITY_AUTH_SUCCESS_APP'}
+HUB_FLAGS = {'--hub', '--app_data_dir', '--hub-port', '--csrf_token'}
+
+def supported_argument(arg):
+    # Official 1.7.0 adds one argv item per workspace folder, including spaces
+    # and '=' in its fsPath. It changes workspace context, not credential HOME.
+    if arg.startswith('--add-dir='): return 0 < len(arg[len('--add-dir='):]) <= 32768
+    return arg.split('=')[0] in HUB_FLAGS
+
+def launch_environment(pid, expected_home):
+    # Bounded launch metadata only. Retain scope paths and relevant key presence;
+    # never decode, return or fingerprint authentication override values.
     try:
         with open('/proc/%d/environ' % pid, 'rb') as f: raw = f.read(131073)
-        if len(raw) > 131072: return None
-        values = [v[5:] for v in raw.split(b'\0') if v.startswith(b'HOME=')]
-        return values[0].decode('utf-8', errors='strict') if len(values) == 1 else None
-    except (OSError, UnicodeError): return None
+        if len(raw) > 131072: return None, '', 'environment-unreadable'
+        fields, present = {}, []
+        for entry in raw.split(b'\0'):
+            if not entry: continue
+            if b'=' not in entry: return None, '', 'environment-unreadable'
+            key, value = entry.split(b'=', 1)
+            name = key.decode('utf-8', errors='strict')
+            relevant = name in HOME_FIELDS or name in AUTH_ENV or name in CONFIG_ENV or name.startswith(BUSINESS_PREFIXES)
+            if not relevant: continue
+            if name in present: return None, '', 'environment-unreadable'
+            present.append(name)
+            if name in HOME_FIELDS or name in OFFICIAL_MARKERS: fields[name] = value.decode('utf-8', errors='strict')
+        proof = json.dumps({'present': sorted(present), 'scope': fields}, sort_keys=True, separators=(',', ':'))
+        selected_home = fields.get('HOME')
+        if selected_home != expected_home or not selected_home or not selected_home.startswith('/') or len(selected_home) > 4096: return selected_home, proof, 'home-mismatch'
+        if 'USERPROFILE' in fields and fields['USERPROFILE'] != expected_home: return selected_home, proof, 'home-mismatch'
+        if ('HOMEDRIVE' in fields) != ('HOMEPATH' in fields) or 'HOMEDRIVE' in fields and fields['HOMEDRIVE'] + fields['HOMEPATH'] != expected_home: return selected_home, proof, 'home-mismatch'
+        if any(name in AUTH_ENV for name in present): return selected_home, proof, 'auth-environment-override'
+        if any(name in fields and fields[name] != '1' for name in ('AGY_ENABLE_HUB', 'ANTIGRAVITY_VSCODE_HOST')) or 'ANTIGRAVITY_AUTH_SUCCESS_APP' in fields and not re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]{0,127}', fields['ANTIGRAVITY_AUTH_SUCCESS_APP']): return selected_home, proof, 'config-environment-override'
+        if any(name not in HOME_FIELDS and name not in OFFICIAL_MARKERS for name in present): return selected_home, proof, 'config-environment-override'
+        return selected_home, proof, 'verified'
+    except (OSError, UnicodeError): return None, '', 'environment-unreadable'
 
 def scope(parent, birth, owner):
     # An exact advertised capability identifies the current Hub separately.
-    # For older Hubs, only a stable same-UID ancestry back to this host or an
-    # actual init-adopted process authorizes an automatic stop. A live foreign
-    # parent is never evidence that its window has finished its tasks.
-    if parent == 1: return 'detached'
+    # Ancestry describes the window honestly, independently of credential scope.
+    # Shared launchers or a different-UID relay never prove the current window.
+    # Ending a verified foreign/unknown target still needs explicit host consent.
+    if parent == 1: return 'detached', 'parent-init'
     try:
         owner_stat = stat(owner)
-        if os.stat('/proc/%d' % owner).st_uid != os.getuid(): return 'unknown'
-    except (OSError, ValueError): return 'unknown'
+        if os.stat('/proc/%d' % owner).st_uid != os.getuid(): return 'unknown', 'owner-user-mismatch'
+    except (OSError, ValueError): return 'unknown', 'owner-unreadable'
     chain, visited, child_birth = [], set(), int(birth)
     cursor = parent
     for _ in range(64):
-        if cursor < 1 or cursor in visited: return 'unknown'
+        if cursor < 1: return 'unknown', 'ancestry-unavailable'
+        if cursor in visited: return 'unknown', 'ancestry-cycle'
         visited.add(cursor)
         try:
             value = stat(cursor)
             uid = os.stat('/proc/%d' % cursor).st_uid
-        except (OSError, ValueError): return 'unknown'
-        if int(value[1]) > child_birth or uid != os.getuid(): return 'unknown'
+        except (OSError, ValueError): return 'unknown', 'ancestor-unreadable'
+        if int(value[1]) > child_birth: return 'unknown', 'ancestor-replaced'
+        if uid != os.getuid(): return 'unknown', 'ancestor-user-mismatch'
         chain.append((cursor, value, uid))
         if cursor == owner:
             for pid, expected, expected_uid in chain:
-                if stat(pid) != expected or os.stat('/proc/%d' % pid).st_uid != expected_uid: raise ValueError()
-            return 'current-window'
+                if stat(pid) != expected or os.stat('/proc/%d' % pid).st_uid != expected_uid: return 'unknown', 'ancestor-replaced'
+            return 'current-window', 'current-host-ancestry'
         if cursor == owner_stat[0]:
-            if stat(owner) != owner_stat: raise ValueError()
-            return 'other-window'
-        if cursor == 1: return 'other-window'
+            if stat(owner) != owner_stat: return 'unknown', 'ancestor-replaced'
+            return 'other-window', 'shared-parent'
+        if cursor == 1: return 'other-window', 'different-host-ancestry'
         child_birth, cursor = int(value[1]), value[0]
-    return 'unknown'
+    return 'unknown', 'ancestry-limit'
 
 def eligible(row):
-    return row['kind'] == 'unowned-hub' and row['scope'] in ('current-window', 'detached')
+    return row['kind'] == 'unowned-hub' and row.get('credentialScopeVerified') is True
 
 def match(current, target):
-    if any(current[k] != target[k] for k in ('pid', 'parentPid', 'startTicks', 'bootId', 'commandHash', 'scope')) or not eligible(current): raise ValueError()
+    if any(current[k] != target[k] for k in ('pid', 'parentPid', 'startTicks', 'bootId', 'commandHash', 'scope', 'credentialScopeVerified')) or not eligible(current): raise ValueError()
 
 def inspect(pid, request, boot_id):
     base = '/proc/%d' % pid
     before = stat(pid)
     uid = os.stat(base).st_uid
     executable = os.readlink(base + '/exe')
+    image = os.stat(base + '/exe')
+    image_identity = (image.st_dev, image.st_ino)
     with open(base + '/cmdline', 'rb') as f: raw = f.read(131073)
     if len(raw) > 131072: raise ValueError()
     args = raw.decode('utf-8', errors='strict').split('\0')
+    if args and args[-1] == '': args.pop()
     def value(flag):
         found = [a for a in args if a.split('=')[0] == flag]
         return found[0][len(flag)+1:] if len(found) == 1 and found[0].startswith(flag + '=') else None
     port, csrf = value('--hub-port'), value('--csrf_token')
-    official = uid == os.getuid() and executable == request['executable'] and args.count('--hub') == 1 and len([a for a in args if a.split('=')[0] == '--hub']) == 1 and value('--app_data_dir') == 'antigravity' and port is not None and re.fullmatch(r'[1-9][0-9]{0,4}', port) and int(port) <= 65535 and csrf is not None and re.fullmatch(r'[A-Za-z0-9_-]{16,128}', csrf)
-    process_home = home(pid) if official else None
-    official = official and process_home == request.get('home') and process_home is not None
+    identity = uid == os.getuid() and executable == request['executable'] and args and args[0] == request['executable']
+    hub_args = args.count('--hub') == 1 and len([a for a in args if a.split('=')[0] == '--hub']) == 1 and value('--app_data_dir') == 'antigravity' and port is not None and re.fullmatch(r'[1-9][0-9]{0,4}', port) and int(port) <= 65535 and csrf is not None and re.fullmatch(r'[A-Za-z0-9_-]{16,128}', csrf)
+    process_home, environment_proof, environment_reason = launch_environment(pid, request.get('home')) if identity and hub_args else (None, '', 'environment-unreadable')
+    official = identity and hub_args and process_home == request.get('home') and process_home is not None and environment_reason not in ('home-mismatch', 'environment-unreadable')
+    credential_reason = 'process-identity-unverified' if not identity else 'hub-argv-unverified' if not hub_args else environment_reason
+    if official and credential_reason == 'verified' and any(not supported_argument(arg) for arg in args[1:]): credential_reason = 'unsupported-launch-flags'
+    credential_verified = official and credential_reason == 'verified'
     advertised = official and port == str(request.get('port')) and csrf == request.get('csrfToken')
     current = advertised
-    ownership = 'current-window' if current else scope(before[0], before[1], request['ownerPid']) if official else 'unknown'
+    ownership, scope_reason = ('current-window', 'api-capability-match') if current else scope(before[0], before[1], request['ownerPid']) if official else ('unknown', 'ancestry-unavailable')
     parent_state = 'unknown'
     try:
         stat(before[0]); parent_state = 'alive'
@@ -97,9 +137,10 @@ def inspect(pid, request, boot_id):
         started = datetime.datetime.fromtimestamp(btime + int(before[1]) / os.sysconf('SC_CLK_TCK'), datetime.timezone.utc).isoformat()
     except (OSError, ValueError, StopIteration, OverflowError): pass
     with open(base + '/cmdline', 'rb') as f: after = f.read(131073)
-    if before != stat(pid) or uid != os.stat(base).st_uid or executable != os.readlink(base + '/exe') or raw != after or boot_id != boot() or process_home is not None and home(pid) != process_home: raise ValueError()
-    proof_hash = hashlib.sha256(raw + b'\0HOME=' + (process_home or '').encode('utf-8') + b'\0PPID=' + str(before[0]).encode()).hexdigest()
-    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official else 'unverified', 'scope': ownership, 'parentState': parent_state, 'startedAt': started}
+    after_image = os.stat(base + '/exe')
+    if before != stat(pid) or uid != os.stat(base).st_uid or executable != os.readlink(base + '/exe') or image_identity != (after_image.st_dev, after_image.st_ino) or raw != after or boot_id != boot() or process_home is not None and launch_environment(pid, request.get('home')) != (process_home, environment_proof, environment_reason): raise ValueError()
+    proof_hash = hashlib.sha256(raw + b'\0ENV=' + environment_proof.encode('utf-8') + b'\0PPID=' + str(before[0]).encode() + b'\0IMAGE=' + ('%d:%d' % image_identity).encode()).hexdigest()
+    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official else 'unverified', 'scope': ownership, 'scopeReason': scope_reason, 'credentialScopeVerified': credential_verified, 'credentialScopeReason': credential_reason, 'parentState': parent_state, 'startedAt': started}
 
 def bind(target, request):
     fd = os.pidfd_open(target['pid'], 0)
