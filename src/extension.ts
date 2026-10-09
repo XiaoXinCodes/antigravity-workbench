@@ -1,3 +1,4 @@
+import { registerAutomationUi, registerIdentityPrivacy } from './automation-ui';
 import { registerLocalizedHelp } from './localized-help';
 import { registerI18n } from './i18n-vscode';
 import { localizeMessage, t as tr } from './i18n';
@@ -21,17 +22,21 @@ let flushImageSession: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionDiagnosticsApi> {
   registerI18n(context);
+  registerIdentityPrivacy(context);
   const helpUri = registerLocalizedHelp(context);
   let refreshDebug = (): void => undefined;
   const debug = registerDebugUi(context, () => refreshDebug(), { diagnoseCatalog: signal => direct.diagnoseCatalog(signal), revealCatalog: () => dashboard.revealCatalog() });
   const tree = { accounts: [] as Account[], warning: null as string | null, refresh: (): void => dashboard.refresh() };
   let accountChanged = (): void => undefined;
+  let automationChanged = (): void => undefined;
   let quotaChanged = (): void => undefined;
-  const live = registerLiveUi(context, { changed: () => { tree.refresh(); accountChanged(); quotaChanged(); } });
+  const live = registerLiveUi(context, { changed: () => { tree.refresh(); accountChanged(); quotaChanged(); automationChanged(); } });
   const quotaTools = registerQuotaTools(context, live, () => tree.refresh());
   quotaChanged = quotaTools.refresh;
   const direct = createDirectImageIntegration(context, () => live.getAccounts(), { accountsReady: () => live.getState().accountStorageReady });
-  const images = registerDirectImageUi(context, direct, () => tree.refresh(), undefined, quotaTools.preferences);
+  const automation = registerAutomationUi(context, live);
+  automationChanged = automation.refresh;
+  const images = registerDirectImageUi(context, direct, () => tree.refresh(), undefined, quotaTools.preferences, sample => { void automation.observe([sample]); });
   flushImageSession = images.flush;
   accountChanged = () => {
     const state = live.getState();

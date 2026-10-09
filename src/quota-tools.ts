@@ -1,3 +1,4 @@
+import { displayAccount, displayEmail, hideIdentityText, onIdentityPresentationChange } from './identity-presentation';
 import * as vscode from 'vscode';
 import { localizeMessage, locale, onLanguageChange, t as tr } from './i18n';
 import { accountQuotaSnapshot, accountQuotaStale, quotaEntries, quotaValue } from './quota-presentation';
@@ -27,13 +28,13 @@ export function registerQuotaTools(context: vscode.ExtensionContext, live: LiveU
   function rows(): QuotaPick[] {
     const prefs = preferences.getState(), result: QuotaPick[] = [];
     for (const account of live.getAccounts()) {
-      result.push({ label: account.label, kind: vscode.QuickPickItemKind.Separator, identity: account.id });
+      result.push({ label: displayAccount(account), kind: vscode.QuickPickItemKind.Separator, identity: account.id });
       const entries = quotaEntries(account).sort((a, b) => Number(prefs.favorites.includes(b.key)) - Number(prefs.favorites.includes(a.key)));
-      if (!entries.length) result.push({ label: account.expectedEmail, description: tr('quota.empty'), accountId: account.id, identity: account.id + ':empty', buttons: [] });
+      if (!entries.length) result.push({ label: displayEmail(account.expectedEmail, live.getAccounts()), description: tr('quota.empty'), accountId: account.id, identity: account.id + ':empty', buttons: [] });
       for (const row of entries) result.push({ identity: JSON.stringify([account.id, row.key]), accountId: account.id, key: row.key,
         label: (prefs.favorites.includes(row.key) ? '$(star-full) ' : '') + row.bucket.label,
-        description: `${account.label} · ${quotaValue(row.bucket)}${accountQuotaStale(account) ? tr('quota.staleSuffix') : ''}`,
-        detail: [account.expectedEmail, tr('quota.observed', { p0: date(accountQuotaSnapshot(account)?.observedAt) }), tr('quota.reset', { p0: date(row.bucket.resetAt) }), account.quota?.phase === 'loading' ? tr('quota.loading') : account.quota?.message ? localizeMessage(account.quota.message) : ''].filter(Boolean).join(' · '),
+        description: `${displayAccount(account)} · ${quotaValue(row.bucket)}${accountQuotaStale(account) ? tr('quota.staleSuffix') : ''}`,
+        detail: [displayEmail(account.expectedEmail, live.getAccounts()), tr('quota.observed', { p0: date(accountQuotaSnapshot(account)?.observedAt) }), tr('quota.reset', { p0: date(row.bucket.resetAt) }), account.quota?.phase === 'loading' ? tr('quota.loading') : account.quota?.message ? hideIdentityText(localizeMessage(account.quota.message), live.getAccounts()) : ''].filter(Boolean).join(' · '),
         buttons: [prefs.favorites.includes(row.key) ? unfavoriteButton : favoriteButton, pinButton] });
     }
     return result;
@@ -43,8 +44,8 @@ export function registerQuotaTools(context: vscode.ExtensionContext, live: LiveU
     const prefs = preferences.getState(), pinned = pinnedQuota(live.getAccounts(), prefs.pin);
     if (!prefs.pin) status.hide();
     else {
-      status.text = pinned ? `$(graph) ${pinned.account.label.slice(0, 18)} · ${pinned.row.bucket.label.slice(0, 24)} ${quotaValue(pinned.row.bucket)}${accountQuotaStale(pinned.account) ? tr('quota.staleSuffix') : ''}` : `$(graph) ${tr('quota.pinMissing')}`;
-      status.tooltip = pinned ? [pinned.account.expectedEmail, pinned.row.bucket.label, tr('quota.observed', { p0: date(accountQuotaSnapshot(pinned.account)?.observedAt) }), tr('quota.reset', { p0: date(pinned.row.bucket.resetAt) }), tr('quota.quickPick')].join('\n') : tr('quota.pinMissing');
+      status.text = pinned ? `$(graph) ${displayAccount(pinned.account).slice(0, 18)} · ${pinned.row.bucket.label.slice(0, 24)} ${quotaValue(pinned.row.bucket)}${accountQuotaStale(pinned.account) ? tr('quota.staleSuffix') : ''}` : `$(graph) ${tr('quota.pinMissing')}`;
+      status.tooltip = pinned ? [displayEmail(pinned.account.expectedEmail, live.getAccounts()), pinned.row.bucket.label, tr('quota.observed', { p0: date(accountQuotaSnapshot(pinned.account)?.observedAt) }), tr('quota.reset', { p0: date(pinned.row.bucket.resetAt) }), tr('quota.quickPick')].join('\n') : tr('quota.pinMissing');
       status.show();
     }
     if (pick) {
@@ -83,7 +84,7 @@ export function registerQuotaTools(context: vscode.ExtensionContext, live: LiveU
     refresh(); current.show();
   });
   const timer = setInterval(refresh, 15_000); timer.unref?.();
-  context.subscriptions.push(status, onLanguageChange(refresh), { dispose: () => { disposed = true; batch.dispose(); clearInterval(timer); pick?.hide(); status.dispose(); } });
+  context.subscriptions.push(status, onLanguageChange(refresh), onIdentityPresentationChange(refresh), { dispose: () => { disposed = true; batch.dispose(); clearInterval(timer); pick?.hide(); status.dispose(); } });
   refresh();
   return { refresh, preferences, getState: () => ({ ...preferences.getState(), batch: batch.getState(), ...(error ? { error } : {}) }) };
 }

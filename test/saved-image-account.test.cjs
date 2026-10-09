@@ -28,6 +28,12 @@ function fixture({expired=false}={}){
  const engine=new SavedImageAccounts(deps);const signal=new AbortController().signal;
  return{engine,deps,signal,accounts,vault,events,provider,service,get reads(){return reads},get exchanges(){return exchanges},setNow:n=>{now=n}};
 }
+test('scheduled requests can disable refresh for current login while saved logins keep the existing rotation transaction',async()=>{
+ const f=fixture({expired:true});f.deps.refreshAllowed=a=>!a.active;const engine=new SavedImageAccounts(f.deps);engine.selectForWindow(A);engine.selectForWindow(B);
+ await assert.rejects(engine.choices(A,f.signal,'daily'),/REAUTH_REQUIRED/);assert.equal(f.exchanges,0);
+ await engine.choices(B,f.signal,'daily');assert.equal(f.exchanges,1);assert.equal(f.vault.has(QUOTA_PENDING_PREFIX+B),false);assert.equal(f.vault.has(QUOTA_REFRESH_PREFIX+B),false);
+ assert.ok(f.events.every(event=>event[0]!=='write'||event[1].startsWith('live-switch.')));
+});
 test('unselected saved accounts remain unread until an explicit controller selection',async()=>{
  const f=fixture();await assert.rejects(f.engine.choices(B,f.signal,'daily'),/SELECTION_REQUIRED/);assert.equal(f.reads,0);assert.deepEqual(f.events,[]);
  f.engine.selectForWindow(B);assert.equal(f.engine.isSelected(B),true);assert.equal(f.engine.isSelected(A),false);

@@ -1,3 +1,6 @@
+import { displayAccount, hideIdentityText, onIdentityPresentationChange, identityAlias, identityHidden } from './identity-presentation';
+import { accountDisplayFingerprint } from './quota-presentation';
+import type { AlertSample } from './quota-alerts';
 import { locale, localizeLines, localizeMessage, onLanguageChange, t as tr } from './i18n';
 import { verifiedCurrentAccountId } from './current-account';
 import * as vscode from 'vscode';
@@ -35,7 +38,7 @@ function nativePath(uri: vscode.Uri): string | undefined {
 }
 
 /** Only handles UI state; account binding, HTTP, image validation and saving live outside the webview. */
-export function registerDirectImageUi(context: vscode.ExtensionContext, direct: Direct, outputChanged?: () => void, sessionStorage?: ImageSessionStorage, preferences = new QuotaPreferences(context.globalState)) {
+export function registerDirectImageUi(context: vscode.ExtensionContext, direct: Direct, outputChanged?: () => void, sessionStorage?: ImageSessionStorage, preferences = new QuotaPreferences(context.globalState), observeQuota?: (sample: AlertSample) => void) {
   const storageRoot = context.storageUri?.fsPath ?? context.globalStorageUri?.fsPath;
   const session = sessionStorage ?? new ImageSessionStore(storageRoot ? path.join(storageRoot, context.storageUri ? 'image-session' : 'image-session-no-workspace') : undefined);
   let initialized: Promise<void> | undefined, loaded = false, storageNotice = '', saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -122,6 +125,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       loaded = true;
     } catch (error) { storageNotice = sessionWarning(error); }
   })();
+  const privateText = (value: string) => hideIdentityText(value, direct.listAccounts?.() ?? choices.accounts);
   const emit = (save = true, languageOnly = false) => { if (save) scheduleSave(); if (!panel) return;
     const currentId = verifiedCurrentAccountId(choices.accounts, accountSnapshot === undefined ? choices.accounts.find(account => account.active)?.expectedEmail : officialEmail, officialBlocked);
     quota.selection(JSON.stringify([selectedSavedId ?? '@current', draft.accountId, draft.modelId, direct.getEndpoint()]));
@@ -131,19 +135,19 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         ...(comparison?.versions.filter(v => [comparison?.left, comparison?.right].includes(v.key) && !comparison?.unavailable[v.key]).map(v => path.dirname(v.file)) ?? [])])].map(directory => vscode.Uri.file(directory)) };
     const compareSide = (key: string) => { const v = comparison?.versions.find(v => v.key === key); return v ? { key, label: localizeMessage(v.label), name: path.basename(v.file), width: v.width, height: v.height,
       unavailable: comparison?.unavailable[key] ? localizeMessage(comparison.unavailable[key]!) : undefined, preview: comparison?.unavailable[key] ? '' : panel?.webview.asWebviewUri?.(vscode.Uri.file(v.file)).toString() ?? '' } : undefined; };
-    void panel.webview.postMessage({ type: 'state', languageOnly, busy, draftRevision, draftEpoch, actionRevision, status: localizeImageFailure(status), storageNotice: localizeMessage(storageNotice), storageBlocked: !!storageNotice, actionNotice: localizeMessage(actionNotice), editorTarget: project.state(),
+    void panel.webview.postMessage({ type: 'state', languageOnly, busy, draftRevision, draftEpoch, actionRevision, status: privateText(localizeImageFailure(status)), storageNotice: privateText(localizeMessage(storageNotice)), storageBlocked: !!storageNotice, actionNotice: privateText(localizeMessage(actionNotice)), editorTarget: project.state(),
     iteration: origin ? { taskId: origin.taskId, imageIndex: origin.imageIndex, name: path.basename(origin.file), modelUnavailable } : undefined,
     savedDrafts: savedDrafts.map(s => ({ id: s.id, savedAt: s.savedAt, summary: s.draft.prompt.slice(0, 80) || tr("directImageUi.de5f067d27") })),
     comparison: comparison ? { versions: comparison.versions.map(v => ({ key: v.key, label: localizeMessage(v.label) })), left: compareSide(comparison.left), right: compareSide(comparison.right) } : undefined,
     imageFavorites: preferences.getState().imageFavorites,
-    imageQuota: { ...quota.getState(), error: localizeImageFailure(quota.getState().error ?? '') }, accountRetryPending: !!retryTimer, accountStatus: localizeImageFailure(accountStatus), accountBlocked: accountBlocked || choicesLoading || modelUnavailable, choicesLoading, canCheckAccount: !!selectedSavedId || !officialBlocked,
-    recentDiagnostic: formatRecentImageFailure(recent.get()), operationHistory: localizeLines(operationHistory), choices: {
-    accounts: choices.accounts.map(x => ({ id: x.id, label: x.label + (x.id === currentId ? tr("directImageUi.d381a6a80a") : ''), active: x.id === currentId, unavailable: x.hostCurrent === false || x.migrationState === 'pending' })), models: choices.models },
+    imageQuota: { ...quota.getState(), error: localizeImageFailure(quota.getState().error ?? '') }, accountRetryPending: !!retryTimer, accountStatus: privateText(localizeImageFailure(accountStatus)), accountBlocked: accountBlocked || choicesLoading || modelUnavailable, choicesLoading, canCheckAccount: !!selectedSavedId || !officialBlocked,
+    recentDiagnostic: privateText(formatRecentImageFailure(recent.get())), operationHistory: privateText(localizeLines(operationHistory)), choices: {
+    accounts: choices.accounts.map(x => ({ id: x.id, label: displayAccount(x) + (x.id === currentId ? tr("directImageUi.d381a6a80a") : ''), active: x.id === currentId, unavailable: x.hostCurrent === false || x.migrationState === 'pending' })), models: choices.models },
     outputDirectory, outputName: outputDirectory ? path.basename(outputDirectory) || outputDirectory : '', references: references.map(x => path.basename(x)), referenceRevision,
     referenceImages: references.map((file, index) => ({ index, name: path.basename(file), source: file === origin?.file,
       preview: panel?.webview.asWebviewUri?.(vscode.Uri.file(file)).toString() ?? '' })),
     images: images.map((x, index) => ({ index, name: path.basename(x.file), width: x.width, height: x.height })),
-    tasks: tasks.map(task => ({ ...task, status: localizeImageFailure(task.status), ...(task.count === 0 && !task.prompt ? { promptSummary: localizeMessage(task.promptSummary) } : {}), prompt: undefined, references: undefined, outputDirectory: undefined,
+    tasks: tasks.map(task => ({ ...task, accountLabel: identityHidden() ? identityAlias(task.accountId ?? task.id) : task.accountLabel, status: privateText(localizeImageFailure(task.status)), ...(task.count === 0 && !task.prompt ? { promptSummary: localizeMessage(task.promptSummary) } : {}), prompt: undefined, references: undefined, outputDirectory: undefined,
       origin: task.origin ? { taskId: task.origin.taskId, imageIndex: task.origin.imageIndex, rootTaskId: task.origin.rootTaskId, rootImageIndex: task.origin.rootImageIndex } : undefined,
       images: task.images.map((x, index) => ({ index, name: path.basename(x.file), width: x.width, height: x.height, projectCopy: x.projectCopy ? path.basename(x.projectCopy.file) : undefined,
       unavailable: x.unavailable ? localizeMessage(x.unavailable) : undefined, preview: x.unavailable ? '' : panel?.webview.asWebviewUri?.(vscode.Uri.file(x.file)).toString() ?? '' })) })), draft }); };
@@ -153,6 +157,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     void panel.webview.postMessage({ type: 'language', language: locale() });
     emit(false, true);
   }));
+  context.subscriptions.push(onIdentityPresentationChange(() => emit(false, true)));
   const project = new ImageProjectActions(context, () => emit(false));
   const quota = new ImageQuotaQuery(() => emit(false));
   const refresh = async (force = false) => {
@@ -291,11 +296,15 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         !choices.models.some(model => model.id === draft.modelId) || typeof direct.readImageQuota !== 'function') return;
     const key = quotaSelection(), owner = panel;
     if (expected !== undefined && expected !== key) return;
+    const boundAccount = (direct.listAccounts?.() ?? choices.accounts).find(a => a.id === draft.accountId);
+    const fingerprint = boundAccount ? accountDisplayFingerprint(boundAccount) : undefined;
     const id = draft.accountId, model = draft.modelId, selection = selectedSavedId, endpoint = direct.getEndpoint();
     await quota.query(async signal => {
       const result = await direct.readImageQuota(id, model, signal, selection);
       if (panel !== owner || quotaSelection() !== key || result.accountId !== id || result.modelId !== model || result.endpoint !== endpoint)
         throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
+      const current = (direct.listAccounts?.() ?? choices.accounts).find(a => a.id === id);
+      if (fingerprint && current && accountDisplayFingerprint(current) === fingerprint) observeQuota?.({ accountId: id, fingerprint, quotaKey: JSON.stringify([endpoint, model]), modelLabel: model, observedAt: result.queriedAt, fraction: result.remainingFraction });
       return result;
     }, imageQuotaErrorText);
   };
@@ -516,7 +525,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         });
         let answer: string | undefined;
         try { answer = await Promise.race([vscode.window.showWarningMessage(
-          tr("directImageUi.53e217910b", { p0: account.label, p1: model.id, p2: request.count, p3: request.outputDirectory }),
+          tr("directImageUi.53e217910b", { p0: displayAccount(account), p1: model.id, p2: request.count, p3: request.outputDirectory }),
           { modal: true }, generationConsent), cancelledConsent]); }
         finally { consentSignal.removeEventListener('abort', stopConsent); }
         if (answer !== generationConsent || cancelRequested || panel !== owner || (accountBlocked && !selectedSavedId)) { status = tr("directImageUi.5c3249c289"); task.phase = 'cancelled'; task.status = status; return; }

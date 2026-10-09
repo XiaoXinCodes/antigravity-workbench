@@ -55,6 +55,6 @@ export function quotaChoices(accounts: LiveAccountView[]): { key: string; label:
 export function comparedQuota(account: LiveAccountView, key: string): QuotaBucket | undefined {
   return quotaEntries(account).find(row => row.key === key && row.comparable)?.bucket;
 }
-export function accountDisplayFingerprint(account: LiveAccountView): string {
+export function accountDisplayFingerprint(account: { id: string; expectedEmail: string; hostId?: string; capturedAt?: string; migrationState?: string }): string {
   return JSON.stringify([account.id, account.expectedEmail, account.hostId, account.capturedAt, account.migrationState]);
 }

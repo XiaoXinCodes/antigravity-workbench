@@ -46,5 +46,8 @@
   "command.quota.cancel": "Cancel quota refresh",
   "command.quota.unpin": "Unpin quota from status bar",
   "command.quota.favorite": "Favorite quota item",
-  "command.quota.pin": "Pin quota item"
+  "command.quota.pin": "Pin quota item",
+  "command.automation.open": "Manage Scheduled Requests and Alerts",
+  "command.privacy.toggle": "Toggle Account Identity Privacy",
+  "configuration.hideIdentity": "Show stable account aliases across the workbench, images, tasks, quick picks and status bar."
 }

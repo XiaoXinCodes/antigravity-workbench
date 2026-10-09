@@ -22,6 +22,7 @@ export interface SavedImageDependencies {
   models(token: string, project: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<unknown>;
   parseModels(value: unknown): ImageModelChoice[];
   client?: SavedAccountQuotaClient;
+  refreshAllowed?(account: AccountChoice): boolean;
   now?: () => number;
 }
 interface Prepared {
@@ -75,7 +76,7 @@ export class SavedImageAccounts {
         if (!diagnostic && cached && cached.expiresAt > this.now()) { await cached.verify(signal); return cached; }
         let expectedRevision = snapshot.revision;
         const refresh = store.refresh(id, assertPresent);
-        const prepared = await this.client.withAccess(snapshot.account, signal, { refresh: {
+        const prepared = await this.client.withAccess(snapshot.account, signal, this.deps.refreshAllowed?.(this.selected(id)) === false ? {} : { refresh: {
           ...refresh,
           stage: async (expectedSlots, next) => { assertPresent(); await store.verify(id, expectedRevision, true); await refresh.stage(expectedSlots, next); },
           commit: async (expectedSlots, next) => {

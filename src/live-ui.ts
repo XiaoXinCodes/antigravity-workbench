@@ -1,3 +1,4 @@
+import { displayAccount, displayEmail } from './identity-presentation';
 import { localizeMessage, t as tr } from './i18n';
 import { accountDisplayFingerprint } from './quota-presentation';
 import { verifiedCurrentAccountId } from './current-account';
@@ -1055,7 +1056,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   async function selectSwitchAccount(argument: unknown): Promise<SavedLogin | undefined> {
     const direct = accountArgument(argument, items());
     if (direct) return direct;
-    const selected = await vscode.window.showQuickPick(items().map(account => ({ label: account.label, description: account.expectedEmail, detail: tr('liveUi.3e646493ab', { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr('liveUi.8f858aa51c') : account.migrationState === 'verified' ? tr('workbenchView.77a1864d31') : account.identitySource === 'hub' ? tr('liveUi.ca7dd652b2') : tr('liveUi.905e17f65c') }), account })), { title: tr('liveUi.13e45587a6') });
+    const selected = await vscode.window.showQuickPick(items().map(account => ({ label: displayAccount(account), description: displayEmail(account.expectedEmail, items()), detail: tr('liveUi.3e646493ab', { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr('liveUi.8f858aa51c') : account.migrationState === 'verified' ? tr('workbenchView.77a1864d31') : account.identitySource === 'hub' ? tr('liveUi.ca7dd652b2') : tr('liveUi.905e17f65c') }), account })), { title: tr('liveUi.13e45587a6') });
     if (!selected && !items().length) void vscode.window.showInformationMessage(tr('liveUi.2fdb70d003'));
     return selected?.account;
   }
@@ -1263,7 +1264,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (await service!.journal() || await locks.hasRecovery()) throw new LiveError('RECOVERY_PENDING');
     const available = items().filter(account => service!.hostIsCurrent(account));
     if (!available.length) { void vscode.window.showInformationMessage(tr("liveUi.ebe15d73de")); return; }
-    const choices = available.map(account => ({ label: account.label, description: account.expectedEmail, detail: tr("liveUi.656efe0acc", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.c3f2260607") : '' }), picked: true, id: account.id }));
+    const choices = available.map(account => ({ label: displayAccount(account), description: displayEmail(account.expectedEmail, items()), detail: tr("liveUi.656efe0acc", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.c3f2260607") : '' }), picked: true, id: account.id }));
     const selected = await vscode.window.showQuickPick(choices, { title: tr("liveUi.ea24112b94"), placeHolder: tr("liveUi.c8047ed0e8"), canPickMany: true, ignoreFocusOut: true });
     if (!selected?.length) return;
     const ids = [...new Set(selected.map(item => item.id))];
@@ -1313,7 +1314,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (password === undefined) return;
     const archive = await decryptAccountArchive(encrypted, password);
     // Keep token-bearing objects out of all VS Code UI items and webview messages.
-    const choices = archive.accounts.map((account, position) => ({ label: account.label, description: account.expectedEmail, detail: tr("liveUi.d3e78920c7", { p0: account.capturedAt }), picked: true, position }));
+    const choices = archive.accounts.map((account, position) => ({ label: displayAccount({ ...account, id: items().find(a => a.expectedEmail.toLowerCase() === account.expectedEmail.toLowerCase())?.id ?? account.expectedEmail.toLowerCase() }), description: displayEmail(account.expectedEmail, items()), detail: tr("liveUi.d3e78920c7", { p0: account.capturedAt }), picked: true, position }));
     const selected = await vscode.window.showQuickPick(choices, { title: tr("liveUi.c3b6545057", { p0: archive.accounts.length }), placeHolder: tr("liveUi.57f165c49b"), canPickMany: true, ignoreFocusOut: true });
     if (!selected?.length) return;
     const positions = [...new Set(selected.map(item => item.position))];
@@ -1332,7 +1333,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
           if (!matches.length) continue;
           let target = matches[0]!;
           if (matches.length > 1) {
-            const selectedTarget = await vscode.window.showQuickPick(matches.map(item => ({ label: item.label, description: item.expectedEmail, detail: `${item.capturedAt} · ${item.id}`, id: item.id })), { title: tr('liveUi.importTarget', { p0: account.expectedEmail }), ignoreFocusOut: true });
+            const selectedTarget = await vscode.window.showQuickPick(matches.map(item => ({ label: displayAccount(item), description: displayEmail(item.expectedEmail, items()), detail: `${item.capturedAt} · ${item.id}`, id: item.id })), { title: tr('liveUi.importTarget', { p0: displayEmail(account.expectedEmail, items()) }), ignoreFocusOut: true });
             if (!selectedTarget) return;
             const exact = matches.find(item => item.id === selectedTarget.id); if (!exact) throw new LiveError('MIGRATION_TARGET_REQUIRED'); target = exact;
           }
@@ -1513,10 +1514,10 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   const switchAccount = async (argument: unknown, alreadyConfirmed = false, fingerprint?: string): Promise<boolean | void> => {
     if (!alreadyConfirmed) blockedSwitch = undefined;
     const direct = accountArgument(argument, items());
-    const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: account.label, description: account.expectedEmail, detail: tr("liveUi.3e646493ab", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.8f858aa51c") : account.migrationState === 'verified' ? tr('workbenchView.77a1864d31') : account.identitySource === 'hub' ? tr("liveUi.ca7dd652b2") : tr("liveUi.905e17f65c") }), account })), { title: tr("liveUi.13e45587a6") });
+    const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: displayAccount(account), description: displayEmail(account.expectedEmail, items()), detail: tr("liveUi.3e646493ab", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.8f858aa51c") : account.migrationState === 'verified' ? tr('workbenchView.77a1864d31') : account.identitySource === 'hub' ? tr("liveUi.ca7dd652b2") : tr("liveUi.905e17f65c") }), account })), { title: tr("liveUi.13e45587a6") });
     if (!selected) { if (!items().length) void vscode.window.showInformationMessage(tr("liveUi.2fdb70d003")); return; }
     const switchConsent = tr("liveUi.e0351ba254");
-    if (!alreadyConfirmed && !preparedBackendAction && await vscode.window.showWarningMessage(tr("liveUi.9dc41427e9", { p0: selected.account.expectedEmail, p1: selected.account.migrationState === 'pending' ? tr("liveUi.61d34541c9") : '' }), { modal: true }, switchConsent) !== switchConsent) return;
+    if (!alreadyConfirmed && !preparedBackendAction && await vscode.window.showWarningMessage(tr("liveUi.9dc41427e9", { p0: displayEmail(selected.account.expectedEmail, items()), p1: selected.account.migrationState === 'pending' ? tr("liveUi.61d34541c9") : '' }), { modal: true }, switchConsent) !== switchConsent) return;
     let backend: LoginLifecycle;
     try { backend = await consumePreparedBackend('switch'); }
     catch (error) {
@@ -1752,10 +1753,10 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   register('remove', async (argument) => {
     if (await service!.journal() || await locks.hasRecovery()) throw new LiveError('RECOVERY_PENDING');
     const direct = accountArgument(argument, items());
-    const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: account.label, description: account.expectedEmail, account })), { title: tr("liveUi.20cf7b3241") });
+    const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: displayAccount(account), description: displayEmail(account.expectedEmail, items()), account })), { title: tr("liveUi.20cf7b3241") });
     if (!selected) return;
     const removeConsent = tr("liveUi.49283708f3");
-    if (await vscode.window.showWarningMessage(tr("liveUi.a1d08d0d5f", { p0: selected.account.expectedEmail }), { modal: true }, removeConsent) !== removeConsent) return;
+    if (await vscode.window.showWarningMessage(tr("liveUi.a1d08d0d5f", { p0: displayEmail(selected.account.expectedEmail, items()) }), { modal: true }, removeConsent) !== removeConsent) return;
     // A valid binding to another host cannot be the current login here. Removing
     // that saved copy does not depend on this host's official login being ready.
     const foreignCopy = /^[a-f0-9]{64}$/u.test(selected.account.hostId ?? '') && service!.hostIsCurrent(selected.account) === false;

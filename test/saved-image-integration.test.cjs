@@ -24,7 +24,7 @@ async function fixture(t,{failSecond=false,locked=false,recovery=false,modelErro
   if(name==='./direct-image-transport')return{sendDirectImage:async(token,body,_signal,_unused,endpoint)=>{assert.ok(held);assert.equal(token,'fixture-new-B');assert.equal(body.project,'project-B');assert.equal(body.model,model);assert.equal(endpoint,'daily');sends++;accounts[0].active=false;accounts[1].active=true;if(failSecond&&sends===2)throw Error('IMAGE_DIRECT_RESOURCE_EXHAUSTED');return{candidates:[{content:{parts:[{inlineData:{mimeType:'image/png',data:png().toString('base64')}}]}}]}}};
   return original.call(this,name,...args);
  };
- let direct;try{delete require.cache[entry];for(const m of ['saved-image-account','account-quota','direct-image-binding'])delete require.cache[require.resolve('../out/'+m)];direct=require(entry).createDirectImageIntegration(context,()=>accounts,{locks,journal:{write:async()=>true,read:async()=>[],dispose(){}}})}finally{Module._load=original;delete require.cache[entry]}
+ let direct;try{delete require.cache[entry];for(const m of ['saved-account-store','saved-image-account','account-quota','direct-image-binding'])delete require.cache[require.resolve('../out/'+m)];direct=require(entry).createDirectImageIntegration(context,()=>accounts,{locks,journal:{write:async()=>true,read:async()=>[],dispose(){}}})}finally{Module._load=original;delete require.cache[entry]}
  const request={accountId:B,accountSource:'saved',modelId:model,prompt:'synthetic B scene',aspectRatio:'1:1',count:3,references:[],outputDirectory:output,endpoint:'daily'};
  return{direct,request,events,writes,vault,originalA,get reads(){return reads},get sends(){return sends},get exchanges(){return exchanges}};
 }
