@@ -16,6 +16,7 @@ async function verify(file) {
   assert.equal(manifest.publisher, 'xiaoxincodes');
   assert.equal(manifest.name, 'antigravity-account-manager');
   assert.equal(manifest.version, source.version);
+  assert.equal(manifest.license, 'MIT');
   const docs = await readZip(file, name => name.endsWith('.md'));
   for (const [name, data] of docs) {
     const $ = cheerio.load(markdown({ html: true }).render(data.toString('utf8')));

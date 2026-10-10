@@ -4,6 +4,16 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.10](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.10) — 2026-10-10
+
+Adopt the MIT open-source license and refresh the guides for current features.
+
+- Use the standard MIT license for project-owned source, permitting commercial use; bundled third-party code retains its own licenses.
+- Refresh both READMEs with workflows for account migration, quota comparison and history, independent image accounts and parameter reuse.
+- Add a quota workflow guide covering the shared language setting and optional alerts and daily/weekly, interval, cron and full-quota recovery requests, disabled by default.
+
+[Release notes](docs/RELEASE_0.1.10.md) · [Validation scope](docs/VALIDATION_0.1.10.md)
+
 ## [0.1.9](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.9) — 2026-10-10
 
 Improve multi-account quota viewing, model selection and optional scheduled tasks.

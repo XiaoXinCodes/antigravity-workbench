@@ -4,6 +4,16 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.10](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.10) — 2026-10-10
+
+采用 MIT 开源许可，并完善当前功能的使用说明。
+
+- 项目自有源码改用标准 MIT 许可，允许商业使用；随包第三方代码保留原有许可。
+- 更新中英 README，补充账号迁移、额度对比与历史、独立生图账号和参数复用的使用流程。
+- 新增额度工作流指南，说明统一语言设置，以及默认关闭的提醒与日／周、间隔、cron、满额恢复定时请求。
+
+[发布说明](docs/RELEASE_0.1.10.md) · [验证范围](docs/VALIDATION_0.1.10.md)
+
 ## [0.1.9](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.9) — 2026-10-10
 
 完善多账号额度查看、模型选择与可选定时任务。
