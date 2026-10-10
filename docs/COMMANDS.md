@@ -1,6 +1,6 @@
 # 设置与命令
 
-命令面板中以 **Antigravity Workbench** 为分类；部分命令要求可信工作区或当前可用状态。下表对应 0.1.0 的扩展清单。界面按钮可能使用更短的名称，例如账号卡片的“刷新”对应“查询所选账号配额”。
+命令面板中以 **Antigravity Workbench** 为分类；部分命令要求可信工作区或当前可用状态。命令以当前扩展清单为准。界面按钮可能使用更短的名称，例如账号卡片的“刷新”对应“查询所选账号配额”。
 
 ## 用户级设置
 
@@ -23,6 +23,13 @@
 | 核验切换后的 hub 身份 | `antigravityAccounts.live.verify` |
 | 查询所选账号配额 | `antigravityAccounts.live.quota` |
 | 取消当前配额查询 | `antigravityAccounts.live.quotaCancel` |
+| 快速查看额度 | `antigravityAccounts.quota.quickPick` |
+| 批量刷新账号额度 | `antigravityAccounts.quota.refreshAll` |
+| 取消额度刷新 | `antigravityAccounts.quota.cancel` |
+| 取消状态栏额度置顶 | `antigravityAccounts.quota.unpin` |
+| 查看额度历史 | `antigravityAccounts.quota.history` |
+| 管理定时请求与提醒 | `antigravityAccounts.automation.open` |
+| 隐藏或显示账号身份 | `antigravityAccounts.privacy.toggle` |
 | 恢复切换前的登录 | `antigravityAccounts.live.restore` |
 | 删除已保存的登录副本 | `antigravityAccounts.live.remove` |
 | 打开图片生成 | `antigravityAccounts.images.open` |

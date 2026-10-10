@@ -12,9 +12,11 @@
 npm ci --ignore-scripts
 npm run check
 python test/release-safety.test.py
+python test/package-docs.test.py
 npm run test:host
 npm run package
-python scripts/verify-release.py artifacts/antigravity-workbench-0.1.0.vsix
+python scripts/verify-release.py artifacts/antigravity-workbench-0.1.9.vsix
+node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.9.vsix
 ```
 
 无显示器 Linux 的宿主测试使用 `xvfb-run -a npm run test:host`。所有默认检查使用合成数据或隔离宿主，不要求真实 Google 登录、账号切换或生图。实际账号验收需单独说明操作范围。
