@@ -3,12 +3,13 @@ import * as vscode from 'vscode';
 import { localizeMessage, locale, onLanguageChange, t as tr } from './i18n';
 import { accountQuotaSnapshot, accountQuotaStale, quotaEntries, quotaValue } from './quota-presentation';
 import { QuotaPreferences, pinnedQuota } from './quota-preferences';
+import { quotaUiStorage } from './quota-ui-storage';
 import { ManualQuotaBatch } from './quota-batch';
 import type { LiveAccountView, LiveUiController } from './live-ui';
 
 interface QuotaPick extends vscode.QuickPickItem { accountId?: string; key?: string; identity: string }
 export function registerQuotaTools(context: vscode.ExtensionContext, live: LiveUiController, changed: () => void) {
-  const preferences = new QuotaPreferences(context.globalState);
+  const preferences = new QuotaPreferences(quotaUiStorage(context.globalState));
   let disposed = false, error = '';
   let pick: vscode.QuickPick<QuotaPick> | undefined;
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
@@ -50,11 +51,12 @@ export function registerQuotaTools(context: vscode.ExtensionContext, live: LiveU
       status.show();
     }
     if (pick) {
-      const value = pick.value, active = pick.activeItems[0]?.identity, selected = pick.selectedItems[0]?.identity;
+      const value = pick.value, active = pick.activeItems[0]?.identity;
       pick.title = tr('quota.quickPick'); pick.placeholder = error ? localizeMessage(error) : tr('quota.pickHint');
       refreshButton.tooltip = tr('quota.batch'); cancelButton.tooltip = tr('quota.cancel'); unpinButton.tooltip = tr('quota.unpin'); favoriteButton.tooltip = tr('quota.favorite'); unfavoriteButton.tooltip = tr('quota.unfavorite'); pinButton.tooltip = tr('quota.pin');
       pick.items = rows(); pick.value = value;
-      pick.activeItems = pick.items.filter(item => item.identity === active); pick.selectedItems = pick.items.filter(item => item.identity === selected);
+      // Restoring selectedItems on a single-select QuickPick triggers another accept.
+      pick.activeItems = pick.items.filter(item => item.identity === active);
       pick.busy = batch.getState().running || live.getAccounts().some(account => account.quota?.phase === 'loading');
       pick.buttons = [refreshButton, cancelButton, ...(prefs.pin ? [unpinButton] : [])];
     }

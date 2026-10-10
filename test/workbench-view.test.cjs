@@ -106,10 +106,10 @@ test('quota view preferences restore from extension state without HTML script in
 });
 test('view-state messages persist only bounded display preferences and ignore extra payloads',async()=>{
  const writes=[],saved={search:'model',compare:JSON.stringify(['bucket','','actual-bucket','5h']),sort:'high',compareOwners:[account.id],compareLabel:'Server model',expanded:{}};
- const f=fixture({}, {get:()=>undefined,update:async(key,value)=>{writes.push({key,value})}});
- await f.message({type:'viewState',state:saved});await f.provider.flushViewState();assert.deepEqual(writes,[{key:'antigravityAccounts.quotaViewState',value:saved}]);
+ const preferences={favorites:['keep'],imageFavorites:['image']};const f=fixture({}, {get:key=>key==='quota.presentation.v1'?preferences:undefined,update:async(key,value)=>{writes.push({key,value})}});
+ await f.message({type:'viewState',state:saved});await f.provider.flushViewState();assert.deepEqual(writes.map(w=>w.key),['quota.presentation.v1','antigravityAccounts.quotaViewState','quota.ui.revision.v1']);assert.deepEqual(writes[0].value,preferences);assert.deepEqual(writes[1].value,saved);assert.match(writes[2].value,/^[a-f0-9-]{36}:1$/);
  for(const message of [{type:'viewState',state:{...saved,quota:{snapshot:'synthetic'}}},{type:'viewState',state:saved,accountId:account.id},{type:'viewState',state:{...saved,search:'x'.repeat(4097)}},{type:'viewState',state:{...saved,compare:'display label'}},{type:'viewState',state:{...saved,compare:JSON.stringify(['local',account.id,'label',0])}}])await f.message(message);
- assert.equal(writes.length,1);f.close();await f.message({type:'viewState',state:{...saved,sort:'low'}});assert.equal(writes.length,1);f.provider.dispose();
+ assert.equal(writes.length,3);f.close();await f.message({type:'viewState',state:{...saved,sort:'low'}});assert.equal(writes.length,3);f.provider.dispose();
 });
 test('invalid persisted view state starts normally and cannot carry account snapshots',()=>{
  const f=fixture({}, {get:()=>({search:'model',sort:'low',slots:'synthetic-never-persist'}),update:async()=>{}});

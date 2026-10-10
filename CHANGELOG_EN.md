@@ -4,6 +4,20 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.9](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.9) — 2026-10-10
+
+Improve multi-account quota viewing, model selection and optional scheduled tasks.
+
+- Compare and sort model quotas in the account list, with cancelable batch refresh, model favorites, collapsible families and quota history.
+- Add native quota QuickPick and an optional pinned account/model status item. Fix repeated pinning after one Enter; preserve search and the active item on refresh, and prevent older state echoes from overwriting saved favorites.
+- Use accurate quota presentation across account and image pages: unknown is not zero, partial quota is not full, and stale data retains its observation time. Preserve scroll, focus and collapsed groups during refresh.
+- Recommend image accounts using the selected model's quota, retain the model when reusing history and flag missing reference images. Add shared identity hiding.
+- Add quota alerts and scheduled requests, disabled by default, with interval, daily and cron schedules, previews, manual tests, pause and cancel.
+- Clarify conversation services, account model directories and image models. Keep service endpoints under advanced settings and retain manual selection for unclassified catalogs.
+- Persist quota comparison and sorting across reloads, and synchronize manual language changes across pages.
+
+[Release notes](docs/RELEASE_0.1.9.md)
+
 ## [0.1.8](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.8) — 2026-10-09
 
 Improve background confirmation for WSL account switching and official launch compatibility.

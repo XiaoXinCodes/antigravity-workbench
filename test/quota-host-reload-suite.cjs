@@ -14,10 +14,10 @@ exports.run=async()=>{
   assert.equal(await read('document.querySelector("#quota-compare").value'),key);
   assert.equal(await read('document.querySelector("#quota-sort").value'),'low');
   assert.equal(await read('document.querySelector("#quota-search").value'),'');
-  assert.equal(fixture.calls.length,0);assert.equal(fixture.imageRuns(),0);
+  assert.equal(fixture.calls.length,0);assert.equal(fixture.imageRuns(),0);assert.deepEqual(fixture.tools.preferences.getState().favorites,[key]);assert.deepEqual(fixture.tools.preferences.getState().imageFavorites,['synthetic-image-model']);
   const evidence=process.env.AG_QUOTA_EVIDENCE,result=JSON.parse(await fs.readFile(path.join(evidence,'result.json'),'utf8'));
   result.checks.compareFullWorkbenchReloadPreservesSelection=true;
-  result.fullWorkbenchReload=true;
+  result.fullWorkbenchReload=true;result.checks.favoritesSurviveFullWorkbenchReload=true;
   await fs.writeFile(path.join(evidence,'result.json'),JSON.stringify(result,null,2));
   console.log('QUOTA_RESTART_RESULT '+JSON.stringify(result));
  }finally{cdp.close()}

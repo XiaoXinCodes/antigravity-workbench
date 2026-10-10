@@ -10,6 +10,7 @@ import type { Account } from './core';
 import type { WorkbenchLocations } from './workbench-locations';
 import { accountQuotaCatalogReady, accountQuotaSnapshot, accountQuotaStale, quotaChoices, quotaEntries, quotaFamily, quotaFraction, quotaValue } from './quota-presentation';
 import type { QuotaPreferencesState } from './quota-preferences';
+import { quotaUiStorage } from './quota-ui-storage';
 import type { QuotaBatchState } from './quota-batch';
 import { quotaViewState, workbenchScript, type QuotaViewState } from './workbench-script';
 import type { ProcessConflictState } from './official-process-recovery';
@@ -149,7 +150,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
   private stateWrite: Promise<void> = Promise.resolve();
   private dispatchWarning: string | null = null;
   private readonly subscriptions: vscode.Disposable[] = [];
-  constructor(private readonly state: () => WorkbenchState, private readonly onResolve?: () => void, private readonly displayStorage?: vscode.Memento) { this.displayState = quotaViewState(displayStorage?.get('antigravityAccounts.quotaViewState')); this.subscriptions.push(onLanguageChange(() => this.refresh()), onIdentityPresentationChange(() => this.refresh())); }
+  private readonly displayStorage: Pick<vscode.Memento, 'get' | 'update'> | undefined;
+  constructor(private readonly state: () => WorkbenchState, private readonly onResolve?: () => void, displayStorage?: vscode.Memento) { this.displayStorage = displayStorage && quotaUiStorage(displayStorage); this.displayState = quotaViewState(this.displayStorage?.get('antigravityAccounts.quotaViewState')); this.subscriptions.push(onLanguageChange(() => this.refresh()), onIdentityPresentationChange(() => this.refresh())); }
   async flushViewState(): Promise<void> { await this.stateWrite; }
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view; this.nonce = randomBytes(16).toString('hex'); this.lastHtml = ''; this.ready = false;

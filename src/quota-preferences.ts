@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 import { accountDisplayFingerprint, quotaEntries } from './quota-presentation';
+import { writeQuotaPreferences } from './quota-ui-storage';
 import type { LiveAccountView } from './live-ui';
 
 const KEY = 'quota.presentation.v1';
@@ -17,7 +18,7 @@ export class QuotaPreferences {
   constructor(private readonly storage: Pick<vscode.Memento, 'get' | 'update'>) {}
   getState(): QuotaPreferencesState { return readQuotaPreferences(this.storage.get(KEY)); }
   private write(transform: (current: QuotaPreferencesState) => QuotaPreferencesState): Promise<void> {
-    const work = this.queue.then(() => this.storage.update(KEY, transform(this.getState())));
+    const work = this.queue.then(() => writeQuotaPreferences(this.storage, current => transform(readQuotaPreferences(current))));
     this.queue = work.catch(() => undefined); return work.then(() => undefined);
   }
   favorite(key: string): Promise<void> { return this.write(current => ({ ...current, favorites: current.favorites.includes(key) ? current.favorites.filter(item => item !== key) : [...current.favorites, key].slice(-300) })); }
