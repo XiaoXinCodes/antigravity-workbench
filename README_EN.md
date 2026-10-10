@@ -98,7 +98,7 @@ Remove references individually or clear them all. The screenshot below follows t
 
 ## Interface language
 
-Simplified Chinese is the default. Open **Settings / 设置** from the workbench, or search VS Code settings for `antigravityAccounts.language`, and manually select `zh-CN` or `en`. Open workbench and image panels, messages and the quick start update immediately while retaining input, references, account selection, layout and tasks. See the [Chinese walkthrough](README.md#功能演示).
+Simplified Chinese is the default. Use the workbench's single **Settings / 设置** entry, or search VS Code settings for `antigravityAccounts.language`, to choose `zh-CN` or `en`. This is one global user setting; pages have no separate language controls. Open and new account, image, automation and history panels, the native QuickPick, status bar, notices and quick start share it. Switching preserves unsaved forms, comparison, sorting, folds, references, account selection and tasks. See the [Chinese walkthrough](README.md#功能演示).
 
 Command Palette entries, view titles and settings descriptions are static contributions that follow VS Code's display language. Changing that display language may require a reload. The extension's manual language selection does not change these static entries.
 

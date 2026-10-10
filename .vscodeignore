@@ -16,5 +16,10 @@ out/legacy/**
 .npmignore
 CONTRIBUTING.md
 docs/MARKETPLACE_PREPARATION.md
+docs/QUOTA_OVERVIEW_PHASE1.md
+docs/QUOTA_AUTOMATION_PHASE2.md
+docs/QUOTA_HISTORY_PHASE3.md
+docs/ADVANCED_WAKE_AND_HANDOFF.md
+docs/INDEPENDENT_REVIEW.md
 .agents/**
 handoff/**

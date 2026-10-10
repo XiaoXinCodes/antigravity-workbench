@@ -28,4 +28,4 @@
 
 切换针对官方登录状态，不用于删除官方会话、图片或项目历史。Workbench 的已保存账号副本仍留在列表中，除非用户明确“移除”。跨宿主使用账号应走加密迁移流程。
 
-[账号管理](INDEPENDENT_ACCOUNTS.md) · [加密迁移](ACCOUNT_MIGRATION.md) · [故障排查](TROUBLESHOOTING.md) · [验证范围](VALIDATION_0.1.8.md)
+[账号管理](INDEPENDENT_ACCOUNTS.md) · [加密迁移](ACCOUNT_MIGRATION.md) · [故障排查](TROUBLESHOOTING.md) · [验证范围](VALIDATION_0.1.9.md)

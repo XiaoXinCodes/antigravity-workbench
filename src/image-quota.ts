@@ -1,4 +1,6 @@
 import { t as tr } from './i18n';
+import { quotaFraction } from './quota-presentation';
+export { quotaPercent as imageQuotaPercent } from './quota-presentation';
 import type { ImageEndpoint } from './direct-image-protocol';
 import type { ImageModelChoice } from './direct-image-binding';
 
@@ -27,14 +29,9 @@ export function imageQuotaFromCatalog(value: unknown, models: ImageModelChoice[]
     const quota = object(record) && object(record.quotaInfo) ? record.quotaInfo : {};
     const fraction = quota.remainingFraction, reset = quota.resetTime;
     return { modelId: model.id,
-      remainingFraction: typeof fraction === 'number' && Number.isFinite(fraction) && fraction >= 0 && fraction <= 1 ? fraction : null,
+      remainingFraction: quotaFraction(fraction),
       resetAt: typeof reset === 'string' && reset.length <= 64 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(reset) && Number.isFinite(Date.parse(reset)) ? new Date(reset).toISOString() : null };
   });
-}
-
-export function imageQuotaPercent(fraction: number, nearFull = tr("imageQuota.bafbf5e6f8")): string {
-  // A sub-full fraction must never round up to a claim of full quota.
-  return fraction < 1 && Math.round(fraction * 10_000) === 10_000 ? nearFull : (fraction * 100).toFixed(2) + '%';
 }
 
 export interface ImageQuotaState { loading: boolean; stale: boolean; snapshot?: ImageQuotaSnapshot; error?: string | undefined }

@@ -28,6 +28,11 @@ jobs:
       - name: Record actual runner platform
         run: node -p "JSON.stringify({platform:process.platform,arch:process.arch,node:process.version})"
       - run: npm ci --ignore-scripts
+      - if: runner.os == 'Windows'
+        name: Check concurrent filesystem fixtures
+        run: |
+          npm run compile
+          node --test --test-name-pattern="independent host processes|independent processes rotate" test/automation-core.test.cjs test/debug-log-store.test.cjs
       - run: npm run check
       - run: python test/release-safety.test.py
       - run: python test/package-docs.test.py
@@ -44,6 +49,32 @@ jobs:
       - if: runner.os != 'Linux'
         run: npm run test:host
         timeout-minutes: 5
+      - if: runner.os == 'Linux'
+        name: Check quota comparison, sorting and Reload Window in actual VS Code
+        run: xvfb-run -a npm run test:quota-host
+        timeout-minutes: 5
+      - if: runner.os == 'Linux'
+        name: Check global locale across actual VS Code pages
+        run: xvfb-run -a npm run test:language-host
+        timeout-minutes: 5
+      - if: runner.os == 'Linux'
+        name: Check conversation endpoint, model directory and scheduled text requests in actual VS Code
+        run: xvfb-run -a npm run test:automation-host
+        timeout-minutes: 5
+      - if: runner.os == 'Linux'
+        name: Capture actual VS Code UI with synthetic accounts
+        run: xvfb-run -a node scripts/test-ui-screenshots.cjs
+        timeout-minutes: 5
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && always()
+        with:
+          name: workbench-actual-ui-screenshots-Linux
+          include-hidden-files: true
+          path: |
+            .test-results/actual-ui-screenshots/*.png
+            .test-results/actual-ui-screenshots/capture-receipt.json
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -53,8 +84,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - run: npm run package
-      - run: python scripts/verify-release.py artifacts/antigravity-workbench-0.1.8.vsix
-      - run: node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.8.vsix
+      - run: python scripts/verify-release.py artifacts/antigravity-workbench-0.1.9.vsix
+      - run: node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.9.vsix
       - uses: actions/upload-artifact@v4
         with:
           name: antigravity-workbench-vsix-${{ runner.os }}

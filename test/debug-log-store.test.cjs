@@ -328,14 +328,15 @@ test('scan and cleanup failures latch writes without growing storage on retries'
 
 test('independent processes rotate the same directory without corrupting another session', async t => {
   const f = await fixture(t);
-  const modulePath = require.resolve('../out/debug-log-store');
-  const program = `const {DebugLogStore,sanitizeDebugStorageError}=require(${JSON.stringify(modulePath)});const s=new DebugLogStore(process.env.TEST_STORE,{maxFileBytes:128});let phase='start';(async()=>{for(let i=0;i<25;i++){phase='append';await s.append(JSON.stringify({schema:1,event:'test',pid:process.pid,index:i}),()=>true);phase='read';await s.readLines()}await s.flush()})().catch(e=>{process.send?.({code:sanitizeDebugStorageError(e).code,phase});process.exitCode=1});`;
   const jobs = Array.from({ length: 3 }, () => new Promise((resolve, reject) => {
-    let failure = '';
-    const child = fork('-e', [program], { execArgv: [], env: { ...process.env, TEST_STORE: f.directory }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
-    child.on('message', value => { if (/^DEBUG_STORAGE_[A-Z_]+$/.test(value?.code) && ['start', 'append', 'read'].includes(value?.phase)) failure = `${value.phase}/${value.code}`; });
+    let failure = '', operation = '';
+    const child = fork(path.join(__dirname, 'fixtures/debug-store-worker.cjs'), [], { execArgv: [], env: { ...process.env, TEST_STORE: f.directory }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    child.on('message', value => {
+      if (['open', 'lstat', 'unlink', 'mkdir', 'opendir'].includes(value?.operation) && ['EPERM', 'EACCES'].includes(value.rawCode) && /^[a-zA-Z]+$/.test(value.method ?? '')) operation = `${value.operation}/${value.method}/${value.rawCode}`;
+      if (/^DEBUG_STORAGE_[A-Z_]+$/.test(value?.code) && ['start', 'append', 'read'].includes(value?.phase)) failure = `${value.phase}/${value.code}`;
+    });
     child.on('error', reject);
-    child.on('exit', code => code === 0 ? resolve() : reject(new Error(`synthetic child failure ${failure}`)));
+    child.on('exit', code => code === 0 ? resolve() : reject(new Error(`synthetic child failure ${failure} ${operation}`)));
   }));
   // Do not delete the fixture while sibling processes are still using it after one fails.
   const results = await Promise.allSettled(jobs);

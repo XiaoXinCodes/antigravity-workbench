@@ -7,8 +7,10 @@ const original = Module._load;
 const calls = [], warnings = [];
 let execute = async (...args) => { calls.push(args); };
 Module._load = function(name, parent, main) { if (name === 'vscode') return { commands: { executeCommand: (...args) => execute(...args) }, window: { showWarningMessage(text) { warnings.push(text); } } }; return original.call(this, name, parent, main); };
-const { renderWorkbench, WorkbenchView } = require(entry);
+const { renderWorkbench: renderProduction, WorkbenchView } = require(entry);
 Module._load = original;
+// Presentation assertions exclude embedded translation dictionaries.
+const renderWorkbench=(...args)=>renderProduction(...args).replace(/const dictionaries=[\s\S]*?;let language=/,'const dictionaries={};let language=');
 const state = (extra = {}) => ({ accounts: [], snapshots: [], status: '准备就绪', busy: false, pending: false, recoveryPhase: 'none', warning: null, environment: { available: true, message: '本机工作台 · WSL 工作区' }, ...extra });
 const account = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', label: 'Example', expectedEmail: 'example@example.test', capturedAt: '2026-10-01T00:00:00.000Z', identitySource: 'hub' };
 test('unknown scope explains ownership and shows the distinct current Hub without implying missing Linux tools',()=>{
@@ -48,7 +50,7 @@ test('conflict actions explain Windows force and unavailable platform dependenci
 });
 test('capture shares the add toolbar and saved is disabled only for a verified unique host identity',()=>{
  const base={accounts:[{...account,hostCurrent:true}],activeEmail:account.expectedEmail,activeVerifiedAt:new Date().toISOString(),currentLoginSave:'saved'};
- let html=renderWorkbench(state(base),'nonce');assert.match(html,/<div class="account-toolbar"[^>]*>[^]*?data-command="live.login"[^]*?data-command="live.capture" disabled[^]*?已保存[^]*?<\/div>/);
+ let html=renderWorkbench(state(base),'nonce');assert.match(html,/<div[^>]*class="account-toolbar"[^>]*>[^]*?data-command="live.login"[^]*?data-command="live.capture" disabled[^]*?已保存[^]*?<\/div>/);
  html=renderWorkbench(state({...base,activeEmail:undefined}),'nonce');assert.match(html,/data-command="live.capture" class=[^>]*>保存当前账号/);
  html=renderWorkbench(state({...base,currentLoginSave:'update'}),'nonce');assert.match(html,/data-command="live.capture" class=[^>]*>更新凭证/);
  html=renderWorkbench(state({...base,accounts:[...base.accounts,{...account,hostCurrent:true,id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'}]}),'nonce');assert.match(html,/data-command="live.capture" class=[^>]*>保存当前账号/);
@@ -86,15 +88,33 @@ test('environment blockers have helpful text and do not hide independent tools',
  assert.match(html, /请在本机安装 Antigravity 扩展/);
  assert.match(html, /data-command="images.open"/);
 });
-function fixture(extra = {}) {
+function fixture(extra = {}, displayStorage) {
  let message, closed;
  const posted = [];
- const webview = { html: '', options: {}, onDidReceiveMessage(fn) { message = fn; return { dispose() {} }; }, async postMessage(value) { posted.push(value); } };
+ let markup=''; const webview = { get html(){return markup.replace(/const dictionaries=[\s\S]*?;let language=/,'const dictionaries={};let language=')},set html(value){markup=value}, options: {}, onDidReceiveMessage(fn) { message = fn; return { dispose() {} }; }, async postMessage(value) { posted.push(value); if(value.type==='patch')this.html=this.html.replace(/<main>[\s\S]*?<\/main>/,value.main).replace(/<html lang="[^"]+"/,`<html lang="${value.language}"`); } };
  const view = { webview, onDidDispose(fn) { closed = fn; return { dispose() {} }; } };
- const provider = new WorkbenchView(() => state({ accounts: [account], ...extra }));
+ const provider = new WorkbenchView(() => state({ accounts: [account], ...extra }),undefined,displayStorage);
  provider.resolveWebviewView(view);
+ void message({type:'ready'});
  return { provider, webview, posted, message: value => message(value), close: () => closed() };
 }
+
+test('quota view preferences restore from extension state without HTML script injection',()=>{
+ const saved={search:'</script><script>synthetic()',compare:JSON.stringify(['bucket','group','real-server-id','5h']),sort:'low',compareOwners:[account.id],compareLabel:'Renamed server model',expanded:{'quota-a-Gemini':true}};
+ const f=fixture({accountStorageReady:true},{get:()=>saved,update:async()=>{}});
+ assert.ok(f.webview.html.includes('\\u003c/script>'));assert.ok(!f.webview.html.includes(saved.search));assert.ok(f.webview.html.includes('real-server-id'));assert.ok(f.webview.html.includes('"sort":"low"'));f.provider.dispose();
+});
+test('view-state messages persist only bounded display preferences and ignore extra payloads',async()=>{
+ const writes=[],saved={search:'model',compare:JSON.stringify(['bucket','','actual-bucket','5h']),sort:'high',compareOwners:[account.id],compareLabel:'Server model',expanded:{}};
+ const preferences={favorites:['keep'],imageFavorites:['image']};const f=fixture({}, {get:key=>key==='quota.presentation.v1'?preferences:undefined,update:async(key,value)=>{writes.push({key,value})}});
+ await f.message({type:'viewState',state:saved});await f.provider.flushViewState();assert.deepEqual(writes.map(w=>w.key),['quota.presentation.v1','antigravityAccounts.quotaViewState','quota.ui.revision.v1']);assert.deepEqual(writes[0].value,preferences);assert.deepEqual(writes[1].value,saved);assert.match(writes[2].value,/^[a-f0-9-]{36}:1$/);
+ for(const message of [{type:'viewState',state:{...saved,quota:{snapshot:'synthetic'}}},{type:'viewState',state:saved,accountId:account.id},{type:'viewState',state:{...saved,search:'x'.repeat(4097)}},{type:'viewState',state:{...saved,compare:'display label'}},{type:'viewState',state:{...saved,compare:JSON.stringify(['local',account.id,'label',0])}}])await f.message(message);
+ assert.equal(writes.length,3);f.close();await f.message({type:'viewState',state:{...saved,sort:'low'}});assert.equal(writes.length,3);f.provider.dispose();
+});
+test('invalid persisted view state starts normally and cannot carry account snapshots',()=>{
+ const f=fixture({}, {get:()=>({search:'model',sort:'low',slots:'synthetic-never-persist'}),update:async()=>{}});
+ assert.ok(!f.webview.html.includes('synthetic-never-persist'));assert.ok(f.webview.html.includes('typeof savedApi.sort'));f.provider.dispose();
+});
 test('process messages require a current opaque selection and reject arbitrary PID, paths, signals and stale views',async()=>{
  calls.length=0;const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,credentialScopeVerified:true}]};
  const f=fixture({processConflicts});
@@ -257,14 +277,14 @@ test('a verified imported copy from another host never claims verification at th
 test('every saved account has its own quota action and renders values only below that account',()=>{
  const snapshot={source:'server',email:account.expectedEmail,observedAt:'2026-10-01T00:00:00.000Z',buckets:[{label:'Gemini',remaining:0.5,resetAt:null},{label:'Unknown model',remaining:null,resetAt:null}]};
  const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot}},{...account,id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',expectedEmail:'second@example.test'}]}),'nonce');
- const cards=html.match(/<article class="account">[\s\S]*?<\/article>/g);assert.equal(cards.length,2);
- assert.match(cards[0],/data-command="live.quota" data-id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"/);assert.match(cards[0],/50%/);assert.match(cards[0],/Unknown model/);assert.match(cards[0],/未知/);assert.match(cards[0],/服务端查询/);
+ const cards=html.match(/<article class="account"[^>]*>[\s\S]*?<\/article>/g);assert.equal(cards.length,2);
+ assert.match(cards[0],/data-command="live.quota" data-id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"/);assert.match(cards[0],/50\.00%/);assert.match(cards[0],/Unknown model/);assert.match(cards[0],/未知/);assert.match(cards[0],/服务端查询/);
  assert.doesNotMatch(cards[1],/50%|Gemini/);assert.match(cards[1],/尚未查询/);assert.doesNotMatch(html,/查看当前账户与配额/);
 });
 test('quota missing data, loading, failure and mismatched identity remain explicit inline',()=>{
  for(const [phase,message]of [['loading',''],['error','后台超时，请重试'],['mismatch','此账号不是后台返回邮箱，请先切换']]){
   const html=renderWorkbench(state({accounts:[{...account,quota:{phase,message,snapshot:{source:'server',email:account.expectedEmail,observedAt:'2026-10-01T00:00:00.000Z',buckets:[]}}}]}),'nonce');
-  assert.match(html,/上次结果/);assert.match(html,/服务端未返回可用额度/);assert.doesNotMatch(html.slice(html.indexOf('<body>')),/100%/);
+  assert.match(html,/旧数据/);assert.match(html,/服务端未返回可用额度/);assert.doesNotMatch(html.slice(html.indexOf('<body>')),/100%/);
   if(phase==='loading')assert.match(html,/取消查询/);else assert.ok(html.includes(message));
  }
 });
@@ -287,14 +307,14 @@ test('an unsaved current identity gets a save hint, never a duplicate quota acti
  const html = renderWorkbench(state({ accounts: [account], currentQuota: { phase: 'ready', message: '未保存 <script>', snapshot: { source: 'server', email: '<unknown>@example.test', observedAt: 'bad', buckets: [{ label: 'unrelated model', remaining: 1, resetAt: 'bad' }] } } }), 'nonce');
  assert.match(html, /&lt;unknown&gt;@example.test/); assert.match(html, /尚未保存在这里/);
  assert.equal((html.match(/data-command="live.quota"/g) || []).length, 1);
- assert.equal((html.match(/<article class="account">/g) || []).length, 1);
+ assert.equal((html.match(/<article class="account"[^>]*>/g) || []).length, 1);
  assert.doesNotMatch(html.slice(html.indexOf('<body>')), /unrelated model|100%|<unknown>|<script>/);
  const saved = renderWorkbench(state({ accounts: [account], currentQuota: { phase: 'ready', snapshot: { source: 'server', email: account.expectedEmail, observedAt: 'bad', buckets: [] } } }), 'nonce');
  assert.doesNotMatch(saved, /尚未保存在这里/);
 });
 test('quota model and message strings are escaped and invalid timestamps stay unknown', () => {
  const html = renderWorkbench(state({ accounts: [{ ...account, quota: { phase: 'ready', message: '<script>danger</script>', snapshot: { source: 'server', email: account.expectedEmail, observedAt: 'bad', buckets: [{ label: '<img src=x>', remaining: null, resetAt: 'bad' }] } } }] }), 'nonce');
- assert.match(html, /&lt;img src=x&gt;/); assert.match(html, /&lt;script&gt;/); assert.match(html, /服务端查询<\/span><span title="最后同步时间">同步 未知/);
+ assert.match(html, /&lt;img src=x&gt;/); assert.match(html, /&lt;script&gt;/); assert.match(html, /服务端查询 · 旧数据<\/span><span title="最后同步时间">同步 未知/);
  assert.doesNotMatch(html, /<img src=x>|<script>danger/);
 });
 
@@ -364,7 +384,7 @@ test('stale verification clicks after recovery changes never dispatch a no-switc
 });
 test('restored confirmation stays reachable when credential mutations are unavailable', () => {
  const html = renderWorkbench(state({ pending: true, recoveryPhase: 'restored', loginMutationAvailable: false, status: '原登录已恢复' }), 'nonce');
- assert.match(html, /data-command="live.restore" class="secondary">重载后自动检查/);
+ assert.match(html, /data-command="live.restore" class="secondary"[^>]*>重载后自动检查/);
  assert.match(html, /data-command="live.login" disabled/);
 });
 
@@ -382,16 +402,16 @@ test('independent saved-account quota remains enabled with official extension mi
 test('current badge comes only from verified active identity on the same host',()=>{
  const saved={...account,hostCurrent:true};const body=extra=>renderWorkbench(state({accounts:[saved],...extra}),'nonce').split('<body>')[1];
  assert.doesNotMatch(body({}),/current-badge/);assert.match(body({}),/当前登录待核验/);
- const verified=body({activeEmail:account.expectedEmail.toUpperCase()});assert.match(verified,/<article class="account active">/);assert.match(verified,/<span class="current-badge">（当前登录）<\/span>/);assert.match(verified,/data-command="live.switch"[^>]*disabled/);
+ const verified=body({activeEmail:account.expectedEmail.toUpperCase()});assert.match(verified,/<article class="account active"[^>]*>/);assert.match(verified,/<span class="current-badge">（当前登录）<\/span>/);assert.match(verified,/data-command="live.switch"[^>]*disabled/);
  for(const extra of [{activeEmail:'other@example.test'},{activeEmail:account.expectedEmail,pending:true},{activeEmail:account.expectedEmail,accounts:[{...saved,hostCurrent:false}]},{activeEmail:account.expectedEmail,accounts:[{...account}]}])assert.doesNotMatch(body(extra),/current-badge/);
 });
 test('independent quota for B never labels B active when official identity is A',()=>{
  const second={...account,id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',hostCurrent:true,expectedEmail:'b@example.test',quota:{phase:'ready',snapshot:{source:'server',email:'b@example.test',observedAt:'2026-10-01',buckets:[]}}};
  const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true},second],activeEmail:account.expectedEmail}),'nonce');
- const cards=html.match(/<article class="account(?: active)?">[\s\S]*?<\/article>/g);assert.match(cards[0],/current-badge/);assert.doesNotMatch(cards[1],/current-badge/);assert.match(cards[1],/服务端查询/);
+ const cards=html.match(/<article class="account(?: active)?"[^>]*>[\s\S]*?<\/article>/g);assert.match(cards[0],/current-badge/);assert.doesNotMatch(cards[1],/current-badge/);assert.match(cards[1],/服务端查询/);
 });
 test('compact card has exactly one direct switch, refresh and removal with account-scoped accessible names',()=>{
- const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}]}),'nonce');const card=html.match(/<article class="account">[\s\S]*?<\/article>/)[0];
+ const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}]}),'nonce');const card=html.match(/<article class="account"[^>]*>[\s\S]*?<\/article>/)[0];
  for(const command of ['live.switch','live.quota','live.remove'])assert.equal((card.match(new RegExp(`data-command="${command}"`,'g'))||[]).length,1);
  assert.match(card,/aria-label="刷新 example@example.test 的配额"/);assert.match(card,/>刷新<\/button>/);assert.match(card,/>移除<\/button>/);
  assert.ok(card.indexOf('account-quota')<card.indexOf('account-actions'));assert.match(html,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
@@ -399,7 +419,7 @@ test('compact card has exactly one direct switch, refresh and removal with accou
 test('quota bars show low, medium and healthy states with explicit values and reset times',()=>{
  const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:account.expectedEmail,observedAt:'2026-10-01T03:00:00Z',buckets:[{label:'Low',remaining:0.08,resetAt:'2026-10-01T05:00:00Z'},{label:'Medium',remaining:0.3,resetAt:null},{label:'Healthy',remaining:0.88,resetAt:null}]}}}]}),'nonce').split('<body>')[1];
  for(const tone of ['low','medium','healthy'])assert.match(html,new RegExp(`class="quota-row ${tone}"`));
- assert.match(html,/>8%<\/b>/);assert.match(html,/aria-label="Low 剩余 8%"/);assert.match(html,/重置 /);assert.match(html,/最后同步时间/);assert.match(html,/服务端查询/);
+ assert.match(html,/>8\.00%<\/b>/);assert.match(html,/aria-label="Low 8\.00%"/);assert.match(html,/重置 /);assert.match(html,/最后同步时间/);assert.match(html,/服务端查询/);
 });
 test('cross-account quota snapshots cannot leak into another account card',()=>{
  const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:'other@example.test',observedAt:'2026-10-01',buckets:[{label:'Wrong account model',remaining:0.77,resetAt:null}]}}}]}),'nonce').split('<body>')[1];
@@ -487,7 +507,7 @@ test('current suffix follows the verified account name once, with safe duplicate
  const body=extra=>renderWorkbench(state({accounts:[A,B],activeEmail:A.expectedEmail,...extra}),'nonce').split('<body>')[1];
  assert.equal((body().match(/（当前登录）/g)||[]).length,1);assert.match(body(),/同名<span class="current-badge">（当前登录）<\/span>/);
  for(const extra of [{activeEmail:undefined},{pending:true},{accounts:[A,{...B,expectedEmail:A.expectedEmail}]},{accounts:[A,{...B,id:A.id}]},{accounts:[{...A,migrationState:'pending'},B]}])assert.doesNotMatch(body(extra),/current-badge/);
- const html=body({activeEmail:B.expectedEmail});const cards=html.match(/<article class="account(?: active)?">[\s\S]*?<\/article>/g);assert.doesNotMatch(cards[0],/current-badge/);assert.match(cards[1],/（当前登录）/);
+ const html=body({activeEmail:B.expectedEmail});const cards=html.match(/<article class="account(?: active)?"[^>]*>[\s\S]*?<\/article>/g);assert.doesNotMatch(cards[0],/current-badge/);assert.match(cards[1],/（当前登录）/);
 });
 
 test('last-known login is labeled unverified and never supplies current badge or saved state',()=>{
@@ -499,4 +519,11 @@ test('last-known login is labeled unverified and never supplies current badge or
 test('view resolution requests readiness once while ordinary repaints stay passive',()=>{
  let ready=0;const provider=new WorkbenchView(()=>state(),()=>{ready++;});const view={webview:{options:{},html:'',onDidReceiveMessage:()=>({dispose(){}})},onDidDispose:()=>({dispose(){}})};
  provider.resolveWebviewView(view);assert.equal(ready,1);provider.refresh();provider.refresh();assert.equal(ready,1);provider.resolveWebviewView(view);assert.equal(ready,2);provider.dispose();
+});
+
+test('favorites coalesce the same row while independent different rows remain actionable',async()=>{
+ const {quotaEntries}=require('../out/quota-presentation');const saved={...account,quota:{phase:'ready',snapshot:{source:'server',email:account.expectedEmail,observedAt:new Date().toISOString(),buckets:[{bucketId:'a',label:'Gemini A',remaining:.5},{bucketId:'b',label:'Claude B',remaining:.5}]}}},rows=quotaEntries(saved),releases=[];calls.length=0;
+ execute=(...args)=>{calls.push(args);return new Promise(r=>releases.push(r))};const f=fixture({accounts:[saved]});
+ const first=f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[0].key,requestId:'first'});await f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[0].key,requestId:'duplicate'});const second=f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[1].key,requestId:'second'});
+ assert.equal(calls.length,2);releases.forEach(r=>r());await Promise.all([first,second]);assert.equal(f.posted.filter(m=>m.type==='complete').length,3);execute=async(...args)=>{calls.push(args)};f.provider.dispose();
 });

@@ -1,3 +1,5 @@
+import { registerQuotaHistory } from './quota-history-ui';
+import { registerAutomationUi, registerIdentityPrivacy } from './automation-ui';
 import { registerLocalizedHelp } from './localized-help';
 import { registerI18n } from './i18n-vscode';
 import { localizeMessage, t as tr } from './i18n';
@@ -7,6 +9,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { registerDirectImageUi } from './direct-image-ui';
 import { createDirectImageIntegration } from './direct-image-vscode';
+import { registerQuotaTools } from './quota-tools';
 import { registerLiveUi } from './live-ui';
 import { WorkbenchView } from './workbench-view';
 import { registerWorkbenchLocations } from './workbench-locations';
@@ -20,14 +23,24 @@ let flushImageSession: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionDiagnosticsApi> {
   registerI18n(context);
+  registerIdentityPrivacy(context);
   const helpUri = registerLocalizedHelp(context);
   let refreshDebug = (): void => undefined;
   const debug = registerDebugUi(context, () => refreshDebug(), { diagnoseCatalog: signal => direct.diagnoseCatalog(signal), revealCatalog: () => dashboard.revealCatalog() });
   const tree = { accounts: [] as Account[], warning: null as string | null, refresh: (): void => dashboard.refresh() };
   let accountChanged = (): void => undefined;
-  const live = registerLiveUi(context, { changed: () => { tree.refresh(); accountChanged(); } });
+  let automationChanged = (): void => undefined;
+  let historyChanged = (): void => undefined;
+  let quotaChanged = (): void => undefined;
+  const live = registerLiveUi(context, { changed: () => { tree.refresh(); accountChanged(); quotaChanged(); automationChanged(); historyChanged(); } });
+  const quotaTools = registerQuotaTools(context, live, () => tree.refresh());
+  quotaChanged = quotaTools.refresh;
   const direct = createDirectImageIntegration(context, () => live.getAccounts(), { accountsReady: () => live.getState().accountStorageReady });
-  const images = registerDirectImageUi(context, direct, () => tree.refresh());
+  const automation = registerAutomationUi(context, live);
+  automationChanged = automation.refresh;
+  const history = registerQuotaHistory(context, live);
+  historyChanged = history.refresh;
+  const images = registerDirectImageUi(context, direct, () => tree.refresh(), undefined, quotaTools.preferences, sample => { void automation.observe([sample]); }, history);
   flushImageSession = images.flush;
   accountChanged = () => {
     const state = live.getState();
@@ -50,8 +63,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const locations = registerWorkbenchLocations(context, () => images.getOutputDirectory());
   const dashboard = new WorkbenchView(() => {
     const state = live.getState();
-    return { version: context.extension.packageJSON.version, accounts: live.getAccounts(), snapshots: tree.accounts, warning: null, ...state, locations: locations.getState(), debug: debug.getState() }; // Legacy snapshot diagnostics never block the account workbench.
-  }, () => { void live.ensureIdentity?.(); });
+    return { version: context.extension.packageJSON.version, accounts: live.getAccounts(), snapshots: tree.accounts, warning: null, ...state, locations: locations.getState(), debug: debug.getState(), quotaPresentation: quotaTools.getState() }; // Legacy snapshot diagnostics never block the account workbench.
+  }, () => { void live.ensureIdentity?.(); }, context.globalState);
   refreshDebug = () => dashboard.refresh();
   context.subscriptions.push(dashboard, vscode.window.registerWebviewViewProvider('antigravityAccounts.accounts', dashboard));
   const stateDirectory = path.join(context.globalStorageUri.fsPath, 'metadata');
@@ -168,7 +181,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     catch { tree.warning = tr("extension.aa62577f74"); tree.refresh(); }
   }
   // Repaint only. No backend polling, hidden account activation, or automatic login.
-  const timer = setInterval(() => tree.refresh(), 60_000);
+  const timer = setInterval(() => tree.refresh(), 15_000);
   context.subscriptions.push({ dispose: () => { disposed = true; clearInterval(timer); } });
   // Non-sensitive status only; never expose account identities, quota contents or credentials.
   return { getDiagnostics: () => ({ warning: tree.warning, accountCount: tree.accounts.length, liveSwitching: 'experimental', liveStatus: live.getStatus(), debugEnabled: debug.getState().enabled }) };

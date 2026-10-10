@@ -1,3 +1,6 @@
+import { accountDisplayFingerprint } from './quota-presentation';
+import { passiveCurrentEmail } from './passive-current-identity';
+import { savedAccountStore } from './saved-account-store';
 import { t as tr } from './i18n';
 import { diagnoseImageCatalog } from './image-catalog-diagnostic';
 import { imageQuotaFromCatalog, type ImageQuotaSnapshot } from './image-quota';
@@ -19,10 +22,8 @@ import { resolveEndpointImageProject } from './direct-image-project-transport';
 import { readCurrentOfficialWslToken } from './direct-image-current-token';
 import { imageEndpoint, validImageRequestId, type ImageEndpoint } from './direct-image-protocol';
 import { LiveLocks } from './live-lock';
-import { LiveError, type TokenSlots } from './live-storage';
-import { LiveSwitchService, ACCOUNT_PREFIX, QUOTA_PENDING_PREFIX, QUOTA_REFRESH_PREFIX } from './live-switch';
-import { createConsumerRefreshProvider } from './account-quota-client';
-import { SavedImageAccounts, imageAccountRevision } from './saved-image-account';
+import { LiveError } from './live-storage';
+import { SavedImageAccounts } from './saved-image-account';
 import { readSavedImageModels } from './saved-image-models';
 import { enterImageOperation } from './image-activity';
 import { ImageOperationJournal, imageOperationStart, imageOperationResponse, imageOperationFailure, formatImageOperations } from './image-operation-record';
@@ -47,39 +48,14 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
   const summaries = (): AccountChoice[] => getAccounts().map(x => ({ ...x, active: x.active === true, hostCurrent: x.hostCurrent === true }));
   const saved = new SavedImageAccounts({ accounts: summaries, withOperation: work => locks().withOperation(work),
     project: resolveEndpointImageProject, models: readSavedImageModels, parseModels: imageModelsFromCatalog,
-    store: async () => {
-      if (!status().available) throw new Error('IMAGE_TRUSTED_LOCAL_DESKTOP_REQUIRED');
-      if (context.globalState.get('live-switch.pending.v1', false) || await locks().hasRecovery()) throw new Error('IMAGE_ACCOUNT_RECOVERY_PENDING');
-      const mode = await new EnvironmentTokenSlots(os.homedir()).mode();
-      const hostId = await resolveCredentialHostId(context, vscode.env.remoteName, mode);
-      const service = new LiveSwitchService(context.secrets, {
-        read: async () => { throw new Error('IMAGE_SAVED_OFFICIAL_STORAGE_FORBIDDEN'); },
-        write: async () => { throw new Error('IMAGE_SAVED_OFFICIAL_STORAGE_FORBIDDEN'); },
-      }, hostId);
-      return {
-        load: async id => {
-          const account = await service.account(id);
-          const raw = await context.secrets.get(ACCOUNT_PREFIX + id);
-          if (!raw || JSON.stringify(JSON.parse(raw)) !== JSON.stringify(account)) throw new Error('IMAGE_SAVED_ACCOUNT_CHANGED');
-          return { account, revision: imageAccountRevision(raw) };
-        },
-        verify: async (id, revision, allowPending) => {
-          const raw = await context.secrets.get(ACCOUNT_PREFIX + id);
-          if (!raw || imageAccountRevision(raw) !== revision) throw new Error('IMAGE_SAVED_ACCOUNT_CHANGED');
-          if (!allowPending && (await context.secrets.get(QUOTA_PENDING_PREFIX + id) || await context.secrets.get(QUOTA_REFRESH_PREFIX + id))) throw new Error('IMAGE_SAVED_AUTH_PENDING');
-        },
-        refresh: (id, assertPresent) => {
-          let pending: TokenSlots | undefined;
-          return {
-            provider: createConsumerRefreshProvider(path.join(os.homedir(), '.gemini', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy')),
-            loadPending: async expected => { assertPresent(); pending = await service.pendingQuotaRefresh(id, expected); return pending; },
-            stage: async (expected, next) => { assertPresent(); await service.stageQuotaRefresh(id, expected, next, pending); pending = next; },
-            commit: async (expected, next) => { assertPresent(); await service.commitQuotaRefresh(id, expected, next); pending = undefined; },
-          };
-        },
-      };
-    },
+    store: () => savedAccountStore(context, locks(), () => status().available),
   });
+  let observationCurrentEmail: string | undefined;
+  const observedSaved = new SavedImageAccounts({ accounts: summaries, withOperation: work => locks().withOperation(async () => {
+    observationCurrentEmail = await passiveCurrentEmail(); return work();
+  }), project: resolveEndpointImageProject, models: readSavedImageModels, parseModels: imageModelsFromCatalog,
+    store: () => savedAccountStore(context, locks(), () => status().available),
+    refreshAllowed: a => !a.active && !!observationCurrentEmail && observationCurrentEmail !== a.expectedEmail.toLowerCase() });
   const assertAccountsReady = () => { if (runtime.accountsReady?.() === false) throw Error('IMAGE_ACCOUNT_INITIALIZING'); };
   const session = () => {
     assertAccountsReady();
@@ -199,6 +175,20 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       return { ...row, accountId, endpoint, queriedAt: new Date().toISOString() };
     });
   };
+  const readCandidateImageQuota = async (id: string, model: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<ImageQuotaSnapshot> => {
+    assertAccountsReady();
+    const account = summaries().find(a => a.id === id);
+    if (!account || !account.hostCurrent || account.migrationState === 'pending') throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
+    const fingerprint = accountDisplayFingerprint(account);
+    const assertCurrent = async () => {
+      const current = summaries().find(a => a.id === id);
+      if (signal.aborted || !current || accountDisplayFingerprint(current) !== fingerprint || current.active !== account.active) throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
+      if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
+    };
+    await assertCurrent();
+    const result = account.active ? await readImageQuota(id, model, signal) : await observedSaved.observeQuota(id, model, signal, endpoint, assertCurrent);
+    await assertCurrent(); return result;
+  };
   const check = async (signal: AbortSignal, allowProjectLookup: boolean, expectedEndpoint?: ImageEndpoint) => {
     const endpoint = allowProjectLookup ? getEndpoint() : undefined;
     if (expectedEndpoint !== undefined && endpoint !== imageEndpoint(expectedEndpoint)) throw new Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
@@ -265,7 +255,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       if (!recorded) diagnostic.event('status', { code: 'IMAGE_OPERATION_HISTORY_UNAVAILABLE' });
     }
   };
-  return { readChoices, readImageQuota, hasSavedAccountSelection: (id: string) => saved.isSelected(id), selectSavedAccount: (id: string) => { assertAccountsReady(); saved.selectForWindow(id); }, listAccounts: summaries, diagnoseCatalog, diagnose, diagnoseProject, run, getEndpoint,
+  return { readChoices, readImageQuota, readCandidateImageQuota, hasSavedAccountSelection: (id: string) => saved.isSelected(id), selectSavedAccount: (id: string) => { assertAccountsReady(); saved.selectForWindow(id); }, listAccounts: summaries, diagnoseCatalog, diagnose, diagnoseProject, run, getEndpoint,
     operationRecordWarning: () => historyWriteFailed ? tr("directImageVscode.1da2d70877") : '',
     operationHistory: async () => formatImageOperations(await journal.read()) };
 }

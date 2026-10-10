@@ -104,6 +104,27 @@ async function establishVerifiedA(f) {
   await f.controller.refresh();await f.call('verify');
   assert.equal(f.controller.getState().activeEmail,'a@example.test');
 }
+test('hidden identity masks the native switch consent without changing the target or credentials', async t => {
+  const privacy=load('identity-presentation');privacy.setIdentityHidden(true);t.after(()=>privacy.setIdentityHidden(false));
+  const f=fixture(t);f.ui.consent=false;await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,1);assert.ok(f.warnings[0].message.includes(privacy.identityAlias(ACCOUNT_B)));
+  assert.doesNotMatch(f.warnings[0].message,/b@example\.test/);noBackendMutation(f);assert.equal(f.email(),'a@example.test');
+});
+test('hidden identity masks a blocked-switch process confirmation before any process action', async t => {
+  const privacy=load('identity-presentation');privacy.setIdentityHidden(true);t.after(()=>privacy.setIdentityHidden(false));
+  const f=fixture(t,{rows:[verifiedPeer(710,'unknown',{credentialScopeVerified:false,canEnd:false})]});await f.call('switch',ACCOUNT_B);
+  assert.equal(f.warnings.length,0);assert.equal(f.controller.getState().processSwitchTarget,'b@example.test');
+  f.setRows([verifiedPeer(710,'unknown')]);await f.call('processScan');f.ui.consent=false;await f.call('processEndAll');
+  assert.equal(f.warnings.length,1);assert.ok(f.warnings[0].message.includes(privacy.identityAlias(ACCOUNT_B)));
+  assert.doesNotMatch(f.warnings[0].message,/b@example\.test/);noBackendMutation(f);
+});
+test('hidden identity keeps the deleted custom label masked after its account leaves the index', async t => {
+  const privacy=load('identity-presentation');privacy.setIdentityHidden(true);t.after(()=>privacy.setIdentityHidden(false));
+  const f=fixture(t);f.accounts[1].label='Private synthetic customer name';await f.call('remove',ACCOUNT_B);
+  assert.equal(f.state.get(INDEX).some(a=>a.id===ACCOUNT_B),false);assert.equal(f.controller.getState().error,undefined);
+  assert.ok(f.controller.getState().status.includes(privacy.identityAlias(ACCOUNT_B)));
+  assert.doesNotMatch(f.controller.getState().status,/Private synthetic customer name|b@example\.test/);noBackendMutation(f);
+});
 test('verified current login plus an unknown-scope extra Hub reports ownership before consent and retains the login', async t => {
   const f=fixture(t); await establishVerifiedA(f);
   f.setRows([{id:'unknown-scope-conflict',pid:710,parentPid:702,owner:'other',scope:'unknown',parentState:'alive',taskState:'unknown',canEnd:false,credentialScopeVerified:false}]);

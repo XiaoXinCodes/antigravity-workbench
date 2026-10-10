@@ -98,7 +98,7 @@ Workbench 把多账号管理、服务端额度查询和图片工作室放进同�
 
 ## 界面语言
 
-默认使用简体中文。点击工作台“设置 / Settings”，或在 VS Code 设置中搜索 `antigravityAccounts.language`，手动选择 `zh-CN` 或 `en`。已打开的工作台、图片面板、提示和快速入门立即更新，保留输入、参考图、账号选择、布局与任务。查看 [英文版演示](README_EN.md#feature-walkthrough)。
+默认使用简体中文。通过工作台唯一的“设置 / Settings”入口，或在 VS Code 设置中搜索 `antigravityAccounts.language`，手动选择 `zh-CN` 或 `en`。这是插件统一的用户级配置，页面不再单独切换语言。已打开及新建的工作台、图片、调度和历史面板，以及 QuickPick、状态栏、提示和快速入门均读取这一配置；切换保留未提交表单、比较项、排序、折叠、参考图、账号选择与任务。查看 [英文版演示](README_EN.md#feature-walkthrough)。
 
 命令面板、视图标题和设置描述属于静态贡献项，遵循 VS Code 显示语言；更改 VS Code 显示语言可能需要重载。插件的手动语言选择不改变这些静态项。
 

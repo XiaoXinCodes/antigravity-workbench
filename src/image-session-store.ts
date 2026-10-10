@@ -11,7 +11,7 @@ export type SavedImage = { file: string; width: number; height: number; sha256?:
 export type ImageOrigin = { taskId: string; imageIndex: number; rootTaskId: string; rootImageIndex: number;
   file: string; outputDirectory: string; sha256?: string; legacyUnverified?: true; width: number; height: number; accountId: string; modelId: string };
 export type ImageTask = {
-  accountId?: string; accountLabel?: string; accountSource?: 'current' | 'saved'; endpoint?: 'daily' | 'production';
+  accountId?: string; accountLabel?: string; accountFingerprint?: string; accountSource?: 'current' | 'saved'; endpoint?: 'daily' | 'production';
   id: string; createdAt: string; prompt: string; promptSummary: string; modelId: string;
   ratio: string; size: string; quality: string; count: number; references: string[];
   phase: 'confirming' | 'preparing' | 'generating' | 'validating' | 'complete' | 'partial' | 'failed' | 'cancelled' | 'interrupted';
@@ -85,6 +85,7 @@ export function readImageSession(value: unknown, restored = false): ImageSession
       references: refs(t.references), outputDirectory, images,
       phase: pick(t.phase, ['confirming', 'preparing', 'generating', 'validating', 'complete', 'partial', 'failed', 'cancelled', 'interrupted']), status: str(t.status, 4000) };
     if (t.accountId !== undefined) task.accountId = str(t.accountId, 128);
+    if (t.accountFingerprint !== undefined) task.accountFingerprint = digest(t.accountFingerprint);
     if (t.accountLabel !== undefined) task.accountLabel = str(t.accountLabel, 512);
     if (t.accountSource !== undefined) task.accountSource = pick(t.accountSource, ['current', 'saved']);
     if (t.endpoint !== undefined) task.endpoint = pick(t.endpoint, ['daily', 'production']);

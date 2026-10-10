@@ -1,0 +1,25 @@
+// Synthetic host adapter: production UI only; no LiveUi backend, tokens, network or official extension.
+const vscode=require('vscode'),path=require('node:path');
+const root=path.resolve(__dirname,'../..');
+exports.activate=(context,options={})=>{
+ const {WorkbenchView}=require(path.join(root,'out/workbench-view')),{registerQuotaTools}=require(path.join(root,'out/quota-tools')),{accountDisplayFingerprint}=require(path.join(root,'out/quota-presentation')),{t:tr}=require(path.join(root,'out/i18n'));
+ require(path.join(root,'out/i18n-vscode')).registerI18n(context);
+ const accounts=Array.from({length:4},(_,i)=>{const id=String(i+1).padStart(8,'0')+'-0000-4000-8000-000000000001',email=`synthetic${i+1}@example.test`;return{id,label:i===2?'Synthetic account with a very long English label for sidebar wrapping':'合成账号 '+(i+1),expectedEmail:email,capturedAt:'2026-10-01T00:00:00Z',hostCurrent:true,hostId:'synthetic-only',identitySource:'user',quota:{phase:'ready',snapshot:{source:'server',email,observedAt:new Date().toISOString(),buckets:[{bucketId:'gemini-real-bucket',window:'5h',label:'Gemini Pro · 5h',remaining:[.996,.25,.75,null][i],resetAt:'2026-10-10T12:00:00Z'},{bucketId:'claude-real-bucket',window:'7d',label:'Claude Sonnet · Weekly',remaining:.5,resetAt:null},{label:'Unmapped model with an exceptionally long name',remaining:null,resetAt:null}]}}}});
+ const initialSnapshots=new Map(accounts.map(a=>[a.id,a.quota.snapshot]));
+ let busy=false,accountStorageReady=true,mode='hold',pending,provider,tools;const calls=[];
+ const repaint=()=>{provider?.refresh();tools?.refresh()};
+ const live={getAccounts:()=>accounts,getState:()=>({accountStorageReady:true,busy,pending:false,environment:{available:true,message:'合成测试'}})};
+ const state=()=>({version:'0.1.9',accountStorageReady,accounts,snapshots:[],status:'idle',busy,pending:false,recoveryPhase:'none',warning:null,environment:{available:true,message:'合成测试'},quotaPresentation:tools.getState()});
+ context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.live.quota',async id=>{
+  if(busy)return;const target=accounts.find(a=>a.id===id);if(!target)return;busy=true;calls.push(id);const identity=accountDisplayFingerprint(target),snapshot=target.quota?.snapshot??initialSnapshots.get(id);
+  target.quota={phase:'loading',snapshot};repaint();
+  let outcome=mode; if(mode==='hold')outcome=await new Promise(resolve=>pending={id,resolve});
+  if(accountDisplayFingerprint(target)===identity){target.quota=outcome==='success'?{phase:'ready',snapshot:{...snapshot,observedAt:new Date().toISOString(),buckets:snapshot.buckets.map(b=>({...b,remaining:b.bucketId==='gemini-real-bucket'?.42:b.remaining}))}}:{phase:'error',message:outcome==='cancel'?tr('liveUi.18b0d552f8'):tr('workbenchView.229ba71468'),snapshot};}
+  pending=undefined;busy=false;repaint();
+ }),vscode.commands.registerCommand('antigravityAccounts.live.quotaCancel',()=>pending?.resolve('cancel')));
+ tools=registerQuotaTools(context,live,repaint);
+ const quotaEvents={pin:0,favorite:0};for(const name of ['pin','favorite']){const original=tools.preferences[name].bind(tools.preferences);tools.preferences[name]=(...args)=>{quotaEvents[name]++;return original(...args)}}
+ provider=new WorkbenchView(state,undefined,context.globalState);context.subscriptions.push(provider,vscode.window.registerWebviewViewProvider('antigravityAccounts.accounts',provider));
+ const {registerDirectImageUi}=require(path.join(root,'out/direct-image-ui'));let imageRuns=0;const imageDirect={getEndpoint:()=> 'daily',listAccounts:()=>accounts,readChoices:async()=>({accounts:accounts.map((a,i)=>({...a,active:i===0})),models:[{id:'synthetic-image-model',label:'Synthetic image model with a long English display name'},{id:'synthetic-other-image',label:'Another synthetic image model'}]}),run:async()=>{imageRuns++;throw Error('Synthetic generation disabled')}};Object.assign(imageDirect,options.imageDirect??{});const history=options.historyFactory?.(live);const images=registerDirectImageUi(context,imageDirect,undefined,options.imageSession??require('./../helpers/image-session.cjs').memorySession(),tools.preferences,undefined,history);
+ return{live,history,imageDirect,accounts,calls,state,tools,quotaEvents,images,repaint,viewState:()=>require(path.join(root,'out/quota-ui-storage')).quotaUiStorage(context.globalState).get('antigravityAccounts.quotaViewState'),flushViewState:()=>provider.flushViewState(),accountsReady:value=>{accountStorageReady=value;repaint()},imageRuns:()=>imageRuns,mode:value=>{mode=value},finish:value=>pending?.resolve(value),pending:()=>!!pending,replace:()=>{const target=accounts.find(a=>a.id===pending?.id);if(target){target.capturedAt='2026-10-09T23:59:00Z';delete target.quota;repaint()}},language:async value=>{await vscode.workspace.getConfiguration('antigravityAccounts').update('language',value,vscode.ConfigurationTarget.Global);repaint()}};
+};

@@ -687,7 +687,7 @@ test('read-only hub ignores unrelated CLI processes while rejecting generation d
 test('saved-account replacement during query discards the result',async()=>{
  const f=setup();f.state.set('live-switch.accounts.v1',[saved]);
  f.backend.quota=async()=>{f.state.set('live-switch.accounts.v1',[]);return {...await f.backend.proof(),quotaSource:'server'}};
- await f.call('quota',saved.id);assert.equal(f.diag.getAccounts().length,0);assert.equal(f.diag.getState().currentQuota?.phase,'error');
+ await f.call('quota',saved.id);assert.equal(f.diag.getAccounts().length,0);assert.equal(f.diag.getState().currentQuota,undefined);
 });
 test('a pending switch automatically finishes on refresh without prompting or filling cached quota',async()=>{
  const f=setup();await f.diag.refresh();f.state.set('live-switch.accounts.v1',[saved]);
@@ -966,4 +966,24 @@ test('account replacement during termination confirmation invalidates the consen
  const f=processRecoveryFixture(t),{t:tr}=require('../out/i18n');
  Object.defineProperty(f.ui,'answer',{get(){f.state.set('live-switch.accounts.v1',[{...f.account,expectedEmail:'replaced-during-confirmation@example.test'}]);return tr('liveUi.e0351ba254');}});
  await f.call('switch',f.account.id);assert.deepEqual(f.ends,[]);assert.ok(!f.events.includes('install'));
+});
+
+test('late quota failure after same-ID metadata replacement leaves the replacement untouched',async t=>{
+ const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));f.state.set('live-switch.accounts.v1',[saved]);let reject;
+ f.ui.savedQuota=()=>new Promise((_resolve,r)=>reject=r);const pending=f.call('quota',saved.id);await settle();
+ f.state.set('live-switch.accounts.v1',[{...saved,capturedAt:'2026-10-09T12:00:00Z'}]);reject(new (require('../out/live-storage').LiveError)('ACCOUNT_QUOTA_REAUTH_REQUIRED'));await pending;
+ assert.equal(f.diag.getAccounts()[0].quota,undefined);assert.deepEqual(f.warnings,[]);assert.deepEqual(f.notifications,[]);
+});
+test('failed refresh preserves the exact prior success timestamp, and cancel during lock acquisition starts no query',async t=>{
+ const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));f.state.set('live-switch.accounts.v1',[saved]);await f.call('quota',saved.id);const time=f.diag.getAccounts()[0].quota.snapshot.observedAt;
+ f.ui.savedQuota=async()=>{throw new (require('../out/live-storage').LiveError)('ACCOUNT_QUOTA_REQUEST_FAILED')};await f.call('quota',saved.id);assert.equal(f.diag.getAccounts()[0].quota.snapshot.observedAt,time);
+ let unlock,reads=0;f.locks.withOperation=fn=>new Promise(resolve=>unlock=()=>resolve(fn()));f.ui.savedQuota=async()=>{reads++;return {...await f.backend.proof(),quotaSource:'server'}};
+ const pending=f.call('quota',saved.id);await settle();await f.call('quotaCancel');unlock();await pending;assert.equal(reads,0);assert.equal(f.diag.getAccounts()[0].quota.snapshot.observedAt,time);
+});
+
+test('account replacement while waiting for the quota lock never queries the new account',async t=>{
+ const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));f.state.set('live-switch.accounts.v1',[saved]);let unlock,reads=0;
+ f.locks.withOperation=fn=>new Promise(resolve=>unlock=()=>resolve(fn()));f.ui.savedQuota=async()=>{reads++;return {...await f.backend.proof(),quotaSource:'server'}};
+ const pending=f.call('quota',saved.id);await settle();f.state.set('live-switch.accounts.v1',[{...saved,capturedAt:'replacement'}]);unlock();await pending;
+ assert.equal(reads,0);assert.equal(f.diag.getAccounts()[0].quota,undefined);
 });

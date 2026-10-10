@@ -40,5 +40,15 @@
   "setting.endpoint.description": "高级排障：覆盖图片请求端点。正常使用保留 Daily；Production 不保证解决请求失败。只读取全局用户设置，相关 project 与模型按端点核验；修改本身不发请求，失败后不会自动切换端点或重试。",
   "setting.endpoint.option.0": "仅用于手动排障；图片请求稳定性尚未验证。",
   "setting.endpoint.option.1": "默认端点，正常使用无需修改。",
-  "setting.language.description": "语言 / Language：手动选择工作台界面语言，默认简体中文。无需重载，已打开视图随即更新，账号、提示词与任务保留。命令面板名称遵循 VS Code 显示语言。"
+  "setting.language.description": "语言 / Language：手动选择工作台界面语言，默认简体中文。无需重载，已打开视图随即更新，账号、提示词与任务保留。命令面板名称遵循 VS Code 显示语言。",
+  "command.quota.quickPick": "快速查看额度",
+  "command.quota.refreshAll": "批量刷新额度",
+  "command.quota.cancel": "取消额度刷新",
+  "command.quota.unpin": "取消状态栏置顶",
+  "command.quota.favorite": "收藏额度项",
+  "command.quota.pin": "置顶额度项",
+  "command.automation.open": "管理定时请求与额度提醒",
+  "command.privacy.toggle": "切换账号身份隐藏",
+  "configuration.hideIdentity": "在工作台、图片、任务、快速选择及状态栏显示稳定账号别名。",
+  "command.quota.history": "额度观察历史"
 }

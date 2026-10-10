@@ -21,7 +21,9 @@ export interface SavedImageDependencies {
   project(token: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<{ projectId: string; endpoint: ImageEndpoint }>;
   models(token: string, project: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<unknown>;
   parseModels(value: unknown): ImageModelChoice[];
+  normalizeCatalog?(value: unknown): unknown;
   client?: SavedAccountQuotaClient;
+  refreshAllowed?(account: AccountChoice): boolean;
   now?: () => number;
 }
 interface Prepared {
@@ -75,7 +77,7 @@ export class SavedImageAccounts {
         if (!diagnostic && cached && cached.expiresAt > this.now()) { await cached.verify(signal); return cached; }
         let expectedRevision = snapshot.revision;
         const refresh = store.refresh(id, assertPresent);
-        const prepared = await this.client.withAccess(snapshot.account, signal, { refresh: {
+        const prepared = await this.client.withAccess(snapshot.account, signal, this.deps.refreshAllowed?.(this.selected(id)) === false ? {} : { refresh: {
           ...refresh,
           stage: async (expectedSlots, next) => { assertPresent(); await store.verify(id, expectedRevision, true); await refresh.stage(expectedSlots, next); },
           commit: async (expectedSlots, next) => {
@@ -94,8 +96,9 @@ export class SavedImageAccounts {
           if (project.endpoint !== endpoint) throw new Error('IMAGE_DIRECT_PROJECT_ENDPOINT_MISMATCH');
           assertPresent(); check(requestSignal);
           await diagnostic?.assertCurrent();
-          const response = await this.deps.models(access.accessToken, project.projectId, requestSignal, endpoint);
-          access.assertPublicResponse(response);
+          const rawResponse = await this.deps.models(access.accessToken, project.projectId, requestSignal, endpoint);
+          access.assertPublicResponse(rawResponse);
+          const response = this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse;
           await diagnostic?.assertCurrent();
           const catalog = summarizeImageCatalog(response);
           let models: ImageModelChoice[] = [];
@@ -136,12 +139,19 @@ export class SavedImageAccounts {
     if (!row) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
     return { ...row, accountId: id, endpoint, queriedAt: prepared.queriedAt };
   }
+  async observeQuota(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint, assertCurrent: () => Promise<void>) {
+    const prepared = await this.prepare(id, signal, endpoint, true, { assertCurrent });
+    const row = prepared.quota.find(item => item.modelId === modelId);
+    if (!row) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+    return { ...row, accountId: id, endpoint, queriedAt: prepared.queriedAt };
+  }
   async diagnoseCatalog(id: string, signal: AbortSignal, endpoint: ImageEndpoint, assertCurrent: () => Promise<void>): Promise<CatalogSummary> {
     return (await this.prepare(id, signal, endpoint, true, { assertCurrent })).catalog;
   }
-  async bind(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<BoundImageAccount> {
+  async bind(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint, requireFull = false): Promise<BoundImageAccount> {
     const prepared = await this.prepare(id, signal, endpoint), model = prepared.models.find(x => x.id === modelId);
     if (!model) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+    if (requireFull && (prepared.quota.find(row => row.modelId === modelId)?.remainingFraction !== 1 || this.now() - Date.parse(prepared.queriedAt) >= 60_000)) throw Error('WAKE_QUOTA_NOT_FULL');
     return Object.freeze({ token: prepared.token, projectId: prepared.projectId, modelId: model.id, accountId: id,
       endpoint, projectSource: 'loadCodeAssist' as const, modelSource: 'saved-account' as const,
       ...(model.modelEnum ? { modelEnum: model.modelEnum } : {}), verify: prepared.verify });
