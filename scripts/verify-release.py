@@ -36,7 +36,7 @@ def verify(vsix, source=None):
     package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))
     lock = json.loads((ROOT / 'package-lock.json').read_text(encoding='utf-8'))
     version = package['version']
-    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.9'
+    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.10'
     third_party_notices = verify_license_notices(package, lock)
     assert package['icon'] == 'media/icon.png'
     assert package['contributes']['viewsContainers']['activitybar'][0]['icon'] == 'media/workbench.svg'

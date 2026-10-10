@@ -9,7 +9,7 @@ exports.activate=(context,options={})=>{
  let busy=false,accountStorageReady=true,mode='hold',pending,provider,tools;const calls=[];
  const repaint=()=>{provider?.refresh();tools?.refresh()};
  const live={getAccounts:()=>accounts,getState:()=>({accountStorageReady:true,busy,pending:false,environment:{available:true,message:'合成测试'}})};
- const state=()=>({version:'0.1.9',accountStorageReady,accounts,snapshots:[],status:'idle',busy,pending:false,recoveryPhase:'none',warning:null,environment:{available:true,message:'合成测试'},quotaPresentation:tools.getState()});
+ const state=()=>({version:'0.1.10',accountStorageReady,accounts,snapshots:[],status:'idle',busy,pending:false,recoveryPhase:'none',warning:null,environment:{available:true,message:'合成测试'},quotaPresentation:tools.getState()});
  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.live.quota',async id=>{
   if(busy)return;const target=accounts.find(a=>a.id===id);if(!target)return;busy=true;calls.push(id);const identity=accountDisplayFingerprint(target),snapshot=target.quota?.snapshot??initialSnapshots.get(id);
   target.quota={phase:'loading',snapshot};repaint();
