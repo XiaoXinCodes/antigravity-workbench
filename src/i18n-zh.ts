@@ -2,8 +2,9 @@
 export const zhCN = {
   "quota.search": "搜索账号",
   "quota.compare": "比较额度项",
-  "quota.all": "全部额度项",
+  "quota.all": "全部额度项（最低已知额度）",
   "quota.sort": "排序",
+  "quota.sortHint": "全部额度项按每个账号的最低已知额度或最早已知重置时间排序；选择具体额度项时按该项排序。未知值排最后。",
   "quota.savedOrder": "保存顺序",
   "quota.highFirst": "额度从高到低",
   "quota.lowFirst": "额度从低到高",

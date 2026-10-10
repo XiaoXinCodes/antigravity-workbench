@@ -32,15 +32,16 @@ const applyControls=()=>{
  const search=document.getElementById('quota-search'),compare=document.getElementById('quota-compare'),sort=document.getElementById('quota-sort'),list=document.querySelector('.account-list');
  if(!search||!compare||!sort||!list)return;
  search.value=controls.search;compare.value=controls.compare;if(compare.value!==controls.compare){controls.compare='';compare.value=''}
- if(!controls.compare&&['high','low','reset'].includes(controls.sort))controls.sort='saved';
- for(const option of sort.options)if(['high','low','reset'].includes(option.value))option.disabled=!controls.compare;sort.value=controls.sort;
+ sort.value=controls.sort;
  const cards=[...list.querySelectorAll(':scope > .account')];
- const info=card=>{const rows=[...card.querySelectorAll('[data-quota-key]')],row=rows.find(item=>item.dataset.quotaKey===controls.compare&&item.dataset.comparable==='true');
- const value=row&&row.dataset.fraction!==''?Number(row.dataset.fraction):NaN,reset=row?Number(row.dataset.reset):NaN;
- return{value,reset:row?.dataset.reset?reset:NaN,stale:card.dataset.stale==='true',updated:card.dataset.updated?Number(card.dataset.updated):NaN};};
+ const info=card=>{const rows=[...card.querySelectorAll('.quota-row[data-quota-key]')],selected=controls.compare?rows.filter(item=>item.dataset.quotaKey===controls.compare&&item.dataset.comparable==='true'):rows;
+ // All-items sorting compares the lowest known fraction or earliest known reset
+ // within each account. It does not infer a shared pool or turn unknown into zero.
+ const earliest=field=>{const values=selected.filter(row=>row.dataset[field]!=='').map(row=>Number(row.dataset[field])).filter(Number.isFinite);return values.length?Math.min(...values):NaN};
+ return{value:earliest('fraction'),reset:earliest('reset'),stale:card.dataset.stale==='true',updated:card.dataset.updated?Number(card.dataset.updated):NaN};};
  const metric=card=>{const i=info(card);return controls.sort==='updated'?i.updated:controls.sort==='reset'?i.reset:i.value};
  const compareCards=(a,b)=>{
- if(controls.sort==='saved'||(!controls.compare&&['high','low','reset'].includes(controls.sort)))return Number(a.dataset.order)-Number(b.dataset.order);
+ if(controls.sort==='saved')return Number(a.dataset.order)-Number(b.dataset.order);
  const av=metric(a),bv=metric(b),ak=Number.isFinite(av),bk=Number.isFinite(bv);if(ak!==bk)return ak?-1:1;
  if(ak&&controls.sort!=='updated'&&info(a).stale!==info(b).stale)return info(a).stale?1:-1;
  return ak&&av!==bv?(['high','updated'].includes(controls.sort)?bv-av:av-bv):Number(a.dataset.order)-Number(b.dataset.order);

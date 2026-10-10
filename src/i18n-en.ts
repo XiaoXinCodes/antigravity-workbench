@@ -3,8 +3,9 @@ import type { MessageKey } from './i18n-zh';
 export const en: Readonly<Record<MessageKey, string>> = {
   "quota.search": "Search accounts",
   "quota.compare": "Compare quota item",
-  "quota.all": "All quota items",
+  "quota.all": "All items (lowest known quota)",
   "quota.sort": "Sort",
+  "quota.sortHint": "All items sorts by each account's lowest known quota or earliest known reset. A selected item uses that item only. Unknown values come last.",
   "quota.savedOrder": "Saved order",
   "quota.highFirst": "Quota: highest first",
   "quota.lowFirst": "Quota: lowest first",
