@@ -29,7 +29,7 @@ function fixture(){
  return{api,accounts,events,payloads,vault,task,signal:new AbortController().signal,catalog:fn=>readCatalog=fn};
 }
 test('production wake adapter binds each selected account and endpoint to its independent ordinary catalog',async()=>{
- const f=fixture();for(const id of [A,B])for(const endpoint of ['daily','production'])assert.deepEqual((await f.api.models(id,endpoint,f.signal)).map(x=>x.id),[f.task(id,endpoint).modelId]);
+ const f=fixture();for(const id of [A,B])for(const endpoint of ['daily','production'])assert.deepEqual((await f.api.models(id,endpoint,f.signal)).map(x=>x.id),[f.task(id,endpoint).modelId,'synthetic-unlisted-model']);
  assert.equal(f.payloads.length,0);const originalA=f.vault.get(ACCOUNT_PREFIX+A);let before=0;
  assert.equal((await f.api.run(f.task(B,'production'),f.signal,async()=>before++)).phase,'succeeded');const p=f.payloads[0];
  assert.equal(before,1);assert.equal(p.options.hostname,'cloudcode-pa.googleapis.com');assert.equal(p.options.path,'/v1internal:streamGenerateContent?alt=sse');assert.equal(p.options.headers.Authorization,'Bearer synthetic-bearer-'+B);
@@ -45,8 +45,8 @@ test('wrapped catalog preserves selected conversation quota and does not borrow 
  const f=fixture();f.catalog((id,endpoint)=>({response:catalog(f.task(id,endpoint).modelId)}));const task=f.task();const q=await f.api.quota(task,f.signal);assert.equal(q.modelId,task.modelId);assert.equal(q.accountId,B);assert.equal(q.remainingFraction,.6);
  await assert.rejects(f.api.run({...task,schedule:{mode:'quota-recovery'}},f.signal,async()=>assert.fail('must not send')),/QUOTA_NOT_FULL/);assert.equal(f.payloads.length,0);
 });
-test('missing output-role information prevents catalog adoption and actual sends without stale fallback',async()=>{
- const f=fixture();await f.api.models(B,'daily',f.signal);f.catalog(()=>({models:{'synthetic-text-B-daily':{supportsImages:true}}}));await assert.rejects(f.api.models(B,'daily',f.signal),/MODEL_TYPES_UNAVAILABLE/);await assert.rejects(f.api.run(f.task(),f.signal,async()=>assert.fail('must not send')),/MODEL_TYPES_UNAVAILABLE/);assert.equal(f.payloads.length,0);
+test('models-only legacy catalog remains usable for the manually selected conversation model and exact endpoint',async()=>{
+ const f=fixture();await f.api.models(B,'daily',f.signal);f.catalog(()=>({models:{'synthetic-text-B-daily':{supportsImages:true}}}));const choices=await f.api.models(B,'daily',f.signal);assert.equal(choices.length,1);assert.equal(choices[0].classification,'unclassified');assert.equal(f.payloads.length,0);assert.equal((await f.api.run(f.task(),f.signal,async()=>{})).phase,'succeeded');assert.equal(f.payloads[0].body.model,f.task().modelId);assert.deepEqual(f.payloads[0].body.request.contents,[{role:'user',parts:[{text:'Hi'}]}]);
 });
 test('empty confirmed ordinary directory has its own conversation error',async()=>{
  const f=fixture();f.catalog(()=>({models:{},agentModelSorts:[]}));await assert.rejects(f.api.models(B,'daily',f.signal),/WAKE_MODELS_UNAVAILABLE/);assert.equal(f.payloads.length,0);
@@ -55,7 +55,7 @@ test('replaced account while catalog is pending cannot accept late data or send'
  const f=fixture();let finish,started;const entered=new Promise(resolve=>started=resolve);f.catalog(()=>{started();return new Promise(resolve=>finish=resolve)});const task=f.task(),pending=f.api.run(task,f.signal,async()=>assert.fail('must not send'));await entered;f.accounts[1].capturedAt=new Date(Date.now()+1000).toISOString();finish(catalog(task.modelId));await assert.rejects(pending,/ACCOUNT_CHANGED/);assert.equal(f.payloads.length,0);
 });
 test('cancelled late ordinary directory cannot become cached membership',async()=>{
- const f=fixture();let finish,started;const entered=new Promise(resolve=>started=resolve);f.catalog(()=>{started();return new Promise(resolve=>finish=resolve)});const abort=new AbortController(),pending=f.api.models(B,'daily',abort.signal);await entered;abort.abort();await assert.rejects(pending,/CANCELLED/);finish(catalog(f.task().modelId));await new Promise(setImmediate);f.catalog(()=>catalog('new-text-only'));assert.deepEqual((await f.api.models(B,'daily',f.signal)).map(x=>x.id),['new-text-only']);assert.equal(f.payloads.length,0);
+ const f=fixture();let finish,started;const entered=new Promise(resolve=>started=resolve);f.catalog(()=>{started();return new Promise(resolve=>finish=resolve)});const abort=new AbortController(),pending=f.api.models(B,'daily',abort.signal);await entered;abort.abort();await assert.rejects(pending,/CANCELLED/);finish(catalog(f.task().modelId));await new Promise(setImmediate);f.catalog(()=>catalog('new-text-only'));assert.deepEqual((await f.api.models(B,'daily',f.signal)).map(x=>x.id),['new-text-only','synthetic-unlisted-model']);assert.equal(f.payloads.length,0);
 });
 test('raw wrapped response is checked for credential echoes before normalizing public catalog',async()=>{
  const f=fixture();f.catalog(()=>({credentialEcho:'synthetic-bearer-'+B,response:catalog(f.task().modelId)}));await assert.rejects(f.api.models(B,'daily',f.signal),{message:'ACCOUNT_QUOTA_RESPONSE_INVALID'});assert.equal(f.payloads.length,0);

@@ -1,5 +1,5 @@
 import { LiveError } from './live-storage';
-export interface WakeModelChoice { id: string; label: string }
+export interface WakeModelChoice { id: string; label: string; classification?: 'unclassified' }
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/.test(value);
 /** Keep the server's agent choices and exact callable map keys. Image input
@@ -34,13 +34,13 @@ export function wakeModelsFromCatalog(value: unknown): WakeModelChoice[] {
         if (ids.length > 5000) throw new LiveError('WAKE_MODEL_CATALOG_INVALID');
       }
     }
-  } else if (images !== undefined) ids = Object.keys(records);
-  else throw new LiveError('WAKE_MODEL_TYPES_UNAVAILABLE');
-  return [...new Set(ids)].flatMap(id => {
+  } else ids = Object.keys(records);
+  const agentIds = new Set(ids);
+  return [...new Set([...ids, ...Object.keys(records)])].flatMap(id => {
     if (!validId(id) || imageIds.has(id) || !Object.hasOwn(records, id)) return [];
     const row = object(records[id]);
     if (!row || row.disabled !== undefined && row.disabled !== false) return [];
     const name = typeof row.displayName === 'string' && row.displayName.length <= 200 ? row.displayName : id;
-    return [{ id, label: name === id ? id : `${name} (${id})` }];
+    return [{ id, label: name === id ? id : `${name} (${id})`, ...((sorts !== undefined ? !agentIds.has(id) : images === undefined) ? { classification: 'unclassified' as const } : {}) }];
   });
 }

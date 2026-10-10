@@ -66,7 +66,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         if (abort.signal.aborted || revision !== sequence || panel !== owner || accounts.fingerprint(id) !== fingerprint) return;
         const key = randomUUID(); catalog.set(key, { accountId: id, fingerprint, endpoint, models: models.map(x => x.id), queriedAt: now() });
         if (catalog.size > 50) catalog.delete(catalog.keys().next().value!);
-        await post({ type: 'models', accountId: id, endpoint, catalogKey: key, models }); await post({ type: 'notice', text: models.length ? '' : tr('automation.noChatModels') });
+        await post({ type: 'models', accountId: id, endpoint, catalogKey: key, models }); await post({ type: 'notice', text: models.length ? models.every(model => model.classification === 'unclassified') ? tr('automation.modelTypesUnspecified') : '' : tr('automation.noChatModels') });
       } else if (type === 'save') {
         const entry = typeof m.catalogKey === 'string' ? catalog.get(m.catalogKey) : undefined;
         if (!entry || entry.accountId !== m.accountId || entry.endpoint !== m.endpoint || entry.fingerprint !== accounts.fingerprint(entry.accountId) || now() - entry.queriedAt >= 300_000 || typeof m.modelId !== 'string' || !entry.models.includes(m.modelId)) throw Error('WAKE_MODEL_SELECTION_STALE');
@@ -97,7 +97,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
     } catch (e) {
       const code = safeCode(e);
       if (panel === owner && !(type === 'models' && (modelRequest?.abort.signal.aborted || modelRequest && modelRequest.revision !== sequence || /CANCELLED/.test(code)))) {
-        await post({ type: 'notice', text: code === 'WAKE_MODEL_TYPES_UNAVAILABLE' ? tr('automation.modelTypesUnavailable') : code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) });
+        await post({ type: 'notice', text: code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) });
       }
     }
     finally { if (panel === owner) { await emit(); await post({ type: 'complete', requestType: type, requestId: m.requestId }); } }
