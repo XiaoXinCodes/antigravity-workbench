@@ -1,12 +1,33 @@
 import { clientI18n } from './i18n';
+export interface QuotaViewState { search: string; compare: string; sort: string; compareOwners: string[]; compareLabel: string; expanded: Record<string, boolean> }
+/** Accept only bounded display preferences, never account or quota snapshots. */
+export function quotaViewState(value: unknown): QuotaViewState | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const state = value as Record<string, unknown>;
+  if (Object.keys(state).some(key => !['search', 'compare', 'sort', 'compareOwners', 'compareLabel', 'expanded'].includes(key)) ||
+      !['search', 'compare', 'compareLabel'].every(key => typeof state[key] === 'string' && (state[key] as string).length <= 4096) ||
+      typeof state.sort !== 'string' || !['saved', 'high', 'low', 'updated', 'reset'].includes(state.sort) ||
+      !Array.isArray(state.compareOwners) || state.compareOwners.length > 1000 || !state.compareOwners.every(id => typeof id === 'string' && id.length <= 128) ||
+      !state.expanded || typeof state.expanded !== 'object' || Array.isArray(state.expanded) || Object.keys(state.expanded).length > 1000 ||
+      !Object.entries(state.expanded).every(([key, open]) => key.length <= 1024 && typeof open === 'boolean')) return;
+  if (state.compare) {
+    try { const key: unknown = JSON.parse(state.compare as string); if (!Array.isArray(key) || key.length !== 4 || key[0] !== 'bucket' || !key.slice(1).every(part => typeof part === 'string') || !key[2]) return; }
+    catch { return; }
+  }
+  return state as unknown as QuotaViewState;
+}
 /** Incremental reconciliation preserves existing DOM nodes. There is no backend
  * polling here; sorting/filtering and passive freshness repaint are local only. */
-export function workbenchScript(independentCommands: string[]): string {
+export function workbenchScript(independentCommands: string[], storedState?: QuotaViewState): string {
   return `${clientI18n()}
-const api=acquireVsCodeApi();const previous=api.getState()||{};const expanded=previous.expanded||{};
+const api=acquireVsCodeApi();const savedApi=api.getState();const previous=savedApi&&typeof savedApi.sort==='string'?savedApi:${JSON.stringify(storedState ?? {}).replace(/</g, '\\u003c')};const expanded=previous.expanded||{};
 const controls={search:typeof previous.search==='string'?previous.search:'',compare:typeof previous.compare==='string'?previous.compare:'',sort:['saved','high','low','updated','reset'].includes(previous.sort)?previous.sort:'saved'};
-const save=()=>api.setState({...controls,expanded});
+let compareOwners=Array.isArray(previous.compareOwners)?previous.compareOwners.filter(id=>typeof id==='string'):[],compareLabel=typeof previous.compareLabel==='string'?previous.compareLabel:'';
+const save=()=>{const state={...controls,compareOwners,compareLabel,expanded};api.setState(state);api.postMessage({type:'viewState',state})};
 const independent=new Set(${JSON.stringify(independentCommands)});const pending=new Map();const session=Math.random().toString(36).slice(2);let sequence=0;
+// A rebuilt webview starts from its original HTML. Only the ready-handshake
+// patch contains the host's current catalog and may establish deletion.
+let synchronized=false;
 const key=node=>node.nodeType===1?(node.id||node.getAttribute('data-key')||''):'';
 const morph=(oldNode,newNode)=>{
  if(oldNode.nodeType!==newNode.nodeType||oldNode.nodeName!==newNode.nodeName){const replacement=newNode.cloneNode(true);oldNode.replaceWith(replacement);return replacement}
@@ -30,10 +51,21 @@ const bindDetails=()=>{for(const detail of document.querySelectorAll('details[da
 }};
 const applyControls=()=>{
  const search=document.getElementById('quota-search'),compare=document.getElementById('quota-compare'),sort=document.getElementById('quota-sort'),list=document.querySelector('.account-list');
+ const cards=list?[...list.querySelectorAll(':scope > .account')]:[],accountsReady=synchronized&&document.getElementById('accounts-section')?.dataset.accountsReady==='true';
+ const selectedRow=card=>[...card.querySelectorAll('.quota-row[data-quota-key]')].find(row=>row.dataset.quotaKey===controls.compare&&row.dataset.comparable==='true');
+ const choice=compare&&[...compare.options].find(option=>option.value===controls.compare&&!option.hasAttribute('data-pending-compare'));
+ if(compare&&(!controls.compare||choice))for(const waiting of compare.querySelectorAll('[data-pending-compare]'))waiting.remove();
+ if(controls.compare){
+  if(choice){const owners=[...new Set([...compareOwners.filter(id=>{const card=cards.find(card=>card.dataset.key===id);return card?!synchronized||card.dataset.quotaReady!=='true'||!!selectedRow(card):!accountsReady}),...cards.filter(selectedRow).map(card=>card.dataset.key)])];
+   if(JSON.stringify(owners)!==JSON.stringify(compareOwners)||compareLabel!==choice.textContent){compareOwners=owners;compareLabel=choice.textContent;save()}
+  }else{const deleted=accountsReady&&(compareOwners.length?compareOwners.every(id=>{const card=cards.find(card=>card.dataset.key===id);return !card||card.dataset.quotaReady==='true'}):cards.every(card=>card.dataset.quotaReady==='true'));
+   if(deleted){controls.compare='';compareOwners=[];compareLabel='';compare?.querySelector('[data-pending-compare]')?.remove();save()}
+   else if(compare){let waiting=compare.querySelector('[data-pending-compare]');if(!waiting){waiting=document.createElement('option');waiting.setAttribute('data-pending-compare','');waiting.disabled=true;compare.append(waiting)}waiting.value=controls.compare;waiting.textContent=compareLabel||tr('quota.compare')}
+  }
+ }
  if(!search||!compare||!sort||!list)return;
- search.value=controls.search;compare.value=controls.compare;if(compare.value!==controls.compare){controls.compare='';compare.value=''}
+ search.value=controls.search;compare.value=controls.compare;
  sort.value=controls.sort;
- const cards=[...list.querySelectorAll(':scope > .account')];
  const info=card=>{const rows=[...card.querySelectorAll('.quota-row[data-quota-key]')],selected=controls.compare?rows.filter(item=>item.dataset.quotaKey===controls.compare&&item.dataset.comparable==='true'):rows;
  // All-items sorting compares the lowest known fraction or earliest known reset
  // within each account. It does not infer a shared pool or turn unknown into zero.
@@ -55,7 +87,7 @@ const applyControls=()=>{
  const empty=document.getElementById('quota-no-matches');if(empty)empty.hidden=matches>0;
 };
 document.addEventListener('input',event=>{if(event.target.id==='quota-search'){controls.search=event.target.value;applyControls();save()}});
-document.addEventListener('change',event=>{if(event.target.id==='quota-compare'||event.target.id==='quota-sort'){controls[event.target.id==='quota-compare'?'compare':'sort']=event.target.value;applyControls();save()}});
+document.addEventListener('change',event=>{if(event.target.id==='quota-compare'||event.target.id==='quota-sort'){if(event.target.id==='quota-compare'){compareOwners=[];compareLabel=''}controls[event.target.id==='quota-compare'?'compare':'sort']=event.target.value;applyControls();save()}});
 document.addEventListener('click',event=>{const target=event.target.closest('button[data-command]');if(!target||target.disabled)return;const command=target.dataset.command;
  const requestKey=command+':'+(target.dataset.id||'')+':'+(target.dataset.quotaKey||'');
  if(pending.has(requestKey)||(!independent.has(command)&&[...pending.values()].some(item=>!independent.has(item.command))))return;
@@ -67,7 +99,7 @@ window.addEventListener('message',event=>{const message=event.data;if(!message)r
   const hadFocus=document.hasFocus(),active=document.activeElement,focusKey=active?.getAttribute('data-focus'),scroll={x:window.scrollX,y:window.scrollY};
   const incoming=new DOMParser().parseFromString(message.main,'text/html').querySelector('main');if(!incoming)return;
   if(typeof message.language==='string'&&Object.hasOwn(dictionaries,message.language)){language=message.language;document.documentElement.lang=language}
-  morph(document.querySelector('main'),incoming);bindDetails();applyControls();
+  morph(document.querySelector('main'),incoming);synchronized=true;bindDetails();applyControls();
   const restore=active?.isConnected?active:focusKey?[...document.querySelectorAll('[data-focus]')].find(node=>node.getAttribute('data-focus')===focusKey):null;
   if(hadFocus&&restore&&document.activeElement!==restore){for(let parent=restore.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;restore.focus({preventScroll:true})}
   window.scrollTo(scroll.x,scroll.y);return;

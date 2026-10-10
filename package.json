@@ -493,7 +493,8 @@
     "test:quota-host": "npm run compile && node scripts/test-quota-host.cjs",
     "test:automation-host": "npm run compile && node scripts/test-automation-host.cjs",
     "test:history-host": "npm run compile && node scripts/test-history-host.cjs",
-    "test:advanced-host": "npm run compile && node scripts/test-advanced-host.cjs"
+    "test:advanced-host": "npm run compile && node scripts/test-advanced-host.cjs",
+    "test:language-host": "npm run compile && node scripts/test-language-host.cjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

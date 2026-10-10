@@ -41,6 +41,7 @@ export function registerQuotaTools(context: vscode.ExtensionContext, live: LiveU
   }
   function refresh(): void {
     if (disposed) return;
+    status.name = tr('quota.quickPick');
     const prefs = preferences.getState(), pinned = pinnedQuota(live.getAccounts(), prefs.pin);
     if (!prefs.pin) status.hide();
     else {
@@ -50,7 +51,7 @@ export function registerQuotaTools(context: vscode.ExtensionContext, live: LiveU
     }
     if (pick) {
       const value = pick.value, active = pick.activeItems[0]?.identity, selected = pick.selectedItems[0]?.identity;
-      pick.title = tr('quota.quickPick'); pick.placeholder = error || tr('quota.pickHint');
+      pick.title = tr('quota.quickPick'); pick.placeholder = error ? localizeMessage(error) : tr('quota.pickHint');
       refreshButton.tooltip = tr('quota.batch'); cancelButton.tooltip = tr('quota.cancel'); unpinButton.tooltip = tr('quota.unpin'); favoriteButton.tooltip = tr('quota.favorite'); unfavoriteButton.tooltip = tr('quota.unfavorite'); pinButton.tooltip = tr('quota.pin');
       pick.items = rows(); pick.value = value;
       pick.activeItems = pick.items.filter(item => item.identity === active); pick.selectedItems = pick.items.filter(item => item.identity === selected);

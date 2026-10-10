@@ -21,3 +21,11 @@ test('cross-account comparison uses actual server IDs and windows, never display
  const duplicates=q.quotaEntries(account('c',[b,b]));assert.ok(duplicates.every(row=>!row.comparable));assert.notEqual(duplicates[0].key,duplicates[1].key);assert.equal(q.quotaFamily('Unmapped future model'),'other');
  assert.notEqual(q.accountDisplayFingerprint(a),q.accountDisplayFingerprint({...a,capturedAt:'2026-10-09T10:00:00Z'}));
 });
+test('only successful fresh identity-bound quota catalogs can confirm missing comparison choices',()=>{
+ const now=Date.now(),fresh=account('a',[]);fresh.quota.snapshot.observedAt=new Date(now).toISOString();
+ assert.equal(q.accountQuotaCatalogReady(fresh,now),true);
+ for(const phase of ['loading','error','mismatch'])assert.equal(q.accountQuotaCatalogReady({...fresh,quota:{...fresh.quota,phase}},now),false);
+ assert.equal(q.accountQuotaCatalogReady({...fresh,quota:undefined},now),false);
+ for(const observedAt of ['bad',new Date(now+1000).toISOString(),new Date(now-60000).toISOString()])assert.equal(q.accountQuotaCatalogReady({...fresh,quota:{...fresh.quota,snapshot:{...fresh.quota.snapshot,observedAt}}},now),false);
+ assert.equal(q.accountQuotaCatalogReady({...fresh,expectedEmail:'different@example.test'},now),false);
+});

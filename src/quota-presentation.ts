@@ -21,6 +21,11 @@ export function accountQuotaStale(account: LiveAccountView, now = Date.now()): b
   const snapshot = accountQuotaSnapshot(account);
   return !!snapshot && (account.quota?.phase !== 'ready' || quotaIsStale(snapshot.observedAt, now));
 }
+/** Missing choices are authoritative only after a successful, identity-bound,
+ * fresh server catalog. Loading, errors and absent caches cannot prove deletion. */
+export function accountQuotaCatalogReady(account: LiveAccountView, now = Date.now()): boolean {
+  return !!accountQuotaSnapshot(account) && account.quota?.phase === 'ready' && !accountQuotaStale(account, now);
+}
 export type QuotaBucket = LiveQuotaSnapshot['buckets'][number];
 export function quotaValue(bucket: QuotaBucket): string {
   const fraction = quotaFraction(bucket.remaining);

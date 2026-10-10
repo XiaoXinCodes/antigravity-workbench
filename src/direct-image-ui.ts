@@ -381,7 +381,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       if (busy || choicesLoading) return;
       stopRetry(true); checkSuspended = false; await refresh(true); return;
     }
-    if (msg.type === 'ready') { await refresh(); return; }
+    if (msg.type === 'ready') { await panel?.webview.postMessage({ type: 'language', language: locale() }); await refresh(); return; }
     if (msg.type === 'favoriteModel') {
       if (!busy && typeof msg.modelId === 'string' && choices.models.some(model => model.id === msg.modelId)) {
         try { await preferences.favoriteImage(msg.modelId); actionNotice = ''; } catch { actionNotice = tr('quota.preferencesFailed'); }

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { locale, onLanguageChange, t as tr } from './i18n';
+import { locale, localizeMessage, onLanguageChange, t as tr } from './i18n';
 import { displayAccount, hideIdentityText, identityAlias, identityHidden, onIdentityPresentationChange, setIdentityHidden } from './identity-presentation';
 import { PrivateState, type LocalState } from './private-state';
 import { initialWakeState, parseWakeState, type WakeState } from './wake-state';
@@ -22,6 +22,11 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
   const now = deps.now ?? Date.now, store = deps.store ?? new PrivateState(path.join(context.globalStorageUri.fsPath, 'automation'), parseWakeState, initialWakeState), accounts = deps.accounts ?? createWakeAccounts(context, live);
   let panel: vscode.WebviewPanel | undefined, disposed = false, sequence = 0, modelsAbort: AbortController | undefined, alertTail = Promise.resolve();
   const catalog = new Map<string, { accountId: string; fingerprint: string; endpoint: 'daily' | 'production'; models: string[]; queriedAt: number }>();
+  let lastNotice = '';
+  const post = (message: Record<string, unknown>) => {
+    if (message.type === 'notice' && typeof message.text === 'string') lastNotice = message.text;
+    return panel?.webview.postMessage(message);
+  };
   const format = (time: number, zone = 'Etc/UTC') => new Intl.DateTimeFormat(locale(), { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' }).format(time) + ` (${zone})`;
   const emit = async () => {
     const owner = panel; if (!owner || disposed) return;
@@ -32,7 +37,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
       await owner.webview.postMessage({ type: 'state', state: { enabled: state.enabled, hidden: identityHidden(), alerts: state.alerts, accounts: rows.filter(a => accounts.fingerprint(a.id)).map(a => ({ id: a.id, label: displayAccount(a) })),
         tasks: state.tasks.map(t => ({ ...t, fingerprint: undefined, accountLabel: label(t.accountId), nextLabel: format(t.nextDue, t.schedule.timezone), triggerLabel: tr(`advanced.${t.schedule.mode ?? 'calendar'}`), recoveryLabel: t.recovery ? tr('advanced.baseline', { p0: format(t.recovery.observedAt, t.schedule.timezone), p1: t.recovery.fraction === null ? tr('automation.unknownUsage') : quotaPercent(t.recovery.fraction) }) + (t.recovery.valid === false ? ' · ' + tr('advanced.baselineInvalid') : '') : '', running: state.instances.some(i => i.taskId === t.id && ['sent', 'preparing'].includes(i.phase)) })),
         instances: state.instances.slice(-100).reverse().map(i => ({ id: i.id, label: `${label(i.accountId)} · ${i.modelId} · ${format(i.due)} · ${tr(i.manual ? 'automation.manual' : 'automation.scheduled')} · ${tr(`automation.phase.${i.phase}`)}${i.code && i.phase !== 'succeeded' ? ` (${['WAKE_QUOTA_WAITING','WAKE_QUOTA_UNAVAILABLE','WAKE_QUOTA_NOT_FULL','WAKE_QUOTA_STALE'].includes(i.code) ? tr(`advanced.${i.code as 'WAKE_QUOTA_WAITING'}`) : i.code})` : ''}\n${tr('automation.usage', { p0: i.outputTokens ?? tr('automation.unknownUsage'), p1: i.totalTokens ?? tr('automation.unknownUsage') })}` })) } });
-    } catch (e) { if (owner === panel) await owner.webview.postMessage({ type: 'notice', text: tr('automation.failed', { p0: safeCode(e) }) }); }
+    } catch (e) { if (owner === panel) await post({ type: 'notice', text: tr('automation.failed', { p0: safeCode(e) }) }); }
   };
   const engine = new WakeEngine(store, accounts, () => { void emit(); }, now);
   let consentFlight: Promise<boolean> | undefined;
@@ -42,13 +47,13 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
     await engine.consent(); return true;
   };
   const consent = (): Promise<boolean> => consentFlight ??= requestConsent().finally(() => { consentFlight = undefined; });
-  const post = (message: Record<string, unknown>) => panel?.webview.postMessage(message);
   const handle = async (raw: unknown, owner: vscode.WebviewPanel) => {
     if (disposed || panel !== owner || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
     const m = raw as Record<string, unknown>, type = m.type;
-    if (typeof type !== 'string' || !['ready', 'models', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy', 'language'].includes(type)) return;
+    if (typeof type !== 'string' || !['ready', 'models', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy'].includes(type)) return;
     if (m.requestId !== undefined && (typeof m.requestId !== 'string' || !/^\d{1,15}$/.test(m.requestId))) return;
     try {
+      if (type === 'ready') await post({ type: 'language', language: locale() });
       if (type === 'models') {
         if (typeof m.accountId !== 'string' || !['daily', 'production'].includes(String(m.endpoint))) throw Error('WAKE_ACCOUNT_CHANGED');
         const id = m.accountId, endpoint = m.endpoint as 'daily' | 'production', fingerprint = accounts.fingerprint(id); if (!fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
@@ -66,7 +71,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         if (m.id !== '' && (!existing || existing.revision !== m.revision)) throw Error('WAKE_TASK_CHANGED');
         await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 }, existing?.revision);
         await post({ type: 'notice', text: tr('automation.paused') });
-      } else if (type === 'preview') { await post({ type: 'preview', labels: [...((m.schedule as { mode?: string }).mode === 'quota-recovery' ? [tr('advanced.previewChecks')] : []), ...wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5).map(t => format(t, (m.schedule as { timezone: string }).timezone))] }); }
+      } else if (type === 'preview') { await post({ type: 'preview', times: wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5), timezone: (m.schedule as { timezone: string }).timezone, recovery: (m.schedule as { mode?: string }).mode === 'quota-recovery' }); }
       else if (type === 'enable') { if (typeof m.enabled !== 'boolean') return; if (!m.enabled || await consent()) { if (panel === owner && !disposed) await engine.enable(m.enabled); } }
       else if (['pause', 'resume', 'test', 'cancel', 'remove'].includes(type)) {
         const before = (await store.read()).tasks.find(t => t.id === m.id);
@@ -86,7 +91,6 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         if (typeof m.low !== 'boolean' || typeof m.exhausted !== 'boolean' || typeof m.recovered !== 'boolean' || !Number.isInteger(m.threshold) || Number(m.threshold) < 1 || Number(m.threshold) > 99) throw Error('ALERT_SETTINGS_INVALID');
         await store.transaction(s => { s.alerts = { low: m.low as boolean, exhausted: m.exhausted as boolean, recovered: m.recovered as boolean, threshold: m.threshold as number }; });
       } else if (type === 'privacy' && typeof m.hidden === 'boolean') await vscode.workspace.getConfiguration('antigravityAccounts').update('hideIdentity', m.hidden, vscode.ConfigurationTarget.Global);
-      else if (type === 'language' && ['zh-CN', 'en'].includes(String(m.language))) await vscode.workspace.getConfiguration('antigravityAccounts').update('language', m.language, vscode.ConfigurationTarget.Global);
     } catch (e) { if (panel === owner && !(type === 'models' && (modelsAbort?.signal.aborted || /CANCELLED/.test(safeCode(e))))) await post({ type: 'notice', text: tr('automation.failed', { p0: safeCode(e) }) }); }
     finally { if (panel === owner) { await emit(); await post({ type: 'complete', requestType: type, requestId: m.requestId }); } }
   };
@@ -110,10 +114,10 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
   };
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.automation.open', () => {
     if (panel) { panel.reveal(); return; }
-    panel = vscode.window.createWebviewPanel('antigravityAutomation', tr('automation.title'), vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
+    panel = vscode.window.createWebviewPanel('antigravityAutomation', tr('automation.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
     const owner = panel; owner.webview.html = automationHtml(owner.webview.cspSource);
-    context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; modelsAbort?.abort(); } }));
-  }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('automation.title'); void post({ type: 'language', language: locale() }); void emit(); } }));
+    context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; lastNotice = ''; modelsAbort?.abort(); } }));
+  }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('automation.title'); void post({ type: 'language', language: locale() }); if (lastNotice) void post({ type: 'notice', text: localizeMessage(lastNotice) }); void emit(); } }));
   let polling = false;
   const timer = setInterval(() => {
     if (polling || disposed) return; polling = true;

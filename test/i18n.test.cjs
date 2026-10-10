@@ -48,3 +48,20 @@ test('already open help keeps its URI and reads selected-language docs after the
 test('production rendering sources contain no untranslated presentation literals; native parsing values remain stable',()=>{
  const ts=require('typescript');const allowed=new Set(['本机 PNG','原始']);for(const file of fs.readdirSync(path.join(__dirname,'../src')).filter(f=>f.endsWith('.ts')&&!f.startsWith('i18n'))){const source=fs.readFileSync(path.join(__dirname,'../src',file),'utf8'),tree=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);function visit(node){if(ts.isStringLiteral(node)&&/[\u3400-\u9fff]/u.test(node.text))assert.ok(allowed.has(node.text),file+': '+node.text);ts.forEachChild(node,visit)}visit(tree)}
 });
+
+test('all pages use one global locale and omit page-local language controls in both locales',()=>{
+ const {automationHtml}=require('../out/automation-view'),{quotaHistoryHtml}=require('../out/quota-history-view'),{renderWorkbench}=load('workbench-view',{});
+ for(const lang of ['zh-CN','en']){api.setLanguage(lang);for(const html of [automationHtml('synthetic'),quotaHistoryHtml(),renderWorkbench({accounts:[],snapshots:[],busy:false,status:'',environment:{available:true,message:''}},'synthetic')]){assert.match(html,new RegExp('<html lang="'+lang+'"'));assert.doesNotMatch(html,/id="(?:zh|en)"|data-language=|postMessage\(\{type:["']language["']/);}
+ const settings=renderWorkbench({accounts:[],snapshots:[],busy:false,status:'',environment:{available:true,message:''}},'synthetic');assert.equal((settings.match(/data-command="openSettings"/g)||[]).length,1);
+ }
+});
+
+test('open native quota picker relocalizes failures and statusbar name while preserving search',async()=>{
+ const commands=new Map(),subscriptions=[],stored=new Map();let fail=false;const disposable=()=>({dispose(){}}),status={show(){},hide(){},dispose(){}};
+ const pick={value:'Gem',activeItems:[],selectedItems:[],items:[],onDidHide:disposable,onDidTriggerButton:disposable,onDidTriggerItemButton:disposable,onDidAccept:disposable,show(){},hide(){},dispose(){}};
+ const vscode={ThemeIcon:class{constructor(id){this.id=id}},StatusBarAlignment:{Right:1},QuickPickItemKind:{Separator:-1},window:{createStatusBarItem:()=>status,createQuickPick:()=>pick},commands:{registerCommand:(name,fn)=>{commands.set(name,fn);return disposable()},executeCommand:async()=>{}}};
+ const {registerQuotaTools}=load('quota-tools',vscode),account={id:'00000001-0000-4000-8000-000000000001',label:'Synthetic account',expectedEmail:'synthetic@example.test',hostCurrent:true,quota:{phase:'ready',snapshot:{source:'server',email:'synthetic@example.test',observedAt:new Date().toISOString(),buckets:[{bucketId:'synthetic-model',label:'Gemini synthetic',remaining:.5,resetAt:null}]}}};
+ const context={subscriptions,globalState:{get:key=>stored.get(key),update:async(key,value)=>{if(fail)throw Error('SYNTHETIC_STORAGE_FAILURE');stored.set(key,value)}}};
+ registerQuotaTools(context,{getAccounts:()=>[account],getState:()=>({busy:false,pending:false,environment:{available:true}})},()=>{});
+ try{const quotaKey=JSON.stringify(['bucket','','synthetic-model','']);await commands.get('antigravityAccounts.quota.pin')(account.id,quotaKey);commands.get('antigravityAccounts.quota.quickPick')();pick.value='Gem';fail=true;await commands.get('antigravityAccounts.quota.favorite')(account.id,quotaKey);assert.equal(pick.placeholder,api.t('quota.preferencesFailed'));api.setLanguage('en');assert.equal(pick.value,'Gem');assert.equal(pick.placeholder,api.t('quota.preferencesFailed'));assert.equal(status.name,api.t('quota.quickPick'));assert.doesNotMatch(pick.placeholder,/[\u3400-\u9fff]/u);assert.match(status.text,/50.00%/);}finally{for(const item of subscriptions)item.dispose()}
+});

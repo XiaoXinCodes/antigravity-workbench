@@ -88,16 +88,33 @@ test('environment blockers have helpful text and do not hide independent tools',
  assert.match(html, /请在本机安装 Antigravity 扩展/);
  assert.match(html, /data-command="images.open"/);
 });
-function fixture(extra = {}) {
+function fixture(extra = {}, displayStorage) {
  let message, closed;
  const posted = [];
  let markup=''; const webview = { get html(){return markup.replace(/const dictionaries=[\s\S]*?;let language=/,'const dictionaries={};let language=')},set html(value){markup=value}, options: {}, onDidReceiveMessage(fn) { message = fn; return { dispose() {} }; }, async postMessage(value) { posted.push(value); if(value.type==='patch')this.html=this.html.replace(/<main>[\s\S]*?<\/main>/,value.main).replace(/<html lang="[^"]+"/,`<html lang="${value.language}"`); } };
  const view = { webview, onDidDispose(fn) { closed = fn; return { dispose() {} }; } };
- const provider = new WorkbenchView(() => state({ accounts: [account], ...extra }));
+ const provider = new WorkbenchView(() => state({ accounts: [account], ...extra }),undefined,displayStorage);
  provider.resolveWebviewView(view);
  void message({type:'ready'});
  return { provider, webview, posted, message: value => message(value), close: () => closed() };
 }
+
+test('quota view preferences restore from extension state without HTML script injection',()=>{
+ const saved={search:'</script><script>synthetic()',compare:JSON.stringify(['bucket','group','real-server-id','5h']),sort:'low',compareOwners:[account.id],compareLabel:'Renamed server model',expanded:{'quota-a-Gemini':true}};
+ const f=fixture({accountStorageReady:true},{get:()=>saved,update:async()=>{}});
+ assert.ok(f.webview.html.includes('\\u003c/script>'));assert.ok(!f.webview.html.includes(saved.search));assert.ok(f.webview.html.includes('real-server-id'));assert.ok(f.webview.html.includes('"sort":"low"'));f.provider.dispose();
+});
+test('view-state messages persist only bounded display preferences and ignore extra payloads',async()=>{
+ const writes=[],saved={search:'model',compare:JSON.stringify(['bucket','','actual-bucket','5h']),sort:'high',compareOwners:[account.id],compareLabel:'Server model',expanded:{}};
+ const f=fixture({}, {get:()=>undefined,update:async(key,value)=>{writes.push({key,value})}});
+ await f.message({type:'viewState',state:saved});await f.provider.flushViewState();assert.deepEqual(writes,[{key:'antigravityAccounts.quotaViewState',value:saved}]);
+ for(const message of [{type:'viewState',state:{...saved,quota:{snapshot:'synthetic'}}},{type:'viewState',state:saved,accountId:account.id},{type:'viewState',state:{...saved,search:'x'.repeat(4097)}},{type:'viewState',state:{...saved,compare:'display label'}},{type:'viewState',state:{...saved,compare:JSON.stringify(['local',account.id,'label',0])}}])await f.message(message);
+ assert.equal(writes.length,1);f.close();await f.message({type:'viewState',state:{...saved,sort:'low'}});assert.equal(writes.length,1);f.provider.dispose();
+});
+test('invalid persisted view state starts normally and cannot carry account snapshots',()=>{
+ const f=fixture({}, {get:()=>({search:'model',sort:'low',slots:'synthetic-never-persist'}),update:async()=>{}});
+ assert.ok(!f.webview.html.includes('synthetic-never-persist'));assert.ok(f.webview.html.includes('typeof savedApi.sort'));f.provider.dispose();
+});
 test('process messages require a current opaque selection and reject arbitrary PID, paths, signals and stale views',async()=>{
  calls.length=0;const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,credentialScopeVerified:true}]};
  const f=fixture({processConflicts});

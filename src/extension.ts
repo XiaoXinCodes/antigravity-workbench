@@ -64,7 +64,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const dashboard = new WorkbenchView(() => {
     const state = live.getState();
     return { version: context.extension.packageJSON.version, accounts: live.getAccounts(), snapshots: tree.accounts, warning: null, ...state, locations: locations.getState(), debug: debug.getState(), quotaPresentation: quotaTools.getState() }; // Legacy snapshot diagnostics never block the account workbench.
-  }, () => { void live.ensureIdentity?.(); });
+  }, () => { void live.ensureIdentity?.(); }, context.globalState);
   refreshDebug = () => dashboard.refresh();
   context.subscriptions.push(dashboard, vscode.window.registerWebviewViewProvider('antigravityAccounts.accounts', dashboard));
   const stateDirectory = path.join(context.globalStorageUri.fsPath, 'metadata');

@@ -12,11 +12,13 @@ export function registerQuotaHistory(context: vscode.ExtensionContext, live: Liv
   const now = deps.now ?? Date.now;
   let panel: vscode.WebviewPanel | undefined, disposed = false, tail = Promise.resolve();
   const lastErrors = new Map<string, unknown>();
+  let storageNotice = false;
+  const notice = async (owner: vscode.WebviewPanel) => { storageNotice = true; await owner.webview.postMessage({ type: 'notice', text: tr('history.storageFailed') }); };
   const emit = async () => {
     const owner = panel; if (!owner || disposed) return;
     try { const state = await history.read(); if (owner !== panel || disposed) return;
       const accounts = live.getAccounts(); await owner.webview.postMessage({ type: 'state', state: { now: now(), retentionDays: state.retentionDays, accounts: accounts.map(a => ({ id: a.id, label: displayAccount(a) })), rows: state.rows.filter(r => accounts.some(a => a.id === r.accountId)).map(r => ({ ...r, fingerprint: undefined, accountLabel: displayAccount(accounts.find(a => a.id === r.accountId)!), label: hideIdentityText(r.label, accounts) })) } });
-    } catch { await owner.webview.postMessage({ type: 'notice', text: tr('history.storageFailed') }); }
+    } catch { await notice(owner); }
   };
   const history = new QuotaHistory(deps.store ?? new PrivateState(path.join(context.globalStorageUri.fsPath, 'quota-history'), parseQuotaHistory, initialQuotaHistory), () => live.getAccounts(), () => { void emit(); }, now);
   const observe = () => {
@@ -42,21 +44,22 @@ export function registerQuotaHistory(context: vscode.ExtensionContext, live: Liv
   const handle = async (raw: unknown, owner: vscode.WebviewPanel) => {
     if (disposed || panel !== owner || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
     const m = raw as Record<string, unknown>;
+    if (!['ready', 'retention', 'clear'].includes(String(m.type))) return;
     try {
+      if (m.type === 'ready') await owner.webview.postMessage({ type: 'language', language: locale() });
       if (m.type === 'retention') await history.settings(Number(m.days));
       if (m.type === 'clear') {
         if (m.all === true) await history.clear();
         else if (Array.isArray(m.ids) && m.ids.length <= 5000 && m.ids.every(x => typeof x === 'string')) { const ids = new Set(m.ids); await history.store.transaction(s => { s.rows = s.rows.filter(r => !ids.has(r.id)); }); }
       }
-      if (m.type === 'language' && ['zh-CN', 'en'].includes(String(m.language))) await vscode.workspace.getConfiguration('antigravityAccounts').update('language', m.language, vscode.ConfigurationTarget.Global);
       await emit();
-    } catch { if (panel === owner) await owner.webview.postMessage({ type: 'notice', text: tr('history.storageFailed') }); }
+    } catch { if (panel === owner) await notice(owner); }
   };
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.quota.history', () => {
     if (panel) { panel.reveal(); return; }
-    panel = vscode.window.createWebviewPanel('antigravityQuotaHistory', tr('history.title'), vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] }); const owner = panel; owner.webview.html = quotaHistoryHtml();
-    context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) panel = undefined; }));
-  }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('history.title'); void panel.webview.postMessage({ type: 'language', language: locale() }); void emit(); } }), { dispose: () => { disposed = true; panel?.dispose(); } });
+    panel = vscode.window.createWebviewPanel('antigravityQuotaHistory', tr('history.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] }); const owner = panel; owner.webview.html = quotaHistoryHtml();
+    context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; storageNotice = false; } }));
+  }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('history.title'); void panel.webview.postMessage({ type: 'language', language: locale() }); if (storageNotice) void notice(panel); void emit(); } }), { dispose: () => { disposed = true; panel?.dispose(); } });
   return { history, observe, imageObservation, imageGap, refresh: () => { void observe(); void emit(); } };
 }
 export type ImageHistoryObserver = { imageObservation(snapshot: ImageQuotaSnapshot, fingerprint: string): Promise<void>; imageGap(accountId: string, fingerprint: string, modelId: string, endpoint: string): Promise<void> };

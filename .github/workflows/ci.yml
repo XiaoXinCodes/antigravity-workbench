@@ -50,8 +50,12 @@ jobs:
         run: npm run test:host
         timeout-minutes: 5
       - if: runner.os == 'Linux'
-        name: Check manual quota sorting in actual VS Code
+        name: Check quota comparison, sorting and Reload Window in actual VS Code
         run: xvfb-run -a npm run test:quota-host
+        timeout-minutes: 5
+      - if: runner.os == 'Linux'
+        name: Check global locale across actual VS Code pages
+        run: xvfb-run -a npm run test:language-host
         timeout-minutes: 5
       - if: runner.os == 'Linux'
         name: Capture actual VS Code UI with synthetic accounts
