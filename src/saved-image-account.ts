@@ -21,6 +21,7 @@ export interface SavedImageDependencies {
   project(token: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<{ projectId: string; endpoint: ImageEndpoint }>;
   models(token: string, project: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<unknown>;
   parseModels(value: unknown): ImageModelChoice[];
+  normalizeCatalog?(value: unknown): unknown;
   client?: SavedAccountQuotaClient;
   refreshAllowed?(account: AccountChoice): boolean;
   now?: () => number;
@@ -95,8 +96,9 @@ export class SavedImageAccounts {
           if (project.endpoint !== endpoint) throw new Error('IMAGE_DIRECT_PROJECT_ENDPOINT_MISMATCH');
           assertPresent(); check(requestSignal);
           await diagnostic?.assertCurrent();
-          const response = await this.deps.models(access.accessToken, project.projectId, requestSignal, endpoint);
-          access.assertPublicResponse(response);
+          const rawResponse = await this.deps.models(access.accessToken, project.projectId, requestSignal, endpoint);
+          access.assertPublicResponse(rawResponse);
+          const response = this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse;
           await diagnostic?.assertCurrent();
           const catalog = summarizeImageCatalog(response);
           let models: ImageModelChoice[] = [];

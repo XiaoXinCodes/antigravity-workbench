@@ -6,29 +6,19 @@ import { LiveLocks } from './live-lock';
 import { SavedImageAccounts } from './saved-image-account';
 import { savedAccountStore } from './saved-account-store';
 import { nativeHostStatus } from './native-host';
-import { readSavedImageModels } from './saved-image-models';
+import { readAccountModelCatalog } from './account-model-catalog';
+import { wakeCatalogPayload, wakeModelsFromCatalog, type WakeModelChoice } from './wake-model-catalog';
+export { wakeModelsFromCatalog } from './wake-model-catalog';
 import { resolveEndpointImageProject } from './direct-image-project-transport';
 import { accountDisplayFingerprint } from './quota-presentation';
 import type { LiveUiController } from './live-ui';
-import type { ImageEndpoint } from './direct-image-protocol';
-import type { ImageModelChoice } from './direct-image-binding';
+import type { CloudCodeEndpoint } from './cloudcode-service';
 import type { WakeExecution } from './wake-engine';
 import { sendWake } from './wake-transport';
 import { passiveCurrentEmail } from './passive-current-identity';
-/** Callable IDs come from this account's models map, never quota bucket labels.
- * Explicit image-only IDs are excluded; unfamiliar text IDs remain visible. */
-export function wakeModelsFromCatalog(value: unknown): ImageModelChoice[] {
-  const object = (v: unknown): Record<string, unknown> | undefined => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : undefined;
-  const catalog = object(value), records = object(catalog?.models), imageIds = catalog?.imageGenerationModelIds;
-  if (!records || Object.keys(records).length > 500 || imageIds !== undefined && !Array.isArray(imageIds)) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
-  return Object.entries(records).flatMap(([id, record]) => {
-    const row = object(record);
-    if (!row || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/.test(id) || Array.isArray(imageIds) && imageIds.includes(id) || row.disabled !== undefined && row.disabled !== false) return [];
-    const name = typeof row.displayName === 'string' && row.displayName.length <= 200 ? row.displayName : id;
-    return [{ id, label: name === id ? id : `${name} (${id})` }];
-  });
-}
-export interface WakeAccounts extends WakeExecution { models(accountId: string, endpoint: ImageEndpoint, signal: AbortSignal): Promise<ImageModelChoice[]> }
+export interface WakeAccounts extends WakeExecution { models(accountId: string, endpoint: CloudCodeEndpoint, signal: AbortSignal): Promise<WakeModelChoice[]> }
+// Reuse verified credential transactions and locks, with a distinct ordinary
+// model parser and per-instance cache. Never use the image generation routine.
 export function createWakeAccounts(context: vscode.ExtensionContext, live: LiveUiController): WakeAccounts {
   const locks = new LiveLocks(path.join(os.homedir(), '.gemini'), createHash('sha256').update(context.globalStorageUri.toString()).digest('hex'), { purpose: 'image' });
   const available = () => live.getState().accountStorageReady && !live.getState().pending && nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName).available;
@@ -40,11 +30,15 @@ export function createWakeAccounts(context: vscode.ExtensionContext, live: LiveU
     currentEmail = await passiveCurrentEmail();
     return work();
   }), store: () => savedAccountStore(context, locks, available), project: resolveEndpointImageProject,
-    models: readSavedImageModels, parseModels: wakeModelsFromCatalog, refreshAllowed: a => !a.active && !!currentEmail && currentEmail !== a.expectedEmail.toLowerCase() });
+    models: readAccountModelCatalog, normalizeCatalog: wakeCatalogPayload, parseModels: wakeModelsFromCatalog, refreshAllowed: a => !a.active && !!currentEmail && currentEmail !== a.expectedEmail.toLowerCase() });
   const fingerprint = (id: string) => { const a = live.getAccounts().find(a => a.id === id); return a && a.hostCurrent === true && a.migrationState !== 'pending' ? accountDisplayFingerprint(a) : undefined; };
   return {
     fingerprint,
-    async models(id, endpoint, signal) { if (!available()) throw Error('WAKE_ACCOUNT_UNAVAILABLE'); saved.selectForWindow(id); return saved.choices(id, signal, endpoint, true); },
+    async models(id, endpoint, signal) {
+      if (!available()) throw Error('WAKE_ACCOUNT_UNAVAILABLE'); saved.selectForWindow(id);
+      try { return await saved.choices(id, signal, endpoint, true); }
+      catch (error) { if (error instanceof Error && error.message === 'IMAGE_SAVED_MODELS_UNAVAILABLE') throw Error('WAKE_MODELS_UNAVAILABLE'); throw error; }
+    },
     async quota(task, signal) {
       if (!available() || fingerprint(task.accountId) !== task.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
       return saved.observeQuota(task.accountId, task.modelId, signal, task.endpoint, async () => {

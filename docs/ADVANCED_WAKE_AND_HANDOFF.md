@@ -1,5 +1,7 @@
 # 高级唤醒补齐及本地交接
 
+后续端点文案与普通模型目录修复的源码证据、兼容边界和新增验收见 [对话服务端点与普通模型目录](CONVERSATION_SERVICE_AND_MODELS.md)。下文为高级模式批次的历史交接记录。
+
 本地分支 `feat/quota-overview` 基于正式 0.1.8 main `5f9f61c0d608d32e7ef6a329acb2a47df58b2da8`。前三批独立提交：
 
 | 批次 | 提交 | 用户功能 |

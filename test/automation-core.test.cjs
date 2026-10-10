@@ -95,5 +95,5 @@ test('independent host processes cannot send the same scheduled instance twice',
 });
 test('wake catalog uses exact per-account callable IDs, preserves unfamiliar models and excludes explicit image IDs',()=>{
  const Module=require('node:module'),original=Module._load;let parse;try{Module._load=function(name,...args){return name==='vscode'?{}:original.call(this,name,...args)};parse=require('../out/wake-accounts').wakeModelsFromCatalog}finally{Module._load=original}
- const catalog={imageGenerationModelIds:['synthetic-image'],models:{'text-alpha':{displayName:'Alpha'},'future-family':{displayName:'New family'},'disabled-model':{disabled:true},'synthetic-image':{}}};assert.deepEqual(parse(catalog).map(m=>m.id),['text-alpha','future-family']);assert.deepEqual(parse({models:{'text-beta':{}}}).map(m=>m.id),['text-beta']);assert.throws(()=>parse({models:[]}));
+ const catalog={imageGenerationModelIds:['synthetic-image'],models:{'text-alpha':{displayName:'Alpha'},'future-family':{displayName:'New family'},'disabled-model':{disabled:true},'synthetic-image':{}}};assert.deepEqual(parse(catalog).map(m=>m.id),['text-alpha','future-family']);assert.deepEqual(parse({imageGenerationModelIds:[],models:{'text-beta':{}}}).map(m=>m.id),['text-beta']);assert.throws(()=>parse({models:[]}));
 });

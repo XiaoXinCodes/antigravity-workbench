@@ -58,6 +58,10 @@ jobs:
         run: xvfb-run -a npm run test:language-host
         timeout-minutes: 5
       - if: runner.os == 'Linux'
+        name: Check conversation endpoint, model directory and scheduled text requests in actual VS Code
+        run: xvfb-run -a npm run test:automation-host
+        timeout-minutes: 5
+      - if: runner.os == 'Linux'
         name: Capture actual VS Code UI with synthetic accounts
         run: xvfb-run -a node scripts/test-ui-screenshots.cjs
         timeout-minutes: 5

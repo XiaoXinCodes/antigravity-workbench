@@ -52,18 +52,21 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
     const m = raw as Record<string, unknown>, type = m.type;
     if (typeof type !== 'string' || !['ready', 'models', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy'].includes(type)) return;
     if (m.requestId !== undefined && (typeof m.requestId !== 'string' || !/^\d{1,15}$/.test(m.requestId))) return;
+    let modelRequest: { abort: AbortController; revision: number } | undefined;
     try {
       if (type === 'ready') await post({ type: 'language', language: locale() });
       if (type === 'models') {
         if (typeof m.accountId !== 'string' || !['daily', 'production'].includes(String(m.endpoint))) throw Error('WAKE_ACCOUNT_CHANGED');
         const id = m.accountId, endpoint = m.endpoint as 'daily' | 'production', fingerprint = accounts.fingerprint(id); if (!fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
         modelsAbort?.abort(); const abort = new AbortController(); modelsAbort = abort; const revision = ++sequence;
+        modelRequest = { abort, revision };
+        for (const [key, entry] of catalog) if (entry.accountId === id && entry.endpoint === endpoint) catalog.delete(key);
         void post({ type: 'notice', text: tr('automation.loading') });
         const models = await accounts.models(id, endpoint, abort.signal);
         if (abort.signal.aborted || revision !== sequence || panel !== owner || accounts.fingerprint(id) !== fingerprint) return;
         const key = randomUUID(); catalog.set(key, { accountId: id, fingerprint, endpoint, models: models.map(x => x.id), queriedAt: now() });
         if (catalog.size > 50) catalog.delete(catalog.keys().next().value!);
-        await post({ type: 'models', accountId: id, endpoint, catalogKey: key, models }); await post({ type: 'notice', text: '' });
+        await post({ type: 'models', accountId: id, endpoint, catalogKey: key, models }); await post({ type: 'notice', text: models.length ? '' : tr('automation.noChatModels') });
       } else if (type === 'save') {
         const entry = typeof m.catalogKey === 'string' ? catalog.get(m.catalogKey) : undefined;
         if (!entry || entry.accountId !== m.accountId || entry.endpoint !== m.endpoint || entry.fingerprint !== accounts.fingerprint(entry.accountId) || now() - entry.queriedAt >= 300_000 || typeof m.modelId !== 'string' || !entry.models.includes(m.modelId)) throw Error('WAKE_MODEL_SELECTION_STALE');
@@ -91,7 +94,12 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         if (typeof m.low !== 'boolean' || typeof m.exhausted !== 'boolean' || typeof m.recovered !== 'boolean' || !Number.isInteger(m.threshold) || Number(m.threshold) < 1 || Number(m.threshold) > 99) throw Error('ALERT_SETTINGS_INVALID');
         await store.transaction(s => { s.alerts = { low: m.low as boolean, exhausted: m.exhausted as boolean, recovered: m.recovered as boolean, threshold: m.threshold as number }; });
       } else if (type === 'privacy' && typeof m.hidden === 'boolean') await vscode.workspace.getConfiguration('antigravityAccounts').update('hideIdentity', m.hidden, vscode.ConfigurationTarget.Global);
-    } catch (e) { if (panel === owner && !(type === 'models' && (modelsAbort?.signal.aborted || /CANCELLED/.test(safeCode(e))))) await post({ type: 'notice', text: tr('automation.failed', { p0: safeCode(e) }) }); }
+    } catch (e) {
+      const code = safeCode(e);
+      if (panel === owner && !(type === 'models' && (modelRequest?.abort.signal.aborted || modelRequest && modelRequest.revision !== sequence || /CANCELLED/.test(code)))) {
+        await post({ type: 'notice', text: code === 'WAKE_MODEL_TYPES_UNAVAILABLE' ? tr('automation.modelTypesUnavailable') : code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) });
+      }
+    }
     finally { if (panel === owner) { await emit(); await post({ type: 'complete', requestType: type, requestId: m.requestId }); } }
   };
   const observe = (extra: AlertSample[] = []) => {

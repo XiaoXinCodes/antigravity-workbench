@@ -1,10 +1,10 @@
 import * as https from 'node:https';
 import { randomUUID } from 'node:crypto';
-import { imageEndpointHost, type ImageEndpoint } from './direct-image-protocol';
+import { cloudCodeHost, type CloudCodeEndpoint } from './cloudcode-service';
 import { validImageProject } from './direct-image-project';
 import { validBearerToken } from './account-quota-transport';
 import type { WakeResult } from './wake-engine';
-export interface WakeBinding { token: string; projectId: string; modelId: string; endpoint: ImageEndpoint; verify(signal: AbortSignal): Promise<void> }
+export interface WakeBinding { token: string; projectId: string; modelId: string; endpoint: CloudCodeEndpoint; verify(signal: AbortSignal): Promise<void> }
 export function wakeRequestBody(binding: WakeBinding, outputBudget: number): Record<string, unknown> {
   if (!validImageProject(binding.projectId) || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/.test(binding.modelId) || !Number.isInteger(outputBudget) || outputBudget < 1 || outputBudget > 64) throw Error('WAKE_REQUEST_INVALID');
   return { project: binding.projectId, model: binding.modelId, requestId: randomUUID(), userAgent: 'antigravity', requestType: 'agent',
@@ -29,7 +29,7 @@ export function parseWakeStream(text: string): WakeResult {
 export async function sendWake(binding: WakeBinding, outputBudget: number, signal: AbortSignal, beforeSend: () => Promise<void>, requestHttps: typeof https.request = https.request): Promise<WakeResult> {
   const body = JSON.stringify(wakeRequestBody(binding, outputBudget));
   if (!validBearerToken(binding.token)) throw Error('WAKE_AUTH_REQUIRED');
-  const host = imageEndpointHost(binding.endpoint); await binding.verify(signal);
+  const host = cloudCodeHost(binding.endpoint); await binding.verify(signal);
   if (signal.aborted) throw Error('WAKE_CANCELLED');
   await beforeSend();
   return new Promise<WakeResult>(resolve => {
