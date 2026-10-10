@@ -5,7 +5,7 @@
   "version": "0.1.9",
   "publisher": "xiaoxincodes",
   "icon": "media/icon.png",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "private": true,
   "repository": {
     "type": "git",

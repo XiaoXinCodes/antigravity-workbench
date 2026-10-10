@@ -12,20 +12,16 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 # Pin reviewed license texts while allowing native checkout line endings.
-# SUL section: n8n LICENSE.md at f754b22a3f49c1528887c52902073ce3c0127645,
-# with only the project's copyright line added before the unchanged section.
+# Standard MIT text: https://opensource.org/license/mit
+# Project copyright retained; third-party text pins are unchanged.
 LICENSE_TEXT_HASHES = {
-    'LICENSE': '615e803d285e3ee064dd9bb2b3c9a881b786528364beefa4180b21396dc58056',
+    'LICENSE': '12da070e58faaca8fa54ebc1f9b099b0c2a3c80fe0b92786776e3c52bd7b8698',
     'LICENSES/TypeScript-Apache-2.0.txt': 'a5e9f9b1575301c7a7a03508fdaa2e05a918cc17fd21c6e898096a96d6a34f61',
 }
 
 
-def verify(vsix, source=None):
-    package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))
-    lock = json.loads((ROOT / 'package-lock.json').read_text(encoding='utf-8'))
-    version = package['version']
-    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.9'
-    assert package['license'] == lock['packages']['']['license'] == 'SEE LICENSE IN LICENSE'
+def verify_license_notices(package, lock):
+    assert package['license'] == lock['packages']['']['license'] == 'MIT'
     for name, expected in LICENSE_TEXT_HASHES.items():
         assert hashlib.sha256((ROOT / name).read_text(encoding='utf-8').encode()).hexdigest() == expected, f'Unreviewed license text: {name}'
     compiler_version = lock['packages']['node_modules/typescript']['version']
@@ -33,6 +29,15 @@ def verify(vsix, source=None):
     third_party_notices = (ROOT / 'THIRD_PARTY_NOTICES.txt').read_text(encoding='utf-8')
     assert f'TypeScript {compiler_version}' in third_party_notices
     assert 'Copyright (c) Microsoft Corporation. All rights reserved.' in third_party_notices
+    return third_party_notices
+
+
+def verify(vsix, source=None):
+    package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))
+    lock = json.loads((ROOT / 'package-lock.json').read_text(encoding='utf-8'))
+    version = package['version']
+    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.9'
+    third_party_notices = verify_license_notices(package, lock)
     assert package['icon'] == 'media/icon.png'
     assert package['contributes']['viewsContainers']['activitybar'][0]['icon'] == 'media/workbench.svg'
     assert package['contributes']['configuration']['properties']['antigravityAccounts.images.endpoint']['default'] == 'daily'
@@ -116,7 +121,7 @@ def verify(vsix, source=None):
                         assert member in archive.namelist(), f'Missing runtime dependency: {member}'
                 result['runtime_modules'] = len(modules)
                 result['runtime_sha256'] = {m.name: hashlib.sha256(m.read_bytes()).hexdigest() for m in sorted(modules)}
-                result['license'] = 'Sustainable Use License 1.0'
+                result['license'] = 'MIT'
                 result['third_party_notices_verified'] = True
             else:
                 prefix = f'antigravity-workbench-{version}/'

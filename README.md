@@ -6,7 +6,7 @@
 
 <p align="center">在 VS Code 中管理 Google Antigravity 账号、查看额度并创作图片。</p>
 
-<p align="center"><strong>Source-available · Sustainable Use License 1.0</strong></p>
+<p align="center"><strong>开源 · MIT License</strong></p>
 
 <p align="center">简体中文 · <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README_EN.md">English</a></p>
 
@@ -157,8 +157,6 @@ Workbench 把账号、额度和图片创作放进同一个 VS Code 工作台：�
 
 ## 许可
 
-项目自有部分采用 [Sustainable Use License 1.0](LICENSE)，属于 source-available（源码可见）许可，不是 OSI 标准开源许可。
+当前源码的项目自有部分采用 [MIT License](LICENSE)，允许使用、修改、分发与商业使用，请保留版权和许可声明。已发布版本以各自发行包中的许可为准。
 
-允许个人、非商业及自身内部商业用途的使用和修改；向他人分发或提供软件必须免费且用于非商业目的。超出正文许可范围的用途，需要向权利人另行取得授权。收费咨询或支持本身并非一概禁止，但软件的使用、分发和提供仍须满足正文条件。这段摘要不增加或替代 [LICENSE](LICENSE) 的条款。
-
-实际随包的第三方代码保留独立许可，见 [第三方声明](THIRD_PARTY_NOTICES.txt)。该许可不授予 Google 服务访问权，也不覆盖第三方代码、素材或商标的权利，详见 [项目与服务说明](docs/PROJECT_NOTICES.md)。
+随包第三方代码保留独立许可，见 [第三方声明](THIRD_PARTY_NOTICES.txt)。Google 服务访问、第三方素材与商标的权利边界见 [项目与服务说明](docs/PROJECT_NOTICES.md)。

@@ -1,8 +1,8 @@
 # 参与开发
 
-项目自有部分采用 [Sustainable Use License 1.0](LICENSE)，属于 source-available（源码可见）项目，不是 OSI 标准开源项目。贡献前请阅读许可正文及 [第三方声明](THIRD_PARTY_NOTICES.txt)。
+项目自有部分采用 [MIT License](LICENSE)。贡献前请阅读许可正文及 [第三方声明](THIRD_PARTY_NOTICES.txt)。
 
-普通问题或较大改动先在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 描述需求、复现方式或设计；疑似漏洞按 [安全报告流程](SECURITY.md) 处理。未来插件市场交付的要求见 [Marketplace 发布准备](docs/MARKETPLACE_PREPARATION.md)。
+普通问题或较大改动先在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 描述需求、复现方式或设计；疑似漏洞按 [安全报告流程](SECURITY.md) 处理。插件市场更新的要求见 [Marketplace 发布准备](docs/MARKETPLACE_PREPARATION.md)。
 
 ## 开始
 
@@ -11,6 +11,7 @@
 ```sh
 npm ci --ignore-scripts
 npm run check
+python test/license.test.py
 python test/release-safety.test.py
 python test/package-docs.test.py
 npm run test:host
@@ -45,7 +46,7 @@ node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.9.v
 
 从最新 `main` 创建独立分支，保持修改范围明确，通过 Pull Request 提交。没有仓库写权限时，可在仓库访问权限允许的范围内使用 fork。PR 说明触发条件、结果变化和验证边界；尚未完成的工作标记为 Draft。文档入口从 [docs/README.md](docs/README.md) 开始；设置和命令名以 `package.json` 为准，截图必须标明真实环境或合成夹具。
 
-只提交你有权贡献的内容。引入第三方代码、素材或改编时记录固定来源、版本、许可及修改范围，保留原有版权与声明；项目 SUL 不替代第三方许可。新增随包材料需同步 `THIRD_PARTY_NOTICES.txt`、`LICENSES/` 与打包校验，无法确认分发权限的材料不要纳入提交。
+只提交你有权贡献的内容。引入第三方代码、素材或改编时记录固定来源、版本、许可及修改范围，保留原有版权与声明；项目 MIT 许可不替代第三方许可。新增随包材料需同步 `THIRD_PARTY_NOTICES.txt`、`LICENSES/` 与打包校验，无法确认分发权限的材料不要纳入提交。
 
 提交前检查相对链接、版本、固定错误码与打包内容。CI 对精确 PR 提交运行 Linux、Windows、macOS 检查；检查通过后由维护者审阅并决定是否合并。版本发布在 main 通过同一矩阵后执行；发布脚本遇到已有版本会跳过，拒绝覆盖已发布 Release、标签或附件。草稿更新必须符合发布脚本的固定身份和资产校验。正式发布前必须下载核对资产。
 

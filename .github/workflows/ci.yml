@@ -34,6 +34,7 @@ jobs:
           npm run compile
           node --test --test-name-pattern="independent host processes|independent processes rotate" test/automation-core.test.cjs test/debug-log-store.test.cjs
       - run: npm run check
+      - run: python test/license.test.py
       - run: python test/release-safety.test.py
       - run: python test/package-docs.test.py
       - if: runner.os == 'Linux'

@@ -6,7 +6,7 @@
 
 <p align="center">Manage Google Antigravity accounts, check quota and create images in VS Code.</p>
 
-<p align="center"><strong>Source-available · Sustainable Use License 1.0</strong></p>
+<p align="center"><strong>Open source · MIT License</strong></p>
 
 <p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README.md">简体中文</a> · English</p>
 
@@ -159,8 +159,6 @@ Development uses Node.js 20+; CI uses Node.js 22. See the [contribution guide](C
 
 ## License
 
-Project-owned material uses the [Sustainable Use License 1.0](LICENSE), a source-available license rather than an OSI-standard open-source license.
+Project-owned material in the current source uses the [MIT License](LICENSE), permitting use, modification, distribution and commercial use with the copyright and license notices retained. Published versions retain the license shipped in their own packages.
 
-Use and modification are allowed for personal, non-commercial and your own internal business purposes. Distribution or provision to others must be free of charge and for non-commercial purposes. Uses outside the license require separate permission from the rights holder. Paid consulting or support is not categorically prohibited, but use, distribution and provision of the software must still meet the license conditions. This summary neither adds to nor replaces [LICENSE](LICENSE).
-
-Third-party code shipped with the software retains its own licenses; see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). This license grants no Google service access and does not cover rights in third-party code, assets or trademarks. See [project and service notices](docs/PROJECT_NOTICES.md).
+Bundled third-party code keeps its own licenses; see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). See [project and service notices](docs/PROJECT_NOTICES.md) for Google service access, third-party assets and trademarks.

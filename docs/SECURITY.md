@@ -1,6 +1,6 @@
 # 安全设计与边界
 
-Antigravity Workbench 是独立的非官方扩展，项目自有部分采用 [Sustainable Use License 1.0](../LICENSE)，随包第三方代码保留[独立许可](../THIRD_PARTY_NOTICES.txt)。服务条款与第三方接口限制见 [项目与服务说明](PROJECT_NOTICES.md)。本机保护措施不代表获得服务方授权或保证持续兼容。
+Antigravity Workbench 是独立的非官方扩展，项目自有部分采用 [MIT License](../LICENSE)，随包第三方代码保留[独立许可](../THIRD_PARTY_NOTICES.txt)。服务条款与第三方接口限制见 [项目与服务说明](PROJECT_NOTICES.md)。本机保护措施不代表获得服务方授权或保证持续兼容。
 
 疑似漏洞的报告方式见根目录 [安全报告流程](../SECURITY.md)；本页说明实现中的保护和限制。
 
