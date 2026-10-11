@@ -41,7 +41,8 @@ The WASM contains SQLite 3.49.1 (public domain) and the public-domain
 extension-functions.c contribution. The sql.js generated Emscripten runtime
 is covered by MIT/NCSA; its bundled libc uses musl notices. Full texts:
 LICENSES/Emscripten-MIT-NCSA.txt and LICENSES/musl-COPYRIGHT.txt.
-These include the Node.js path-helper notice. This inventory includes the
+These include the Node.js path-helper notice; only trailing whitespace and
+extra EOF blank lines in these two license texts are normalized. This inventory includes the
 runtime licenses; the Emscripten compiler/build tools are not shipped.
 
 SQLite: https://sqlite.org/copyright.html
