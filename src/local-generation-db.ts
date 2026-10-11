@@ -64,7 +64,16 @@ export async function readLocalGenerationDb(selected: string, signal: AbortSigna
         }
       } finally { await output.close(); }
     }
-    for (const file of source) if (!same(file.stat, await file.handle.stat()) || !same(file.stat, await fs.lstat(file.name))) throw Error('LOCAL_DB_CHANGED');
+    for (const file of source) {
+      if (!same(file.stat, await file.handle.stat())) throw Error('LOCAL_DB_CHANGED');
+      // Windows may leave the open handle's timestamps unchanged after rename.
+      // A name that disappeared during copying is a changed source, even then.
+      const named = await fs.lstat(file.name).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw Error('LOCAL_DB_CHANGED');
+        throw error;
+      });
+      if (!same(file.stat, named)) throw Error('LOCAL_DB_CHANGED');
+    }
     if (!source.some(f => f.name.endsWith('-wal')) && await fs.lstat(selected + '-wal').then(() => true, e => { if (e.code === 'ENOENT') return false; throw e; })) throw Error('LOCAL_DB_CHANGED');
     if (await journal()) throw Error('LOCAL_DB_CHANGED');
     const result = await queryGenerationSnapshot(path.join(temp, 'conversation.db'), signal, options);

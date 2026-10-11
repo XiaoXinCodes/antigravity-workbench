@@ -11,6 +11,23 @@ test('raw response declarations preserve field/value pairs, reject arbitrary bod
  const access=[];Object.defineProperty(access,0,{get(){throw Error('GETTER_EXECUTED')}});assert.equal(readModelObservation({status:'provided',values:access,fields:['model']}).status,'invalid');
  assert.equal(readModelObservation({...v,entries:[{field:'model',value:'forged-source'}]}).status,'invalid');
 });
+test('friendly model details preserve declarations and keep raw provenance explicitly optional in both languages',()=>{
+ const {modelObservationClientScript}=require('../out/request-observation-view'),{clientI18n}=require('../out/i18n'),vm=require('node:vm');
+ const declared=responseModels({model:'synthetic-return-a',response:{modelVersion:'synthetic-return-b'}}),local=parseLocalGeneration('session',0,generation()),before=JSON.stringify([declared,local]);
+ try{for(const lang of ['zh-CN','en']){
+  setLanguage(lang);
+  for(const value of [declared,local.returned,missingModel(),responseModels({model:null})]){
+   const friendly=responseModelDetails('synthetic-request',[value]);assert.doesNotMatch(friendly,/gen_metadata|response\.modelVersion|Source fields|来源字段/);
+   assert.equal(vm.runInNewContext(clientI18n()+modelObservationClientScript()+'observationDetails("synthetic-request",values)',{values:[value]}),friendly);
+   const technical=responseModelDetails('synthetic-request',[value],true);assert.equal(vm.runInNewContext(clientI18n()+modelObservationClientScript()+'observationDetails("synthetic-request",values,true)',{values:[value]}),technical);
+  }
+  assert.match(responseModelDetails('synthetic-request',[declared]),/synthetic-return-a.*synthetic-return-b/);
+  assert.match(responseModelDetails('synthetic-request',[local.returned],true),/gen_metadata\.chatModel\.responseModel = synthetic-return-a/);
+  assert.match(responseModelDetails('synthetic-request',[declared],true),/response\.modelVersion = synthetic-return-b/);
+ }
+ assert.equal(JSON.stringify([declared,local]),before);
+ }finally{setLanguage('zh-CN')}
+});
 test('SSE repeated and conflicting model declarations never use last-wins, including truncated and failed streams',async()=>{
  const frame=value=>'data: '+JSON.stringify(value)+'\n\n';let text=frame({response:{modelVersion:'synthetic-route-a'}})+frame({response:{modelVersion:'synthetic-route-a'}});
  assert.equal(parseWakeStream(text).responseModel.status,'provided');text+=frame({response:{modelVersion:'synthetic-route-b'}})+frame({response:{modelVersion:'synthetic-route-c'}})+'data: [DONE]\n';
@@ -119,7 +136,7 @@ test('WAL disappearance, inode replacement and creation during copying fail clos
  // path remains covered above, including pending writes and checkpoint resets.
  for(const mode of ['replace','remove']){
   const dir=await fs.mkdtemp(path.join(f.root,'race-')),file=path.join(dir,'copy.db');await fs.writeFile(file,main);await fs.writeFile(file+'-wal',wal);let changed=false;
-  fs.open=async(...args)=>{const handle=await original(...args);if(args[0]===file+'-wal'){const read=handle.read.bind(handle);handle.read=async(...params)=>{const result=await read(...params);if(!changed){if(mode==='replace'){const replacement=file+'-wal.new';await fs.copyFile(file+'-wal',replacement);await fs.rename(replacement,file+'-wal')}else await fs.rename(file+'-wal',file+'-wal.moved');changed=true}return result}}return handle};
+  fs.open=async(...args)=>{const handle=await original(...args);if(args[0]===file+'-wal'){if(mode==='remove'){const unchanged=await handle.stat();handle.stat=async()=>unchanged}const read=handle.read.bind(handle);handle.read=async(...params)=>{const result=await read(...params);if(!changed){if(mode==='replace'){const replacement=file+'-wal.new';await fs.copyFile(file+'-wal',replacement);await fs.rename(replacement,file+'-wal')}else await fs.rename(file+'-wal',file+'-wal.moved');changed=true}return result}}return handle};
   try{await assert.rejects(readLocalGenerationDb(file,signal()),/LOCAL_DB_CHANGED/);assert.equal(changed,true,'Intended WAL mutation must have succeeded');if(mode==='remove')await fs.rename(file+'-wal.moved',file+'-wal')}finally{fs.open=original}
  }
  const clean=await fixture(t),closed=await database(clean.file,[generation()],'delete');await closed.close();let changed=false;fs.open=async(...args)=>{const h=await original(...args);if(args[0]===clean.file){const read=h.read.bind(h);h.read=async(...params)=>{const result=await read(...params);if(!changed){changed=true;await fs.writeFile(clean.file+'-wal',Buffer.alloc(0))}return result}}return h};try{await assert.rejects(readLocalGenerationDb(clean.file,signal()),/LOCAL_DB_CHANGED/)}finally{fs.open=original}

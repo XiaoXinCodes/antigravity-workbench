@@ -10,6 +10,8 @@ The workbench records raw server model declarations; it cannot verify underlying
 
 Different declared strings, including differing root/wrapped/version fields, are marked conflicting declarations; this is not proof of routing failure. Sources remain associated with their raw values. Missing/invalid/conflicting fields are separate. At most two summary values and ten field/value declarations are retained per response; overflow is marked. Invalid field values are not echoed.
 
+Ordinary records and image/wake details use friendly **Requested model**, **Returned model**, and token labels in Chinese and English. Internal field paths are not shown in ordinary details. Local records have an explicitly optional, initially collapsed **Technical details (raw fields)** section; raw provenance is populated only when that section opens and removed from page text when it closes. This presentation does not change the stored field/value evidence.
+
 ## Local fields and token semantics
 
 Field meanings are based on public reverse engineering, not a supported Google schema. The independently implemented bounded wire reader consumes root #1 (chatModel), chatModel #19 (responseModel), and chatModel #4 (usage). Unknown wire fields are skipped, not inferred.
@@ -24,6 +26,8 @@ Field meanings are based on public reverse engineering, not a supported Google s
 
 Missing protobuf scalars are missing, including omitted zero-like proto defaults: no guessed zeros. Total output already includes text/reasoning and must not be added again. No cost or aggregate/trend is shown. #11 response identity is hashed for same-session deduplication; mismatched duplicate values produce conflicts. No account attribution, mtime-based generation timestamp or cross-session grouping is inferred.
 
+The cache count is specifically **cache read tokens**, not cache write tokens or a combined cache total. No verified cache-write field is currently parsed. The input label identifies uncached input; the output label identifies the total including reasoning, with text and reasoning listed separately in ordinary details.
+
 Frozen evidence: [Tokscale Antigravity generation parser at 4f17d6c](https://github.com/Javis603/tokscale/blob/4f17d6c6d85f5582949dcb0476c55518eafd7e23/crates/tokscale-core/src/sessions/antigravity_cli.rs#L1-L60). This documents six sessions / 140 turns and optional #19; it does not establish a requested-model wire field. Runtime code is an independent TypeScript implementation; no upstream Rust code or runtime library is bundled.
 
 ## Safe snapshot and limits
@@ -35,3 +39,9 @@ Each source file is capped at 32 MiB; the WASM recovered memory image has a sepa
 ## Offline acceptance
 
 Synthetic metadata and live synthetic WAL fixtures include native/WASM differential checks across 512/4096/65536-byte pages, uncommitted transactions, rollback/commit, checkpoint/reset, little/big-endian checksums, corrupt/incomplete/stale WAL tails and effective main-header page counts. They cover source DB/WAL/SHM hashes and timestamps, rollback journals, changed snapshots, links, schema changes, malformed wire data, missing/zero/conflicting token fields, duplicate responses, multi-response image batches, SSE conflicts/interruptions, legacy image/wake state and global Chinese/English. Isolated VS Code UI tests use a separate profile and only synthetic files/accounts/transports. No production credentials or real conversation files are used, and no Google requests are sent.
+
+On Windows, the synthetic SHM preservation check uses a read-only mapping to retain the whole-file hash while SQLite holds byte-range locks. The active-writer tests assert that the product opens only the original DB/WAL with read-only flags, never the original SHM. A source name disappearing after copying is classified as a changed source even when the held handle's timestamps do not change; the race test requires the intended mutation to succeed rather than accepting an unrelated I/O failure.
+
+## Reported local WSL acceptance
+
+A local acceptance report for commit `7398405624904d8613159be31c9162ab782c65d3` covered five actual Antigravity WSL databases and 132 metadata records: all had returned-model declarations, all requested-model fields remained missing, and no import was skipped or limited. Native/WASM comparison, repeated reads and cancellation passed; source DB hashes/attributes and extension data remained unchanged, private copies were cleaned up, and no inference requests were made. The installed adapter and 110 runtime files plus vendor/locale files were verified. These actual DBs had no WAL/SHM, so active WAL/SHM evidence is still from synthetic fixtures. This report predates the friendly-label candidate; its post-install UI acceptance remains separate.
