@@ -12,6 +12,7 @@ Keep successful quota readings available and clearly distinguish older data from
 - Preserve matching quota readings through identity checks, routine credential updates and unrelated account state changes.
 - Restore the last successful result for the same account, model and endpoint after reopening the image page or reloading the window.
 - Keep quota history and pinned selections through routine updates for the same identity; deleted or explicitly replaced accounts do not inherit old readings.
+- Improve concurrent debug-log reading and rotation across Windows windows.
 
 [Release notes](docs/RELEASE_0.1.11.md) · [Validation scope](docs/VALIDATION_0.1.11.md)
 

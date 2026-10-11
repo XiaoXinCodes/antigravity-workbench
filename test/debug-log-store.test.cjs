@@ -387,3 +387,59 @@ for (const phase of ['scan', 'retain', 'verifyHandle', 'writeRecord']) test(`con
   await f.store.append(record(3), enabled);
   assert.ok((await f.store.readLines()).includes(record(3)));
 });
+
+function sharingPlatform(t, value = 'win32') {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value, configurable: true });
+  t.after(() => Object.defineProperty(process, 'platform', descriptor));
+}
+function sharingError(code = 'EPERM') { return Object.assign(new Error('synthetic sharing conflict'), { code }); }
+
+test('Windows transient read sharing retries without losing validated records', async t => {
+  const f = await fixture(t); await f.store.append(record(1), enabled); sharingPlatform(t);
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.open; let attempts = 0;
+  fs.open = async function (name, ...args) { if (name === target && new Error().stack.includes('DebugLogStore.readFile')) { if (++attempts <= 2) throw sharingError(); } return original.call(this, name, ...args); };
+  try { assert.deepEqual(await f.store.readLines(), [record(1)]); assert.equal(attempts, 3); } finally { fs.open = original; }
+});
+
+test('Windows transient retention sharing retries the guarded deletion', async t => {
+  const f = await fixture(t, { maxFiles: 1, maxFileBytes: 64 }); await f.store.append(record(1), enabled); sharingPlatform(t);
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.unlink; let attempts = 0;
+  fs.unlink = async function (name, ...args) { if (name === target && ++attempts <= 2) throw sharingError(attempts === 1 ? 'EPERM' : 'EBUSY'); return original.call(this, name, ...args); };
+  try { await f.store.append(record(2), enabled); assert.equal(attempts, 3); assert.deepEqual(await f.store.readLines(), [record(2)]); } finally { fs.unlink = original; }
+});
+
+test('Windows persistent permission denial remains an error after bounded retries', async t => {
+  const f = await fixture(t); await f.store.append(record(1), enabled); sharingPlatform(t);
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.open; let attempts = 0;
+  fs.open = async function (name, ...args) { if (name === target && new Error().stack.includes('DebugLogStore.readFile')) { attempts++; throw sharingError('EACCES'); } return original.call(this, name, ...args); };
+  try { await assert.rejects(f.store.readLines(), { code: 'DEBUG_STORAGE_PERMISSION_DENIED' }); assert.equal(attempts, 6); } finally { fs.open = original; }
+});
+
+test('Windows retention retry rejects a replaced inode before unlinking it', async t => {
+  const f = await fixture(t, { maxFiles: 1, maxFileBytes: 64 }); await f.store.append(record(1), enabled); sharingPlatform(t);
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.unlink; let attempts = 0;
+  fs.unlink = async function (name, ...args) { if (name === target && ++attempts === 1) { await fs.rename(target, target + '.held'); await fs.writeFile(target, record(77) + '\n', { mode: 0o600 }); throw sharingError(); } return original.call(this, name, ...args); };
+  try { await assert.rejects(f.store.append(record(2), enabled), { code: 'DEBUG_STORAGE_CHANGED' }); assert.equal(attempts, 1); assert.equal(await fs.readFile(target, 'utf8'), record(77) + '\n'); } finally { fs.unlink = original; }
+});
+
+test('Windows read retry rejects a replaced inode before returning its content', async t => {
+  const f = await fixture(t); await f.store.append(record(1), enabled); sharingPlatform(t);
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.open; let attempts = 0;
+  fs.open = async function (name, ...args) { if (name === target && new Error().stack.includes('DebugLogStore.readFile') && ++attempts === 1) { await fs.rename(target, target + '.held'); await fs.writeFile(target, record(77) + '\n', { mode: 0o600 }); throw sharingError(); } return original.call(this, name, ...args); };
+  try { await assert.rejects(f.store.readLines(), { code: 'DEBUG_STORAGE_CHANGED' }); assert.equal(attempts, 2); } finally { fs.open = original; }
+});
+
+test('Windows retention retry rechecks cancellation before a second delete', async t => {
+  const f = await fixture(t, { maxFiles: 1, maxFileBytes: 64 }); await f.store.append(record(1), enabled); sharingPlatform(t);
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.unlink; let attempts = 0, allowed = true;
+  fs.unlink = async function (name, ...args) { if (name === target) { attempts++; allowed = false; throw sharingError(); } return original.call(this, name, ...args); };
+  try { await f.store.append(record(2), () => allowed); assert.equal(attempts, 1); assert.equal(await fs.readFile(target, 'utf8'), record(1) + '\n'); } finally { fs.unlink = original; }
+});
+
+test('non-Windows permission denial remains immediate', async t => {
+  const f = await fixture(t); await f.store.append(record(1), enabled); sharingPlatform(t, 'linux');
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.open; let attempts = 0;
+  fs.open = async function (name, ...args) { if (name === target && new Error().stack.includes('DebugLogStore.readFile')) { attempts++; throw sharingError(); } return original.call(this, name, ...args); };
+  try { await assert.rejects(f.store.readLines(), { code: 'DEBUG_STORAGE_PERMISSION_DENIED' }); assert.equal(attempts, 1); } finally { fs.open = original; }
+});

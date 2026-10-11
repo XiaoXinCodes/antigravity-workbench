@@ -8,6 +8,7 @@
 - 身份重新核验、同账号凭证更新和无关账号状态变化不再清空对应的额度读数。
 - 关闭重开图片页或重载窗口后，恢复同一账号、模型和端点的上次成功结果。
 - 同一身份的正常凭证更新保留额度历史和置顶选择；删除或明确替换账号后不继承旧数据。
+- Windows 调试日志在多窗口并发读取与轮换时更稳定。
 
 ## English
 
@@ -17,3 +18,4 @@ Keep successful quota readings available and clearly distinguish older data from
 - Preserve matching quota readings through identity checks, routine credential updates and unrelated account state changes.
 - Restore the last successful result for the same account, model and endpoint after reopening the image page or reloading the window.
 - Keep quota history and pinned selections through routine updates for the same identity; deleted or explicitly replaced accounts do not inherit old readings.
+- Improve concurrent debug-log reading and rotation across Windows windows.
