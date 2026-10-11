@@ -41,7 +41,7 @@
 
 ## 验证与边界
 
-- Node 22、Linux：`npm run check`（AST、TypeScript、ESLint、完整单元及集成测试）；1,524 项测试中 1,520 通过、0 失败、4 项 Windows 条件测试在 Linux 跳过。完整日志随候选保存。
+- Node 22、Linux：`npm run check`（AST、TypeScript、ESLint、完整单元及集成测试）；1,525 项测试中 1,521 通过、0 失败、4 项 Windows 条件测试在 Linux 跳过。完整日志随候选保存。
 - Python：许可证 8 项、发布安全 34 项、打包文档 5 项通过。发布安全测试只使用模拟器，没有执行发布或远端分支操作。
 - VS Code 1.141.0 独立用户目录：扩展激活、额度含 Reload Window（36 检查）、全局语言（10）、普通定时请求（34）、高级触发器（10）、历史、账号选择、所选账号额度与双语目录失败恢复（13）通过。图片页截图交互额外验证缺失图片清单时保留展示、禁止发送及中英文原因切换。
 - Chromium：36 个布局/交互场景通过；保留窄栏及中英文实际 VS Code 截图。所有 UI 账号、额度和请求均为合成适配器。
@@ -67,4 +67,7 @@
 
 CloudCode 图片列表仍取实际所选账号、已核验项目、端点的直连元数据；不将 Hub 目录自动作为请求资格。现有按需诊断分别标注 Hub 与直连来源及各自观察时间，缺失字段仅描述该响应，不能据此推断 Hub 必须透传。
 
-本机真实元数据验证因没有可调用 VS Code／Antigravity 窗口接口受阻；已有旧日志不足以证明字段缺失，未计为验证通过。后续打开已登录的工作台，在命令面板执行“Antigravity Workbench: 高级排障…”（英文“Advanced troubleshooting…”），选择“诊断图片目录（不生图）”。`antigravityAccounts.debug.catalog` 是内部已注册命令，manifest 的命令面板 `when: false` 将它隐藏，不能要求用户直接搜索该标题；仅回传目录诊断文本，不复制令牌或响应正文。诊断使用现有按需元数据查询，不触发模型生成、不自动上传。最小摘要附固定 `IMAGE_CATALOG_LIST_MISSING / INVALID / EMPTY / UNAVAILABLE` 原因，继续排除凭据、邮箱及项目原值。
+工具侧原始元数据验证因没有可调用 VS Code／Antigravity 窗口接口受阻；已有旧日志不足以证明字段缺失，未计为原始字段验证通过。用户随后手动取得的脱敏诊断见下文，其证据范围单独说明。后续打开已登录的工作台，在命令面板执行“Antigravity Workbench: 高级排障…”（英文“Advanced troubleshooting…”），选择“诊断图片目录（不生图）”。`antigravityAccounts.debug.catalog` 是内部已注册命令，manifest 的命令面板 `when: false` 将它隐藏，不能要求用户直接搜索该标题；仅回传目录诊断文本，不复制令牌或响应正文。诊断使用现有按需元数据查询，不触发模型生成、不自动上传。最小摘要附固定 `IMAGE_CATALOG_LIST_MISSING / INVALID / EMPTY / UNAVAILABLE` 原因，继续排除凭据、邮箱及项目原值。
+
+
+用户随后提供已安装旧候选的脱敏按需诊断：Hub 查询时间 2026-10-11T09:22:37.721Z、Daily 直连 09:22:42.078Z，两边都声明相同的唯一图片成员且 disabled 未设置。这支持该账号当时的图片分类展示；没有原始响应字段证据，不证明生成权限或新候选的完整实机验收。两边全部目录存在非图片项差异，而原末尾差异计算只比较 `imageModels`；本次将标题及中英文各行明确为图片模型差异，保留算法范围，不新增全部目录比较功能。
