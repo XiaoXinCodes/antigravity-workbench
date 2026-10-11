@@ -1,0 +1,39 @@
+{
+  "evidenceVersion": 1,
+  "reportedAt": "2026-10-11",
+  "source": "Independent local acceptance owner, reported through the parent task",
+  "kind": "Static inspection of installed official extension code; no session or credential contents",
+  "extension": {
+    "id": "Google.google-antigravity",
+    "version": "1.7.0",
+    "officialListing": "https://marketplace.visualstudio.com/items?itemName=Google.google-antigravity",
+    "file": "extension.js",
+    "sha256": "bdae3f9573417e7806db598fdadea9d0db6a2106b589548354d47f26cdd356ea",
+    "sameHashOn": ["Windows", "WSL"],
+    "reportedDescriptorLines": {"ModelUsageStats": 163351, "rootAndChat": 190643}
+  },
+  "messages": {
+    "CortexStepGeneratorMetadata": {"chat_model": {"number": 1, "type": "ChatModelMetadata"}},
+    "ChatModelMetadata": {
+      "usage": {"number": 4, "type": "ModelUsageStats"},
+      "response_model": {"number": 19, "type": "string"}
+    },
+    "ModelUsageStats": {
+      "model": {"number": 1, "type": "Model enum"},
+      "input_tokens": {"number": 2, "type": "uint64"},
+      "output_tokens": {"number": 3, "type": "uint64"},
+      "cache_write_tokens": {"number": 4, "type": "uint64"},
+      "cache_read_tokens": {"number": 5, "type": "uint64"},
+      "thinking_output_tokens": {"number": 9, "type": "uint64"},
+      "response_output_tokens": {"number": 10, "type": "uint64"}
+    }
+  },
+  "limitations": [
+    "This execution environment did not obtain the official package: its download proxy returned HTTP 403.",
+    "The file hash and descriptor inspection were independently reported, not reproduced here.",
+    "An installed extension version does not identify the producer version of historical unversioned database rows.",
+    "input_tokens does not establish uncached input or whether cache tokens are included.",
+    "The descriptor does not prove an arithmetic equality between total, thinking and visible output.",
+    "Returned model strings are declarations and cannot prove backend model weights."
+  ]
+}

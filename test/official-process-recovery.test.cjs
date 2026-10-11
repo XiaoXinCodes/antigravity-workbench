@@ -289,13 +289,20 @@ test('Windows compiler keeps system profile paths without inheriting credentials
   const { windowsHelperEnvironment } = require('../out/official-process-recovery');
   const env = windowsHelperEnvironment({
     SystemRoot: 'C:\\Windows', APPDATA: 'C:\\Users\\synthetic\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\synthetic\\AppData\\Local',
+    ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)', ProgramW6432: 'C:\\Program Files',
+    ProgramData: 'C:\\ProgramData', ALLUSERSPROFILE: 'C:\\ProgramData',
     GOOGLE_API_KEY: 'synthetic-private-auth', ANTIGRAVITY_SERVER_URL: 'synthetic-private-service',
     PATH: 'synthetic-private-executable-search', PSModulePath: 'synthetic-private-module-search',
   });
   assert.equal(env.APPDATA, 'C:\\Users\\synthetic\\AppData\\Roaming');
   assert.equal(env.LOCALAPPDATA, 'C:\\Users\\synthetic\\AppData\\Local');
   assert.equal(env.SystemRoot, 'C:\\Windows');
-  assert.doesNotMatch(JSON.stringify(env), /synthetic-private-|GOOGLE_API_KEY|ANTIGRAVITY_SERVER_URL|PSModulePath|PATH/);
+  assert.equal(env.PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
+  assert.equal(env.ProgramFiles, 'C:\\Program Files'); assert.equal(env['ProgramFiles(x86)'], 'C:\\Program Files (x86)');
+  assert.equal(env.ProgramW6432, 'C:\\Program Files'); assert.equal(env.ProgramData, 'C:\\ProgramData'); assert.equal(env.ALLUSERSPROFILE, 'C:\\ProgramData');
+  assert.equal(env.PATH, undefined); assert.doesNotMatch(JSON.stringify(env), /synthetic-private-|GOOGLE_API_KEY|ANTIGRAVITY_SERVER_URL/);
+  assert.equal(windowsHelperEnvironment({ SystemRoot: 'D:\\Windows', PSModulePath: 'synthetic-private-module-search' }).PSModulePath, 'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
+  assert.equal(windowsHelperEnvironment({}).PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
 });
 test('Windows transport uses the system helper, short constant argv and stdin source, with a force-only authorization', async t => {
   const { runWindowsProcessHelper } = require('../out/official-process-recovery');
@@ -310,6 +317,10 @@ test('Windows transport uses the system helper, short constant argv and stdin so
   let result = runWindowsProcessHelper({ operation: 'end', csrfToken: 'synthetic-capability' }, undefined, () => { authorizations++; });
   assert.match(spawnArgs[0], /System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/);
   assert.equal(spawnArgs[2].shell, false); assert.equal(Buffer.from(spawnArgs[1].at(-1), 'base64').toString('utf16le'), WINDOWS_PROCESS_BOOTSTRAP);
+  assert.equal(spawnArgs[2].env.PSModulePath, require('node:path').win32.join(require('node:path').win32.dirname(spawnArgs[0]), 'Modules'));
+  assert.match(WINDOWS_PROCESS_BOOTSTRAP, /\$env:PSModulePath=\$PSHOME\+'\\Modules'/);
+  assert.match(WINDOWS_PROCESS_BOOTSTRAP, /Import-Module \(\$PSHOME\+'\\Modules\\Microsoft\.PowerShell\.Utility\\Microsoft\.PowerShell\.Utility\.psd1'\) -ErrorAction Stop/);
+  assert.match(WINDOWS_PROCESS_HELPER, /Microsoft\.PowerShell\.Utility\\Add-Type -TypeDefinition/);
   assert.ok(spawnArgs[1].join(' ').length < 4096, 'bootstrap stays well below the Windows argv limit; helper source is on stdin'); assert.doesNotMatch(spawnArgs[1].join(' '), /synthetic-capability|ExecutionPolicy|RunAs/);
   const frames = writes[0].trim().split('\n'); assert.equal(Buffer.from(frames[0], 'base64').toString(), WINDOWS_PROCESS_HELPER); assert.equal(JSON.parse(frames[1]).csrfToken, 'synthetic-capability');
   child.stdout.write('{"authorize":"force"}\n'); assert.equal(authorizations, 1); assert.equal(writes[1], 'continue\n');assert.equal(child.stdin.writableEnded,false);
@@ -328,7 +339,7 @@ test('Windows system PowerShell compiles the shipped native adapter without touc
     const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process');
     const {WINDOWS_PROCESS_BOOTSTRAP,WINDOWS_PROCESS_HELPER}=require('../out/official-process-windows');
     const bootstrap=WINDOWS_PROCESS_BOOTSTRAP.replace('try {',"[Console]::Error.WriteLine('agw-start')\ntry {").replace(' & ([ScriptBlock]'," [Console]::Error.WriteLine('agw-source-read')\n & ([ScriptBlock]");
-    const source=WINDOWS_PROCESS_HELPER.replace('Add-Type -TypeDefinition',"[Console]::Error.WriteLine('agw-before-compile')\nAdd-Type -TypeDefinition").replace('$line=[Console]',"[Console]::Error.WriteLine('agw-after-compile')\n$line=[Console]").replace('$r=$line',"[Console]::Error.WriteLine('agw-request-read')\n$r=$line");
+    const source=WINDOWS_PROCESS_HELPER.replace(String.raw`Microsoft.PowerShell.Utility\Add-Type -TypeDefinition`,"[Console]::Error.WriteLine('agw-before-compile')\n"+String.raw`Microsoft.PowerShell.Utility\Add-Type -TypeDefinition`).replace('$line=[Console]',"[Console]::Error.WriteLine('agw-after-compile')\n$line=[Console]").replace('$r=$line',"[Console]::Error.WriteLine('agw-request-read')\n$r=$line");
     const dir=await fs.mkdtemp(path.join(os.tmpdir(),'agw-probe-transport-'));try{
       const file=path.join(dir,'probe.ps1');await fs.writeFile(file,bootstrap);
       for(const mode of ['encoded','file','profile','toolchain','modules','system','inherited'])await new Promise(resolve=>{
@@ -337,11 +348,11 @@ test('Windows system PowerShell compiles the shipped native adapter without touc
         const groups = { profile: ['APPDATA', 'LOCALAPPDATA'], toolchain: ['ComSpec', 'PATH', 'PATHEXT'], modules: ['PSModulePath', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData', 'ALLUSERSPROFILE'] };
         const fields = mode === 'system' ? Object.values(groups).flat() : groups[mode] || [];
         for (const name of fields) if (process.env[name]) env[name] = process.env[name];
-        const child=spawn(windowsPowerShell(),args,{stdio:['pipe','pipe','pipe'],windowsHide:true,env:mode==='inherited'?process.env:env});let stdout='',stderr='',before=[];
+        const child=spawn(windowsPowerShell(),args,{stdio:['pipe','pipe','pipe'],windowsHide:true,env:mode==='inherited'?process.env:env});let stdout='',stderr='',before=[],eofSent=false;
         const milestones=()=>['agw-start','agw-source-read','agw-before-compile','agw-after-compile','agw-request-read'].filter(x=>stderr.includes(x));
         child.stdout.on('data',b=>{stdout+=b.toString();});child.stderr.on('data',b=>{stderr+=b.toString();});child.stdin.on('error',()=>{});
-        const eof=setTimeout(()=>{before=milestones();child.stdin.end();},5000),limit=setTimeout(()=>child.kill(),15000);
-        child.once('close',code=>{clearTimeout(eof);clearTimeout(limit);t.diagnostic(JSON.stringify({mode,beforeEOF:before,afterEOF:milestones(),resultSeen:stdout.includes('supported'),exitCode:code}));resolve();});
+        const eof=setTimeout(()=>{before=milestones();eofSent=true;child.stdin.end();},5000),limit=setTimeout(()=>child.kill(),15000);
+        child.once('close',code=>{clearTimeout(eof);clearTimeout(limit);t.diagnostic(JSON.stringify({mode,eofSent,beforeEOF:before,finalMilestones:milestones(),resultSeen:stdout.includes('supported'),exitCode:code}));resolve();});
         child.stdin.write(Buffer.from(source).toString('base64')+'\n'+JSON.stringify({operation:'probe'})+'\n');
       });
     }finally{await fs.rm(dir,{recursive:true,force:true});}

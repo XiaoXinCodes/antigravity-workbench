@@ -2,13 +2,21 @@ import { createHash } from 'node:crypto';
 import { observeModels, missingModel, mergeModels, type ModelObservation, type ObservationStatus } from './model-observation';
 
 export interface TokenObservation { status: ObservationStatus; value?: number; fields: string[] }
-export type GenerationTokens = Record<'inputUncached' | 'cacheRead' | 'outputText' | 'reasoning' | 'outputTotal', TokenObservation>;
+export type GenerationTokens = Record<'input' | 'cacheWrite' | 'cacheRead' | 'outputText' | 'reasoning' | 'outputTotal', TokenObservation>;
+export interface GenerationTimeObservation { status: ObservationStatus; value?: number; fields: string[] }
+export interface GenerationProjectObservation { status: ObservationStatus; values: { key: string; label: string }[]; fields: string[] }
+/** Internal producer contract, supplied only after the actual source is verified.
+ * Matching numeric wire shapes or a user-selected filename never establish it. */
+export type VerifiedLocalGenerationSchema = 'google-antigravity-1.7.0';
 export interface LocalGenerationRecord {
   client?: 'cli' | 'ide' | 'selected'; session: string; index: number; requested: ModelObservation; returned: ModelObservation;
-  tokens: GenerationTokens; key: string; issue?: 'schemaUnsupported' | 'duplicateConflict';
+  // No current unversioned local DB reader can emit 'verified'.
+  tokens: GenerationTokens; key: string; usageInterpretation?: 'unverified' | 'verified';
+  usageSchema?: VerifiedLocalGenerationSchema;
+  timestamp?: GenerationTimeObservation; project?: GenerationProjectObservation; issue?: 'schemaUnsupported' | 'duplicateConflict';
 }
 const absent = (): TokenObservation => ({ status: 'missing', fields: [] });
-const emptyTokens = (): GenerationTokens => ({ inputUncached: absent(), cacheRead: absent(), outputText: absent(), reasoning: absent(), outputTotal: absent() });
+const emptyTokens = (): GenerationTokens => ({ input: absent(), cacheWrite: absent(), cacheRead: absent(), outputText: absent(), reasoning: absent(), outputTotal: absent() });
 interface WireField { number: number; wire: number; value?: bigint | Buffer }
 /** Independent bounded protobuf wire reader. Only metadata fields are decoded. */
 function fields(bytes: Buffer): WireField[] {
@@ -44,24 +52,19 @@ function nested(v: WireField[], n: number): WireField[] {
   if (matches.length !== 1 || matches[0]!.wire !== 2 || !Buffer.isBuffer(matches[0]!.value)) throw Error('LOCAL_RECORD_SCHEMA');
   return fields(matches[0]!.value);
 }
-function token(v: WireField[], n: number): TokenObservation {
-  const matches = v.filter(f => f.number === n), path = `gen_metadata.chatModel.usage.#${n}`;
+function knownToken(v: WireField[], n: number): TokenObservation {
+  const matches = v.filter(field => field.number === n), evidenceFields = [`gen_metadata.chatModel.usage.#${n}`];
   if (!matches.length) return absent();
   const values: number[] = [];
-  for (const match of matches) {
-    if (match.wire !== 0 || typeof match.value !== 'bigint' || match.value > BigInt(Number.MAX_SAFE_INTEGER)) return { status: 'invalid', fields: [path] };
-    values.push(Number(match.value));
+  for (const field of matches) {
+    if (field.wire !== 0 || typeof field.value !== 'bigint' || field.value > BigInt(Number.MAX_SAFE_INTEGER)) return { status: 'invalid', fields: evidenceFields };
+    values.push(Number(field.value));
   }
-  return new Set(values).size > 1 ? { status: 'conflict', fields: [path] } : { status: 'provided', value: values[0]!, fields: [path] };
+  return new Set(values).size > 1 ? { status: 'conflict', fields: evidenceFields } : { status: 'provided', value: values[0]!, fields: evidenceFields };
 }
-function sum(a: TokenObservation, b: TokenObservation): TokenObservation {
-  const paths = [...a.fields, ...b.fields];
-  if (a.status !== 'provided' || b.status !== 'provided') return { status: a.status === 'invalid' || b.status === 'invalid' ? 'invalid' : a.status === 'conflict' || b.status === 'conflict' ? 'conflict' : 'missing', fields: paths };
-  const value = a.value! + b.value!;
-  return Number.isSafeInteger(value) ? { status: 'provided', value, fields: paths } : { status: 'invalid', fields: paths };
-}
-export function parseLocalGeneration(session: string, index: number, bytes: Buffer): LocalGenerationRecord {
-  const row: LocalGenerationRecord = { session, index, requested: missingModel(), returned: missingModel(), tokens: emptyTokens(), key: `${session}:generation:${index}` };
+export function parseLocalGeneration(session: string, index: number, bytes: Buffer, source: { schema?: VerifiedLocalGenerationSchema } = {}): LocalGenerationRecord {
+  const verified = source.schema === 'google-antigravity-1.7.0';
+  const row: LocalGenerationRecord = { session, index, requested: missingModel(), returned: missingModel(), tokens: emptyTokens(), key: `${session}:generation:${index}`, usageInterpretation: verified ? 'verified' : 'unverified', ...(verified ? { usageSchema: source.schema! } : {}), timestamp: { status: 'missing', fields: [] }, project: { status: 'missing', values: [], fields: [] } };
   try {
     const root = fields(bytes), chat = nested(root, 1);
     if (!chat.length) throw Error('LOCAL_RECORD_SCHEMA');
@@ -72,12 +75,22 @@ export function parseLocalGeneration(session: string, index: number, bytes: Buff
       return { field: 'gen_metadata.chatModel.responseModel' as const, value };
     }));
     let usage: WireField[];
-    try { usage = nested(chat, 4); } catch { row.issue = 'schemaUnsupported'; row.tokens = Object.fromEntries(Object.keys(row.tokens).map(key => [key, {status:'invalid',fields:['gen_metadata.chatModel.#4']}])) as GenerationTokens; return row; }
-    row.tokens = { inputUncached: sum(token(usage, 1), token(usage, 2)), cacheRead: token(usage, 5), outputText: token(usage, 9), reasoning: token(usage, 10), outputTotal: token(usage, 3) };
-    const combined = sum(row.tokens.outputText, row.tokens.reasoning);
-    if (row.tokens.outputTotal.status === 'missing') row.tokens.outputTotal = combined;
-    else if (row.tokens.outputTotal.status === 'provided' && combined.status === 'provided' && row.tokens.outputTotal.value !== combined.value)
-      row.tokens.outputTotal = { status: 'conflict', fields: [...row.tokens.outputTotal.fields, ...combined.fields] };
+    try { usage = nested(chat, 4); } catch {
+      row.issue = 'schemaUnsupported';
+      if (verified) row.tokens = Object.fromEntries(Object.keys(row.tokens).map(key => [key, { status: 'invalid', fields: ['gen_metadata.chatModel.#4'] }])) as GenerationTokens;
+      return row;
+    }
+    // Unversioned local metadata cannot distinguish the earlier community interpretation
+    // from the publicly extracted descriptor: the numeric wire shapes overlap. Never
+    // label or sum these raw numbers without an independently verified schema source.
+    // The same limit applies to dates and workspace evidence; idx/mtime are not dates.
+    // Official 1.7.0 extension descriptor SHA256:
+    // bdae3f9573417e7806db598fdadea9d0db6a2106b589548354d47f26cdd356ea.
+    // This is an explicit source contract, never an automatic shape/version guess.
+    if (verified) row.tokens = {
+      input: knownToken(usage, 2), cacheWrite: knownToken(usage, 4), cacheRead: knownToken(usage, 5),
+      outputText: knownToken(usage, 10), reasoning: knownToken(usage, 9), outputTotal: knownToken(usage, 3),
+    };
     const identities = usage.filter(f => f.number === 11);
     if (identities.length === 1 && identities[0]!.wire === 2 && Buffer.isBuffer(identities[0]!.value) && identities[0]!.value.length > 0 && identities[0]!.value.length <= 256)
       row.key = `${session}:response:${createHash('sha256').update(identities[0]!.value).digest('hex')}`;
@@ -90,11 +103,33 @@ export function mergeLocalRecords(rows: readonly LocalGenerationRecord[]): Local
   for (const row of rows) {
     const old = map.get(row.key);
     if (!old) { map.set(row.key, structuredClone(row)); continue; }
-    if (JSON.stringify(old.returned) !== JSON.stringify(row.returned) || JSON.stringify(old.tokens) !== JSON.stringify(row.tokens)) {
+    if (JSON.stringify(old.returned) !== JSON.stringify(row.returned)) {
       old.issue = 'duplicateConflict';
-      if (JSON.stringify(old.returned) !== JSON.stringify(row.returned)) old.returned = { ...mergeModels(old.returned, row.returned), status: 'conflict', conflict: true };
+      old.returned = { ...mergeModels(old.returned, row.returned), status: 'conflict', conflict: true };
+    }
+    if (old.usageInterpretation !== 'verified' || row.usageInterpretation !== 'verified') {
+      // An unverified duplicate never inherits another record's producer contract,
+      // including when its raw numbers happen to match the verified observation.
+      old.usageInterpretation = 'unverified'; delete old.usageSchema; old.tokens = emptyTokens();
+    } else if (JSON.stringify(old.tokens) !== JSON.stringify(row.tokens)) {
+      old.issue = 'duplicateConflict';
       for (const key of Object.keys(old.tokens) as (keyof GenerationTokens)[]) if (JSON.stringify(old.tokens[key]) !== JSON.stringify(row.tokens[key])) old.tokens[key] = { status: 'conflict', fields: [...new Set([...old.tokens[key].fields, ...row.tokens[key].fields])] };
     }
+    if (old.timestamp && row.timestamp) {
+      const evidenceFields = [...new Set([...old.timestamp.fields, ...row.timestamp.fields])];
+      if (old.timestamp.status !== row.timestamp.status || old.timestamp.value !== row.timestamp.value) {
+        old.issue = 'duplicateConflict'; old.timestamp = { status: 'conflict', fields: evidenceFields };
+      } else old.timestamp.fields = evidenceFields;
+    } else if (!old.timestamp && row.timestamp) old.timestamp = structuredClone(row.timestamp);
+    if (old.project && row.project) {
+      const evidenceFields = [...new Set([...old.project.fields, ...row.project.fields])];
+      const left = old.project.values.map(value => JSON.stringify(value)).sort(), right = row.project.values.map(value => JSON.stringify(value)).sort();
+      if (old.project.status !== row.project.status || JSON.stringify(left) !== JSON.stringify(right)) {
+        old.issue = 'duplicateConflict';
+        const values = [...new Map([...old.project.values, ...row.project.values].map(value => [JSON.stringify(value), structuredClone(value)])).values()];
+        old.project = { status: 'conflict', values, fields: evidenceFields };
+      } else old.project.fields = evidenceFields;
+    } else if (!old.project && row.project) old.project = structuredClone(row.project);
   }
   return [...map.values()];
 }

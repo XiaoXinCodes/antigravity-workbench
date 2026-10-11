@@ -11,7 +11,15 @@ exports.activate=async context=>{
  const store={read:async()=>structuredClone(state),transaction:async fn=>{const next=structuredClone(state),result=fn(next);state=parseWakeState(next);return result}};let wakeCalls=0;
  registerAutomationUi(context,fixture.live,{store,accounts:{fingerprint:()=> 'synthetic',run:async()=>{wakeCalls++;throw Error('GENERATION_FORBIDDEN')},models:async()=>[]}});
  const home=path.join(context.globalStorageUri.fsPath,'synthetic-home'),directory=path.join(home,'.gemini','antigravity-cli','conversations');await fs.mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'11111111-1111-4111-8111-111111111111.db'),{database,generation}=require('../helpers/generation-fixture.cjs');const db=await database(file,[generation(),generation({models:[],usage:{},id:'second'}),generation({models:['synthetic-route-a','synthetic-route-b'],id:'third'})]);let selections=0;
- registerObservationsUi(context,{runtime:{home,platform:process.platform},pick:async()=>{selections++;return[vscode.Uri.file(file)]}});
+ let verified=false;const exportFiles=[];
+ context.subscriptions.push(vscode.commands.registerCommand('synthetic.observations.verifiedFixture',()=>{verified=true}));
+ registerObservationsUi(context,{runtime:{home,platform:process.platform},pick:async()=>{selections++;return[vscode.Uri.file(file)]},read:async(selected,abort)=>{
+  const result=await require(path.join(root,'out/local-generation-db')).readLocalGenerationDb(selected,abort,verified?{schema:'google-antigravity-1.7.0'}:{});
+  // Explicitly trusted synthetic dates/workspace exercise display and filtering;
+  // the product reader does not infer these fields from real unversioned DBs.
+  if(verified)for(const row of result.rows){row.timestamp={status:'provided',value:Date.now()-[0,86400000,8*86400000][row.index],fields:['synthetic.verified.timestamp']};if(row.index===0)row.project={status:'provided',values:[{key:'a'.repeat(64),label:'Synthetic workspace'}],fields:['synthetic.verified.workspace']}}
+  return result;
+ },save:async format=>{const name=path.join(context.globalStorageUri.fsPath,'synthetic-usage-'+exportFiles.length+'.'+format);exportFiles.push(name);return vscode.Uri.file(name)}});
  const runtime={node:process.versions.node,electron:process.versions.electron,platform:process.platform};try{runtime.builtinSqlite=typeof require('node:sqlite').DatabaseSync==='function'}catch{runtime.builtinSqlite=false}
- return{...fixture,session,runtime,wakeCalls:()=>wakeCalls,selections:()=>selections,shutdown:()=>db.close()};
+ return{...fixture,session,runtime,wakeCalls:()=>wakeCalls,selections:()=>selections,exports:async()=>Promise.all(exportFiles.map(name=>fs.readFile(name,'utf8'))),shutdown:()=>db.close()};
 };

@@ -1,6 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{createHash,randomUUID}=require('node:crypto'),{EventEmitter}=require('node:events');
 const {responseModels,mergeModels,missingModel,readModelObservation}=require('../out/model-observation'),{parseWakeStream,sendWake}=require('../out/wake-transport'),{parseLocalGeneration,mergeLocalRecords}=require('../out/local-generation-record'),{readLocalGenerationDb}=require('../out/local-generation-db'),{readImageSession}=require('../out/image-session-store'),{initialWakeState,parseWakeState}=require('../out/wake-state'),{responseModelDetails}=require('../out/request-observation-view'),{setLanguage}=require('../out/i18n');
-const {generation,num,buf,database}=require('./helpers/generation-fixture.cjs');
+const {generation,buf,database}=require('./helpers/generation-fixture.cjs');
 const signal=()=>new AbortController().signal;
 test('raw response declarations preserve field/value pairs, reject arbitrary bodies and never read accessors',()=>{
  const v=responseModels({model:'synthetic-request-declaration',response:{modelVersion:'synthetic-return-version'},prompt:'secret prompt',usageMetadata:{model:'not-a-model-source'}});
@@ -37,17 +37,14 @@ test('SSE repeated and conflicting model declarations never use last-wins, inclu
  const result=await sendWake({token:'synthetic-token',projectId:'synthetic-project',modelId:'synthetic-request-a',endpoint:'daily',verify:async()=>{}},8,signal(),async()=>{},transport);assert.equal(sends,1);assert.equal(result.phase,'unknown');assert.equal(result.responseModel.status,'conflict');
  assert.equal(mergeModels(responseModels({model:null}),missingModel()).status,'invalid');
 });
-test('metadata fields distinguish uncached/cache/text/reasoning totals; missing never means zero or model inference',()=>{
- const r=parseLocalGeneration('session-a',1,generation());assert.equal(r.requested.status,'missing');assert.equal(r.returned.values[0],'synthetic-return-a');assert.equal(r.tokens.inputUncached.value,10);assert.equal(r.tokens.cacheRead.value,20);assert.equal(r.tokens.outputText.value,5);assert.equal(r.tokens.reasoning.value,4);assert.equal(r.tokens.outputTotal.value,9);assert.deepEqual(r.tokens.outputTotal.fields,['gen_metadata.chatModel.usage.#3']);
- const missing=parseLocalGeneration('session-a',2,generation({models:[],usage:{1:3,9:0},id:'other'}));assert.equal(missing.returned.status,'missing');assert.equal(missing.tokens.inputUncached.status,'missing');assert.equal(missing.tokens.cacheRead.status,'missing');assert.equal(missing.tokens.outputText.value,0);assert.equal(missing.tokens.outputTotal.status,'missing');
- const derived=parseLocalGeneration('session-a',3,generation({usage:{9:5,10:4}}));assert.equal(derived.tokens.outputTotal.value,9);assert.deepEqual(derived.tokens.outputTotal.fields,['gen_metadata.chatModel.usage.#9','gen_metadata.chatModel.usage.#10']);
+test('unversioned usage stays unknown independently of returned model declarations and opaque identities',()=>{
+ const r=parseLocalGeneration('session-a',1,generation());assert.equal(r.requested.status,'missing');assert.equal(r.returned.values[0],'synthetic-return-a');assert.equal(r.usageInterpretation,'unverified');assert.ok(Object.values(r.tokens).every(v=>v.status==='missing'&&v.value===undefined));
+ const missing=parseLocalGeneration('session-a',2,generation({models:[],usage:{1:3,9:0},id:'other'}));assert.equal(missing.returned.status,'missing');assert.ok(Object.values(missing.tokens).every(v=>v.value===undefined));
  const modelDuplicate=mergeLocalRecords([r,parseLocalGeneration('session-a',7,generation({models:[]}))]);assert.equal(modelDuplicate.length,1);assert.equal(modelDuplicate[0].returned.status,'conflict');assert.equal(modelDuplicate[0].returned.truncated,undefined);assert.deepEqual(readModelObservation(modelDuplicate[0].returned),modelDuplicate[0].returned);
- const wrong=parseLocalGeneration('session-a',3,generation({usage:{3:10,9:5,10:4}}));assert.equal(wrong.tokens.outputTotal.status,'conflict');assert.equal(wrong.tokens.outputTotal.value,undefined);
- const overflow=parseLocalGeneration('session-a',3,buf(1,buf(4,Buffer.concat([num(1,Number.MAX_SAFE_INTEGER),num(2,1)]))));assert.equal(overflow.tokens.inputUncached.status,'invalid');
+ for(const usage of [{3:10,9:5,10:4},{1:Number.MAX_SAFE_INTEGER,2:1},{1:1132,2:1000,4:12,5:20,9:4,10:5}])assert.ok(Object.values(parseLocalGeneration('session-a',3,generation({usage})).tokens).every(v=>v.value===undefined));
  const ambiguous=parseLocalGeneration('session-a',3,generation({models:['synthetic-route-a','synthetic-route-b']}));assert.equal(ambiguous.returned.status,'conflict');
  const records=mergeLocalRecords([r,{...r,index:2},missing]);assert.equal(records.length,2);assert.equal(records[1].returned.status,'missing');
- const duplicate=mergeLocalRecords([r,wrong]);assert.equal(duplicate.length,1);assert.equal(duplicate[0].issue,'duplicateConflict');assert.equal(duplicate[0].tokens.outputTotal.status,'conflict');
- for(const blob of [Buffer.from([10,255]),Buffer.from([15]),Buffer.alloc(1024*1024+1),buf(1,buf(4,buf(1,'wrong-wire')))]){const row=parseLocalGeneration('session-a',0,blob);assert.ok(row.issue==='schemaUnsupported'||row.tokens.inputUncached.status==='invalid');assert.equal(row.requested.status,'missing')}
+ for(const blob of [Buffer.from([10,255]),Buffer.from([15]),Buffer.alloc(1024*1024+1),buf(1,buf(4,buf(1,'wrong-wire')))]){const row=parseLocalGeneration('session-a',0,blob);assert.ok(Object.values(row.tokens).every(v=>v.value===undefined));assert.equal(row.requested.status,'missing')}
 });
 async function fixture(t){const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ag-generation-test-')));t.after(()=>fs.rm(root,{recursive:true,force:true}));return{root,file:path.join(root,randomUUID()+'.db')}}
 // Windows byte-range locks reject ReadFile on an active SQLite SHM. Read the
@@ -136,7 +133,13 @@ test('WAL disappearance, inode replacement and creation during copying fail clos
  // path remains covered above, including pending writes and checkpoint resets.
  for(const mode of ['replace','remove']){
   const dir=await fs.mkdtemp(path.join(f.root,'race-')),file=path.join(dir,'copy.db');await fs.writeFile(file,main);await fs.writeFile(file+'-wal',wal);let changed=false;
-  fs.open=async(...args)=>{const handle=await original(...args);if(args[0]===file+'-wal'){if(mode==='remove'){const unchanged=await handle.stat();handle.stat=async()=>unchanged}const read=handle.read.bind(handle);handle.read=async(...params)=>{const result=await read(...params);if(!changed){if(mode==='replace'){const replacement=file+'-wal.new';await fs.copyFile(file+'-wal',replacement);await fs.rename(replacement,file+'-wal')}else await fs.rename(file+'-wal',file+'-wal.moved');changed=true}return result}}return handle};
+  fs.open=async(...args)=>{const handle=await original(...args);if(args[0]===file+'-wal'){const unchanged=await handle.stat();if(mode==='remove')handle.stat=async()=>unchanged;const read=handle.read.bind(handle);handle.read=async(...params)=>{const result=await read(...params);if(!changed){
+   // Windows rejects replacement of this open fixture's destination. Once its
+   // complete bytes have been copied, release the fixture handle and retain
+   // the old descriptor metadata: this models the stale-handle case while
+   // still performing and checking the real on-disk name replacement.
+   if(process.platform==='win32'){assert.equal(result.bytesRead,unchanged.size);await handle.close();handle.close=async()=>{};handle.stat=async()=>unchanged}
+   if(mode==='replace'){const replacement=file+'-wal.new';await fs.copyFile(file+'-wal',replacement);await fs.rename(replacement,file+'-wal')}else await fs.rename(file+'-wal',file+'-wal.moved');changed=true}return result}}return handle};
   try{await assert.rejects(readLocalGenerationDb(file,signal()),/LOCAL_DB_CHANGED/);assert.equal(changed,true,'Intended WAL mutation must have succeeded');if(mode==='remove')await fs.rename(file+'-wal.moved',file+'-wal')}finally{fs.open=original}
  }
  const clean=await fixture(t),closed=await database(clean.file,[generation()],'delete');await closed.close();let changed=false;fs.open=async(...args)=>{const h=await original(...args);if(args[0]===clean.file){const read=h.read.bind(h);h.read=async(...params)=>{const result=await read(...params);if(!changed){changed=true;await fs.writeFile(clean.file+'-wal',Buffer.alloc(0))}return result}}return h};try{await assert.rejects(readLocalGenerationDb(clean.file,signal()),/LOCAL_DB_CHANGED/)}finally{fs.open=original}

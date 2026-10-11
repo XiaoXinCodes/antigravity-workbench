@@ -14,21 +14,42 @@ Ordinary records and image/wake details use friendly **Requested model**, **Retu
 
 ## Local fields and token semantics
 
-Field meanings are based on public reverse engineering, not a supported Google schema. The independently implemented bounded wire reader consumes root #1 (chatModel), chatModel #19 (responseModel), and chatModel #4 (usage). Unknown wire fields are skipped, not inferred.
+The earlier Tokscale interpretation is withdrawn for token values. It counted usage #1 as system input and reversed #9/#10, but stronger public descriptor evidence identifies #1 as a model enum, #9 as thinking output and #10 as response output. Existing installations before this correction may display inaccurate token values; neither successful wire parsing nor the former synthetic token fixture establishes their semantics.
 
-| Display | Usage wire fields | Rule |
+The root is `CortexStepGeneratorMetadata.chat_model` (#1), with sibling fields `ChatModelMetadata.response_model` (#19, string) and `usage` (#4, `ModelUsageStats`). The bounded reader continues to preserve the #19 string as a returned **declaration**, independently of token interpretation. It does not infer a requested model from the usage model enum or the returned declaration.
+
+| Descriptor field | Wire number | Earlier interpretation / limitation |
 | --- | --- | --- |
-| Uncached input | #1 system + #2 newly processed input | Both must be provided; no cache-read double counting |
-| Cache read input | #5 | Separate from uncached input |
-| Text output | #9 | Separate component |
-| Reasoning output | #10 | Separate component |
-| Total output | #3 | If absent, derive only when both #9 and #10 are explicit; inconsistent totals are conflicts |
+| model (enum) | #1 | Was incorrectly added to input; never a token count |
+| input_tokens | #2 | Cache inclusion is not established; do not label uncached or sum caches into it |
+| output_tokens | #3 | Descriptor total; no invented zero or derived historical total |
+| cache_write_tokens | #4 | Earlier parser omitted it |
+| cache_read_tokens | #5 | Distinct from cache writes |
+| thinking_output_tokens | #9 | Earlier text label was reversed |
+| response_output_tokens | #10 | Earlier reasoning label was reversed |
+| response_id | #11 | Bounded hash for same-session deduplication; not a network request counter |
 
-Missing protobuf scalars are missing, including omitted zero-like proto defaults: no guessed zeros. Total output already includes text/reasoning and must not be added again. No cost or aggregate/trend is shown. #11 response identity is hashed for same-session deduplication; mismatched duplicate values produce conflicts. No account attribution, mtime-based generation timestamp or cross-session grouping is inferred.
+The current local reader has **no independently verified schema version for historical databases**. These numeric fields have overlapping wire shapes, so field presence, magnitude, a constant enum value, and output arithmetic cannot identify the schema. All six token observations remain unknown (`usageInterpretation: unverified`, no numeric values); the ordinary page explains this and displays “Unknown.” No historical token totals, dates, projects, prices or account attribution are inferred. Timestamp-shaped data, session creation time, generation index and file mtime do not silently become a generation timestamp.
 
-The cache count is specifically **cache read tokens**, not cache write tokens or a combined cache total. No verified cache-write field is currently parsed. The input label identifies uncached input; the output label identifies the total including reasoning, with text and reasoning listed separately in ordinary details.
+Permanent structural evidence:
 
-Frozen evidence: [Tokscale Antigravity generation parser at 4f17d6c](https://github.com/Javis603/tokscale/blob/4f17d6c6d85f5582949dcb0476c55518eafd7e23/crates/tokscale-core/src/sessions/antigravity_cli.rs#L1-L60). This documents six sessions / 140 turns and optional #19; it does not establish a requested-model wire field. Runtime code is an independent TypeScript implementation; no upstream Rust code or runtime library is bundled.
+- [Extracted IDE root and chat messages, a717117](https://github.com/jkfujinami/antigravity-grpc-schemas/blob/a717117f5aae86f70b875e48f67a679af9704837/protos/exa/cortex_pb/cortex.proto#L1379) and [ModelUsageStats, same commit](https://github.com/jkfujinami/antigravity-grpc-schemas/blob/a717117f5aae86f70b875e48f67a679af9704837/protos/exa/codeium_common_pb/codeium_common.proto#L3656). This unofficial extraction reports Antigravity 2.18.1 / IDE 2.5.5+, not a Google compatibility guarantee.
+- [Independent CLI 1.1.5/1.1.7 usage projection, 69aa277](https://github.com/sdougbrown/avenor/blob/69aa2777c0b48195a68436ccc843794aedf01558/internal/runtime/agy/interop/v115/agy.proto#L134) and [its evidence-only field map](https://github.com/sdougbrown/avenor/blob/69aa2777c0b48195a68436ccc843794aedf01558/internal/runtime/agy/testdata/rpc/v1.1.5/FIELD_MAP.md#L47). The trimmed projection corroborates usage; it is not an independent complete local DB root schema.
+- [Earlier Tokscale parser, 4f17d6c](https://github.com/Javis603/tokscale/blob/4f17d6c6d85f5582949dcb0476c55518eafd7e23/crates/tokscale-core/src/sessions/antigravity_cli.rs#L1). Its token interpretation is not used. Runtime code remains an independent TypeScript implementation.
+
+The local acceptance owner independently inspected the installed official `Google.google-antigravity@1.7.0` code on Windows and WSL and reported the same `extension.js` SHA256, `bdae3f9573417e7806db598fdadea9d0db6a2106b589548354d47f26cdd356ea`. The reported descriptor confirms the exact root/chat/usage hierarchy and field mapping above. [Evidence receipt](evidence/official-antigravity-1.7.0-contract.json) distinguishes that independently reported inspection from this environment: this environment's official package download failed with HTTP 403 CONNECT and was not reproduced here.
+
+`parseLocalGeneration` and `readLocalGenerationDb` accept a trusted caller's explicit `google-antigravity-1.7.0` source contract. Only that verified path reads the corrected six fields, records the source contract, and permits token aggregation. The current ordinary DB discovery/read UI does **not** provide a contract override or infer one from the installed client version; historical rows without independently established producer provenance remain unknown. No total is derived from other fields, no enum is counted as input, and no input/cache arithmetic is invented. An unverified duplicate keeps the merged usage unverified. The 132 records reported in the earlier private-machine acceptance are all potentially affected by the former interpretation; they were not reread or exported during this research, and this does not claim that every individual value was wrong.
+
+## Overview, details and export
+
+The same records page opens on **Overview**, with time and returned-model filters. Today / last 7 / last 30 days are local calendar days including today, with the host timezone and date boundaries displayed. All read records includes unknown times; dated ranges exclude them and retain an explicit count and a **View all read records** action. If an entire read has unknown dates, the page switches to all read records rather than inventing a trend. The ordinary reader currently leaves time and workspace observations unknown; real daily usage/trends and workspace attribution remain unavailable until a reliable metadata source is identified. The UI and aggregation tests supply explicitly trusted synthetic dates/workspaces to test these capabilities, not to claim real-source support.
+
+Metrics count **generation records**, not network requests. Deduplication stays within the client and session, using bounded response identity or a generation index fallback. Per-field token aggregates report known coverage, missing/invalid/conflicting values, and safe-integer overflow. Input, cache write, cache read, text output, thinking output and total output remain separate; no cost or grand token total is invented. Model conflicts are one category, never duplicated across individual declarations. Workspace filtering appears only for a unique verified safe label; paths and account attribution are not ordinary fields.
+
+**Details** shows time, returned model and token observations, with safe local session ordinals. It renders 60 rows at a time with **Show more** and preserves the complete host-memory selection for export. Technical provenance remains collapsed and is populated only on explicit expansion.
+
+The single export action selects CSV or JSON and opens Save As for the current filtered host-memory snapshot; it never accepts content or destinations from webview messages. Cancellation or refused replacement writes nothing. Existing files require one explicit application replacement confirmation; the native Save As dialog can also present a platform overwrite prompt, which the VS Code API does not expose or disable. The approved target identity/revision and all parent directories are rechecked, data is staged privately in the same directory, then synced and atomically linked/replaced. The final verification and rename cannot be made a portable conditional transaction against a non-cooperating process; success at link/rename is the commit point. Save targets are restricted to regular local CSV/JSON files, with no symlinks/hardlinks. Raw response IDs, session UUIDs, source paths, prompt tables, credentials and protobuf paths are excluded. CSV cells are quoted and formula prefixes are neutralized, including leading whitespace/control. Unverified token observations stay empty rather than becoming zero. Both formats freeze the observed-through instant and local date boundaries and include the bounded-read file/record/skip/limit scope; neither claims complete history. Export does not read the source again or send a model request.
 
 ## Safe snapshot and limits
 
@@ -45,3 +66,5 @@ On Windows, the synthetic SHM preservation check uses a read-only mapping to ret
 ## Reported local WSL acceptance
 
 A local acceptance report for commit `7398405624904d8613159be31c9162ab782c65d3` covered five actual Antigravity WSL databases and 132 metadata records: all had returned-model declarations, all requested-model fields remained missing, and no import was skipped or limited. Native/WASM comparison, repeated reads and cancellation passed; source DB hashes/attributes and extension data remained unchanged, private copies were cleaned up, and no inference requests were made. The installed adapter and 110 runtime files plus vendor/locale files were verified. These actual DBs had no WAL/SHM, so active WAL/SHM evidence is still from synthetic fixtures. This report predates the friendly-label candidate; its post-install UI acceptance remains separate.
+
+Windows race-fixture boundary: after the complete synthetic WAL has been copied, its Windows fixture handle is released and its old descriptor stat is retained while an actual on-disk replace/remove is performed. This models the stale-handle/name race; active-writer source access remains separately tested. It is not acceptance of a real official Windows active-WAL session.

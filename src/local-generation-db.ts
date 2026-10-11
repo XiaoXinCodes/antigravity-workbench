@@ -27,7 +27,7 @@ export async function queryGenerationSnapshot(snapshot: string, signal: AbortSig
     });
   } finally { await worker.terminate(); }
 }
-export async function readLocalGenerationDb(selected: string, signal: AbortSignal, options: {engine?: 'auto' | 'wasm'; timeoutMs?: number} = {}): Promise<{ rows: LocalGenerationRecord[]; limited: boolean }> {
+export async function readLocalGenerationDb(selected: string, signal: AbortSignal, options: {engine?: 'auto' | 'wasm'; timeoutMs?: number; schema?: 'google-antigravity-1.7.0'} = {}): Promise<{ rows: LocalGenerationRecord[]; limited: boolean }> {
   if (signal.aborted) throw Error('LOCAL_DB_CANCELLED');
   // eslint-disable-next-line no-control-regex
   if (selected.length > 4096 || !path.isAbsolute(selected) || path.extname(selected).toLowerCase() !== '.db' || /[\u0000-\u001f]/.test(selected)) throw Error('LOCAL_DB_UNSAFE');
@@ -84,7 +84,10 @@ export async function readLocalGenerationDb(selected: string, signal: AbortSigna
     const session = /^[a-f0-9-]{36}$/i.test(name) ? name : 'session-' + createHash('sha256').update(selected).digest('hex').slice(0, 12);
     const rows = result.rows.map(row => {
       if (!Array.isArray(row) || row.length !== 2 || !Number.isSafeInteger(row[0]) || row[0] < 0 || typeof row[1] !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(row[1]) || row[1].length > 1_400_000) throw Error('LOCAL_DB_UNSUPPORTED');
-      return parseLocalGeneration(session, row[0], Buffer.from(row[1], 'base64'));
+      // Only a trusted caller with independently verified record provenance may
+      // supply this contract. Discovery and the UI never infer or select it from
+      // an installed extension version, file timestamps, or numeric wire shapes.
+      return parseLocalGeneration(session, row[0], Buffer.from(row[1], 'base64'), options.schema ? {schema:options.schema} : undefined);
     });
     return { rows, limited: 'limited' in result && result.limited === true };
   } catch (e) { if (e instanceof Error && /^LOCAL_DB_[A-Z_]+$/.test(e.message)) throw e; throw Error(signal.aborted ? 'LOCAL_DB_CANCELLED' : 'LOCAL_DB_UNAVAILABLE'); }
