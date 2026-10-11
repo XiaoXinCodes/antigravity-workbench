@@ -33,7 +33,10 @@ test('metadata fields distinguish uncached/cache/text/reasoning totals; missing 
  for(const blob of [Buffer.from([10,255]),Buffer.from([15]),Buffer.alloc(1024*1024+1),buf(1,buf(4,buf(1,'wrong-wire')))]){const row=parseLocalGeneration('session-a',0,blob);assert.ok(row.issue==='schemaUnsupported'||row.tokens.inputUncached.status==='invalid');assert.equal(row.requested.status,'missing')}
 });
 async function fixture(t){const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'ag-generation-test-')));t.after(()=>fs.rm(root,{recursive:true,force:true}));return{root,file:path.join(root,randomUUID()+'.db')}}
-const fingerprint=async file=>{const s=await fs.lstat(file);return{size:s.size,ino:s.ino,mtime:s.mtimeMs,ctime:s.ctimeMs,hash:createHash('sha256').update(await fs.readFile(file)).digest('hex')}};
+// Windows byte-range locks reject ReadFile on an active SQLite SHM. Read the
+// synthetic fixture's whole SHM through a read-only mapping, as SQLite does;
+// keep the same full-content hash and metadata preservation assertions.
+const fingerprint=async file=>{const s=await fs.lstat(file);const bytes=file.endsWith('-shm')?require('./helpers/generation-fixture.cjs').runPython(['-I','-c','import mmap,sys;f=open(sys.argv[1],"rb");m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ);sys.stdout.buffer.write(m[:]);m.close();f.close()',file]):await fs.readFile(file);return{size:s.size,ino:s.ino,mtime:s.mtimeMs,ctime:s.ctimeMs,hash:createHash('sha256').update(bytes).digest('hex')}};
 test('live WAL snapshot reads committed generation metadata and never writes original DB/WAL/SHM or locks',async t=>{
  const f=await fixture(t),db=await database(f.file,[generation(),generation({models:[],id:'second-response'})]);try{
  const files=[f.file,f.file+'-wal',f.file+'-shm'],before=await Promise.all(files.map(fingerprint)),names=await fs.readdir(f.root);
@@ -89,7 +92,14 @@ test('panel activation/open never scans; duplicate clicks and cancellation are b
 test('packaged WASM has the same committed WAL results as native SQLite across pending, rollback, commit and checkpoint reset',async t=>{
  for(const pageSize of [512,4096,65536]){
   const f=await fixture(t),db=await database(f.file,[generation()],'wal',pageSize);
-  const compare=async count=>{const names=[f.file,f.file+'-wal',f.file+'-shm'],before=await Promise.all(names.map(fingerprint));const native=await readLocalGenerationDb(f.file,signal()),wasm=await readLocalGenerationDb(f.file,signal(),{engine:'wasm'});assert.deepEqual(wasm,native);assert.equal(wasm.rows.length,count);assert.deepEqual(await Promise.all(names.map(fingerprint)),before)};
+  const compare=async count=>{
+   const names=[f.file,f.file+'-wal',f.file+'-shm'],before=await Promise.all(names.map(fingerprint)),original=fs.open,opened=[];
+   // Exercise the real product while the SQLite writer holds pending WAL/SHM
+   // locks. It must read only source DB/WAL, never source SHM or a SQLite handle.
+   fs.open=async(...args)=>{if(args[0]===f.file+'-shm')assert.fail('Product opened source SHM');if(args[0]===f.file||args[0]===f.file+'-wal'){opened.push(args[0]);assert.equal(typeof args[1],'number');assert.equal(args[1]&(require('node:fs').constants.O_WRONLY|require('node:fs').constants.O_RDWR|require('node:fs').constants.O_CREAT|require('node:fs').constants.O_TRUNC|require('node:fs').constants.O_APPEND),0)}return original(...args)};
+   try{const native=await readLocalGenerationDb(f.file,signal()),wasm=await readLocalGenerationDb(f.file,signal(),{engine:'wasm'});assert.deepEqual(wasm,native);assert.equal(wasm.rows.length,count);assert.deepEqual(opened,[f.file,f.file+'-wal',f.file,f.file+'-wal'])}finally{fs.open=original}
+   assert.deepEqual(await Promise.all(names.map(fingerprint)),before);
+  };
   try{await compare(1);const size=(await fs.stat(f.file+'-wal')).size;await db.command('pending');assert.ok((await fs.stat(f.file+'-wal')).size>size);await compare(1);await db.command('rollback');await compare(1);await db.command('pending');await db.command('commit');await compare(2);await db.command('restart');await db.add();await compare(3);await db.command('truncate');await compare(3)}finally{await db.close()}
  }
 });
@@ -102,9 +112,16 @@ test('WASM recovery checks WAL header and ignores incomplete, checksum-invalid, 
  }finally{await db.close()}
 });
 test('WAL disappearance, inode replacement and creation during copying fail closed without source SQLite opens',async t=>{
- const f=await fixture(t),db=await database(f.file,[generation()]);const original=fs.open;try{
-  for(const mode of ['replace','remove']){let changed=false;fs.open=async(...args)=>{const handle=await original(...args);if(args[0]===f.file+'-wal'){const read=handle.read.bind(handle);handle.read=async(...params)=>{const result=await read(...params);if(!changed){changed=true;if(mode==='replace'){const replacement=f.file+'-wal.new';await fs.copyFile(f.file+'-wal',replacement);await fs.rename(replacement,f.file+'-wal')}else await fs.rename(f.file+'-wal',f.file+'-wal.moved')}return result}}return handle};await assert.rejects(readLocalGenerationDb(f.file,signal()),/LOCAL_DB_(CHANGED|UNAVAILABLE)/);fs.open=original;if(mode==='remove')await fs.rename(f.file+'-wal.moved',f.file+'-wal')}
- }finally{fs.open=original;await db.close()}
+ const f=await fixture(t),db=await database(f.file,[generation()]);let main,wal;try{main=await fs.readFile(f.file);wal=await fs.readFile(f.file+'-wal')}finally{await db.close()}
+ const original=fs.open;
+ // A separate committed DB/WAL fixture isolates the intended copying race from
+ // the live writer's Windows file-sharing restrictions. The active-writer
+ // path remains covered above, including pending writes and checkpoint resets.
+ for(const mode of ['replace','remove']){
+  const dir=await fs.mkdtemp(path.join(f.root,'race-')),file=path.join(dir,'copy.db');await fs.writeFile(file,main);await fs.writeFile(file+'-wal',wal);let changed=false;
+  fs.open=async(...args)=>{const handle=await original(...args);if(args[0]===file+'-wal'){const read=handle.read.bind(handle);handle.read=async(...params)=>{const result=await read(...params);if(!changed){if(mode==='replace'){const replacement=file+'-wal.new';await fs.copyFile(file+'-wal',replacement);await fs.rename(replacement,file+'-wal')}else await fs.rename(file+'-wal',file+'-wal.moved');changed=true}return result}}return handle};
+  try{await assert.rejects(readLocalGenerationDb(file,signal()),/LOCAL_DB_CHANGED/);assert.equal(changed,true,'Intended WAL mutation must have succeeded');if(mode==='remove')await fs.rename(file+'-wal.moved',file+'-wal')}finally{fs.open=original}
+ }
  const clean=await fixture(t),closed=await database(clean.file,[generation()],'delete');await closed.close();let changed=false;fs.open=async(...args)=>{const h=await original(...args);if(args[0]===clean.file){const read=h.read.bind(h);h.read=async(...params)=>{const result=await read(...params);if(!changed){changed=true;await fs.writeFile(clean.file+'-wal',Buffer.alloc(0))}return result}}return h};try{await assert.rejects(readLocalGenerationDb(clean.file,signal()),/LOCAL_DB_CHANGED/)}finally{fs.open=original}
 });
 test('worker cancellation and timeout terminate execution before cleaning private snapshots',async t=>{
