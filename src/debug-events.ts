@@ -7,7 +7,7 @@ import { sanitizeDebugStorageError } from './debug-log-store';
 import { IMAGE_GUARD_REASONS, sanitizeImageArgumentShape } from './image-guard';
 import { IMAGE_HTTP_REASONS, MAX_DIAGNOSTIC_DELAY_SECONDS, sanitizeImageErrorEvidence } from './image-error-evidence';
 
-export const DEBUG_OPERATIONS = ['image.generate', 'account.login', 'account.capture', 'account.switch', 'account.verify', 'account.quota', 'account.restore', 'account.remove', 'account.export', 'account.import', 'account.refresh'] as const;
+export const DEBUG_OPERATIONS = ['image.generate', 'image.catalog', 'account.login', 'account.capture', 'account.switch', 'account.verify', 'account.quota', 'account.restore', 'account.remove', 'account.export', 'account.import', 'account.refresh'] as const;
 export type DebugOperation = typeof DEBUG_OPERATIONS[number];
 export const DEBUG_PHASES = ['start', 'preparing', 'validating', 'configured', 'spawning', 'probing', 'generating', 'saving', 'running', 'cancelling', 'verifying', 'recovering', 'result', 'status'] as const;
 export type DebugPhase = typeof DEBUG_PHASES[number];
@@ -347,6 +347,9 @@ const DEBUG_CODES = new Set([
   'TOOL_NAME',
   'TOO_MANY_ACCOUNTS',
   'TOO_MANY_BUCKETS',
+  'IMAGE_CATALOG_LIST_MISSING', 'IMAGE_CATALOG_LIST_INVALID', 'IMAGE_CATALOG_LIST_EMPTY', 'IMAGE_CATALOG_LIST_UNAVAILABLE',
+  'IMAGE_ACCOUNT_INITIALIZING', 'IMAGE_ACCOUNT_CHECK_TIMEOUT', 'IMAGE_ACCOUNT_CHECK_CANCELLED',
+  'IMAGE_SAVED_MODELS_FAILED', 'IMAGE_SAVED_MODELS_TRANSIENT', 'IMAGE_SAVED_MODELS_INVALID',
   'UNCLASSIFIED_ERROR',
   'UNKNOWN_ARGUMENT',
   'UNSAFE_DIRECTORY',
@@ -385,6 +388,11 @@ export function sanitizeDebugData(value: unknown): Record<string, unknown> | und
     result.imageEndpoint = endpoint;
     result.imageHost = imageEndpointHost(endpoint);
   }
+  const catalogCacheHit = own(value, 'catalogCacheHit'); if (typeof catalogCacheHit === 'boolean') result.catalogCacheHit = catalogCacheHit;
+  const catalogStage = own(value, 'catalogStage'), catalogFailure = own(value, 'catalogFailure'), catalogUse = own(value, 'catalogUse');
+  if (member(catalogStage, ['binding', 'lock', 'transport', 'parse'])) result.catalogStage = catalogStage;
+  if (member(catalogFailure, ['binding', 'lock', 'http', 'network', 'tls', 'timeout', 'parse', 'unknown'])) result.catalogFailure = catalogFailure;
+  if (member(catalogUse, ['current', 'saved'])) result.catalogUse = catalogUse;
   const httpStatus = own(value, 'httpStatus');
   if (typeof httpStatus === 'number' && Number.isSafeInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599) result.httpStatus = httpStatus;
   const serviceStatus = own(value, 'serviceStatus');

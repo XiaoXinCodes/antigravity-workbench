@@ -1,7 +1,9 @@
+import { catalogError } from './model-catalog-error';
+import { validModelId, catalogChoices, parseModelCatalog, assertModelUse, type ModelChoice } from './model-catalog';
 /* eslint-disable no-control-regex -- Email and model identifiers must reject controls. */
 import { createHash } from 'node:crypto';
 import type { BoundImageAccount } from './direct-image-core';
-import { imageEndpoint, imageModelEnum, type ImageEndpoint } from './direct-image-protocol';
+import { imageEndpoint, type ImageEndpoint } from './direct-image-protocol';
 import { savedProject, validImageProject } from './direct-image-project';
 import { validateSlots, assertSlotIdentity, type TokenSlots } from './live-storage';
 import { validBearerToken } from './account-quota-transport';
@@ -9,23 +11,14 @@ import { validBearerToken } from './account-quota-transport';
 type RecordValue = Record<string, unknown>;
 const object = (x: unknown): x is RecordValue => !!x && typeof x === 'object' && !Array.isArray(x);
 const EMAIL = /^[^\s@\x00-\x1f<>]+@[^\s@\x00-\x1f<>]+$/;
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/;
 const ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export interface AccountChoice { id: string; label: string; expectedEmail: string; active: boolean; hostCurrent: boolean; migrationState?: string; hostId?: string; capturedAt?: string; quotaDisplayId?: string; verifiedSubject?: string }
-export interface ImageModelChoice { id: string; label: string; modelEnum?: string }
+export type ImageModelChoice = ModelChoice;
 export interface VaultReader { get(key: string): PromiseLike<string | undefined> }
 // Unforgeable in-process membership proof. The binding also rechecks the current
 // account/catalog and endpoint before resolving a project and freezing the request.
 const currentModelProof = new WeakMap<ImageModelChoice, string>();
-const IMAGE_MODEL_NAMES: Readonly<Record<string, string>> = {
-  'gemini-nano-banana-2.1': 'Nano Banana 2.1',
-  'gemini-3.1-flash-lite-image': 'Nano Banana 2 Lite',
-  'gemini-3.1-flash-image': 'Nano Banana 2',
-  'gemini-3-pro-image': 'Nano Banana Pro',
-  'gemini-2.5-flash-image': 'Nano Banana',
-};
-
-/** The official current account's image-generation list, not the separate agent/chat model list. */
+/** Legacy Hub adapter. Only an explicit image array in this response supplies membership. */
 export function currentImageModels(authResponse: unknown, statusResponse: unknown, availableResponse: unknown, email: string): ImageModelChoice[] {
   if (!object(authResponse) || !object(authResponse.authResult) || authResponse.authResult.hasValidAuth !== true ||
       !object(statusResponse) || !object(statusResponse.userStatus)) throw new Error('IMAGE_DIRECT_AUTH_REQUIRED');
@@ -39,33 +32,34 @@ export function currentImageModels(authResponse: unknown, statusResponse: unknow
 
 /** A catalog returned for the bearer verified by the saved-account transaction. */
 export function imageModelsFromCatalog(data: unknown): ImageModelChoice[] {
-  const rows = object(data) ? data.imageGenerationModelIds : undefined;
-  const records = object(data) ? data.models : undefined;
-  if (!Array.isArray(rows) || rows.length > 100) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
-  const models: ImageModelChoice[] = [];
-  if (!object(records)) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
-  for (const item of rows) {
-    if (typeof item !== 'string' || !MODEL.test(item) || !Object.hasOwn(records, item) ||
-        !object(records[item]) || records[item].disabled !== undefined && records[item].disabled !== false) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
-    if (models.some(m => m.id === item)) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
-    const name = IMAGE_MODEL_NAMES[item];
-    const modelEnum = imageModelEnum(records[item].model);
-    models.push(Object.freeze({ id: item, label: name ? `${name}（${item}）` : item, ...(modelEnum ? { modelEnum } : {}) }));
-  }
-  return models;
+  let catalog;
+  try { catalog = parseModelCatalog(data); }
+  catch { throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED'); }
+  if (!catalog.imageListDeclared) throw catalogError('IMAGE_CATALOG_LIST_MISSING', 'parse', 'parse');
+  return catalogChoices(catalog, 'image');
 }
 
 /** Read the already saved, host-bound account; never initiate refresh, login or a storage write. */
-export async function bindSavedImageAccount(input: {
-  vault: VaultReader; selected: AccountChoice; hostId: string; model: ImageModelChoice;
+export interface CurrentAccountAccessInput {
+  vault: VaultReader; selected: AccountChoice; hostId: string;
   assertCurrent(): Promise<void>; verifyIdentity(accessToken: string, signal: AbortSignal): Promise<{ email: string }>;
   resolveProject?(accessToken: string, signal: AbortSignal): Promise<string>;
   endpoint?: ImageEndpoint;
   resolveEndpointProject?(accessToken: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<{ projectId: string; endpoint: ImageEndpoint }>;
   resolveCurrentToken?(signal: AbortSignal): Promise<{ token: string; expiresAt?: number; verify(): Promise<void> }>;
   signal: AbortSignal; now?: () => number; freezeAfterBinding?: boolean;
-}): Promise<BoundImageAccount> {
-  const { vault, selected, hostId, model, signal } = input;
+}
+export async function bindSavedImageAccount(input: CurrentAccountAccessInput & { model: ImageModelChoice; confirmedModelUse?: boolean }): Promise<BoundImageAccount> {
+  const { model, selected } = input;
+  if (!validModelId(model.id) || currentModelProof.get(model) !== selected.expectedEmail.toLowerCase()) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+  assertModelUse(model, input.confirmedModelUse === true, 'IMAGE_MODEL_USAGE_REQUIRED');
+  const access = await bindCurrentAccountAccess(input);
+  return { ...access, modelId: model.id, ...(model.modelEnum ? { modelEnum: model.modelEnum } : {}), ...(model.imageInput === undefined ? {} : { imageInput: model.imageInput }) };
+}
+/** Identity/project access does not require a model choice. This lets the current
+ * account fetch the actual endpoint's directory before choosing a model. */
+export async function bindCurrentAccountAccess(input: CurrentAccountAccessInput): Promise<Omit<BoundImageAccount, 'modelId'> & { credentialRevision: string; credentialExpiresAt: number }> {
+  const { vault, selected, hostId, signal } = input;
   const endpoint = input.endpoint === undefined ? undefined : imageEndpoint(input.endpoint);
   if (endpoint !== undefined && !input.resolveEndpointProject) throw new Error('IMAGE_DIRECT_PROJECT_ENDPOINT_MISMATCH');
   if (signal.aborted) throw new Error('IMAGE_CANCELLED');
@@ -73,8 +67,6 @@ export async function bindSavedImageAccount(input: {
     throw new Error('IMAGE_DIRECT_SUMMARY_MISMATCH');
   if (!selected.hostCurrent) throw new Error('IMAGE_DIRECT_HOST_MISMATCH');
   if (selected.migrationState === 'pending') throw new Error('IMAGE_ACCOUNT_RECOVERY_PENDING');
-  if (!MODEL.test(model.id) || currentModelProof.get(model) !== selected.expectedEmail.toLowerCase())
-    throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
   await input.assertCurrent();
   const key = `live-switch.account.v1.${selected.id}`;
   const pending = [`live-switch.quota-pending.v1.${selected.id}`, `live-switch.quota-refresh.v1.${selected.id}`, 'live-switch.recovery.v1',
@@ -164,7 +156,7 @@ export async function bindSavedImageAccount(input: {
   }
   await assertCurrent();
   frozen = input.freezeAfterBinding === true;
-  return { token, projectId, modelId: model.id, accountId: selected.id,
-    ...(endpoint !== undefined ? { endpoint } : {}), ...(model.modelEnum ? { modelEnum: model.modelEnum } : {}),
+  return { token, projectId, accountId: selected.id, credentialRevision: revision, credentialExpiresAt: active ? Date.parse(active.expiry as string) : current?.expiresAt ?? 0,
+    ...(endpoint !== undefined ? { endpoint } : {}),
     projectSource: endpoint === undefined && project.kind === 'saved' ? 'saved-token' : 'loadCodeAssist', verify: async requestSignal => { if (requestSignal.aborted) throw new Error('IMAGE_CANCELLED'); await assertCurrent(); } };
 }

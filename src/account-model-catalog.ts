@@ -1,9 +1,10 @@
+import { catalogError } from './model-catalog-error';
 import * as https from 'node:https';
 import type { IncomingMessage } from 'node:http';
 import { LiveError } from './live-storage';
 import { validImageProject } from './direct-image-project';
 import { cloudCodeHost, type CloudCodeEndpoint } from './cloudcode-service';
-const HTTP_USER_AGENT = 'Antigravity-Workbench/0.1.11';
+const HTTP_USER_AGENT = 'Antigravity-Workbench/0.1.12';
 
 const PATH = '/v1internal:fetchAvailableModels';
 const RESPONSE_LIMIT = 2 * 1024 * 1024;
@@ -11,7 +12,7 @@ type RequestHttps = (options: https.RequestOptions, callback: (response: Incomin
 
 /** One target-account catalog lookup using the verified project and bearer from the same transaction. Never refresh, retry, redirect, save or print credentials/project. */
 export async function readAccountModelCatalog(token: string, project: string, signal: AbortSignal, endpoint: CloudCodeEndpoint, requestHttps: RequestHttps = https.request): Promise<unknown> {
-  if (!validImageProject(project)) throw new Error('IMAGE_SAVED_MODELS_INVALID');
+  if (!validImageProject(project)) throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'binding', 'binding');
   const BODY = JSON.stringify({ project });
   const host = cloudCodeHost(endpoint);
   if (signal.aborted) throw new Error('IMAGE_CANCELLED');
@@ -29,30 +30,30 @@ export async function readAccountModelCatalog(token: string, project: string, si
       agent: false, rejectUnauthorized: true,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(BODY), 'User-Agent': HTTP_USER_AGENT } }, response => {
-      if (response.statusCode !== 200) { response.destroy(); finish(response.statusCode === 401 ? new LiveError('ACCOUNT_QUOTA_REAUTH_REQUIRED') : new Error(response.statusCode === 403 ? 'IMAGE_SAVED_MODELS_FORBIDDEN' : response.statusCode === 429 ? 'IMAGE_DIRECT_RATE_LIMITED' : [500, 502, 503, 504].includes(response.statusCode ?? 0) ? 'IMAGE_SAVED_MODELS_TRANSIENT' : 'IMAGE_SAVED_MODELS_FAILED')); return; }
+      if (response.statusCode !== 200) { response.destroy(); finish(response.statusCode === 401 ? Object.assign(new LiveError('ACCOUNT_QUOTA_REAUTH_REQUIRED'), { catalogStage: 'transport', catalogFailure: 'http', httpStatus: 401 }) : catalogError(response.statusCode === 403 ? 'IMAGE_SAVED_MODELS_FORBIDDEN' : response.statusCode === 429 ? 'IMAGE_DIRECT_RATE_LIMITED' : [500, 502, 503, 504].includes(response.statusCode ?? 0) ? 'IMAGE_SAVED_MODELS_TRANSIENT' : 'IMAGE_SAVED_MODELS_FAILED', 'transport', 'http', response.statusCode)); return; }
       if (typeof response.headers['content-type'] !== 'string' ||
           !/^application\/json(?:\s*;|$)/i.test(response.headers['content-type'])) {
-        response.destroy(); finish(new Error('IMAGE_SAVED_MODELS_INVALID')); return;
+        response.destroy(); finish(catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200)); return;
       }
       response.on('data', (chunk: Buffer) => {
         if (done) return;
         count += chunk.length;
-        if (count > RESPONSE_LIMIT) { req.destroy(); finish(new Error('IMAGE_SAVED_MODELS_INVALID')); }
+        if (count > RESPONSE_LIMIT) { req.destroy(); finish(catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200)); }
         else chunks.push(Buffer.from(chunk));
       });
       response.on('end', () => {
         let parsed: unknown;
         try { const bytes = Buffer.concat(chunks), text = bytes.toString('utf8'); if (!Buffer.from(text).equals(bytes)) throw new Error(); parsed = JSON.parse(text); }
-        catch { finish(new Error('IMAGE_SAVED_MODELS_INVALID')); return; }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { finish(new Error('IMAGE_SAVED_MODELS_INVALID')); return; }
+        catch { finish(catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200)); return; }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { finish(catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200)); return; }
         finish(undefined, parsed);
       });
-      response.on('aborted', () => finish(new Error('IMAGE_SAVED_MODELS_TRANSIENT')));
-      response.on('error', () => finish(new Error('IMAGE_SAVED_MODELS_TRANSIENT')));
+      response.on('aborted', () => finish(catalogError('IMAGE_SAVED_MODELS_TRANSIENT', 'transport', 'network')));
+      response.on('error', () => finish(catalogError('IMAGE_SAVED_MODELS_TRANSIENT', 'transport', 'network')));
     });
     const abort = () => { finish(new Error('IMAGE_CANCELLED')); req.destroy(); };
-    const timer = setTimeout(() => { finish(new Error('IMAGE_SAVED_MODELS_TRANSIENT')); req.destroy(); }, 15_000);
-    req.on('error', (error: NodeJS.ErrnoException) => finish(new Error(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE'].includes(error.code ?? '') ? 'IMAGE_SAVED_MODELS_TRANSIENT' : 'IMAGE_SAVED_MODELS_FAILED')));
+    const timer = setTimeout(() => { finish(catalogError('IMAGE_SAVED_MODELS_TRANSIENT', 'transport', 'timeout')); req.destroy(); }, 15_000);
+    req.on('error', (error: NodeJS.ErrnoException) => finish(catalogError(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE'].includes(error.code ?? '') ? 'IMAGE_SAVED_MODELS_TRANSIENT' : 'IMAGE_SAVED_MODELS_FAILED', 'transport', /^(ERR_TLS_|CERT_|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(error.code ?? '') ? 'tls' : error.code === 'ETIMEDOUT' ? 'timeout' : 'network')));
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) { abort(); return; }
     req.end(BODY);

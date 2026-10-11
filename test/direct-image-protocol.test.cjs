@@ -18,7 +18,7 @@ const {sanitizeDebugData}=require('../out/debug-events');
 const {captureRecentImageFailure,readRecentImageFailure}=require('../out/recent-image-failure');
 
 const id='12345678-1234-4123-8123-123456789abc',email='fixture@example.test',token='fixture.bearer.only';
-const model = currentImageModels({authResult:{hasValidAuth:true}}, {userStatus:{email}}, {response:{imageGenerationModelIds:['gemini-3.1-flash-image'], models:{'gemini-3.1-flash-image':{}}}}, email)[0];
+const model = currentImageModels({authResult:{hasValidAuth:true}}, {userStatus:{email}}, {response:{imageGenerationModelIds:['synthetic-visual-wire'], models:{'synthetic-visual-wire':{model:'MODEL_SYNTHETIC_WIRE'}}}}, email)[0];
 const selected={id,label:'Fixture',expectedEmail:email,active:true,hostCurrent:true};
 const stored=JSON.stringify({id,expectedEmail:email,hostId:'fixture-host',slots:{file:null,
  keyring:JSON.stringify({project_id:'stale-project-with-no-endpoint',token:{access_token:token,
@@ -136,7 +136,7 @@ test('model labels preserve the verified model and enum; unknown models never bo
  const models=currentImageModels(auth,status,{response:{imageGenerationModelIds:[model.id],models:{[model.id]:{model:'MODEL_PLACEHOLDER_M999'}}}},email);
  assert.equal(models[0].modelEnum,'MODEL_PLACEHOLDER_M999');
  assert.equal(imageRequestEnvelope(model.id,models[0].modelEnum).labels.model_enum,'MODEL_PLACEHOLDER_M999');
- assert.equal(imageRequestEnvelope(model.id).labels.model_enum,'MODEL_PLACEHOLDER_M21');
+ assert.equal(imageRequestEnvelope(model.id).labels.model_enum,undefined);
  const unknown=imageRequestEnvelope('future-image-model');assert.equal(unknown.labels.model_enum,undefined);assert.equal(unknown.labels.used_claude,undefined);
  assert.doesNotMatch(JSON.stringify(unknown),/thinkingConfig|maxOutputTokens|MODEL_PLACEHOLDER_M21/);
 });
@@ -160,6 +160,7 @@ test('user override selects one host for metadata and image sends; a mid-operati
    return {response:{imageGenerationModelIds:[model.id],models:{[model.id]:{model:'MODEL_PLACEHOLDER_M21'}}}};
   }};
   if(name==='./account-quota-transport')return {requestAccountQuota:async value=>{assert.equal(value.endpoint,'identity');assert.equal(value.accessToken,token);return {email,verified_email:true,id:'fixture-subject'};}};
+  if(name==='./saved-image-models')return {readSavedImageModels:async()=>({imageGenerationModelIds:[model.id],models:{[model.id]:{model:'MODEL_SYNTHETIC_WIRE'}}})};
   if(name==='./direct-image-project-transport')return {resolveEndpointImageProject:async(bearer,signal,target)=>{
    const result=await resolveEndpointImageProject(bearer,signal,target,http);if(changeAfterMetadata)endpoint='production';return result;
   }};
@@ -228,6 +229,7 @@ for(const branch of ['saved','current-wsl'])for(const imageStatus of [200,429])t
   if(name==='./account-quota-transport')return {requestAccountQuota:async value=>{
    assert.equal(value.endpoint,'identity');assert.equal(value.accessToken,token);identities++;
    return {email,verified_email:true,id:'fixture-subject'};}};
+  if(name==='./saved-image-models')return {readSavedImageModels:async()=>({imageGenerationModelIds:[model.id],models:{[model.id]:{model:'MODEL_SYNTHETIC_WIRE'}}})};
   if(name==='./direct-image-project-transport')return {resolveEndpointImageProject:(bearer,signal,target)=>resolveEndpointImageProject(bearer,signal,target,http)};
   if(name==='./direct-image-transport')return {sendDirectImage:(bearer,body,signal,_unused,target)=>sendDirectImage(bearer,body,signal,http,target)};
   return original.call(this,name,...args);
@@ -237,8 +239,8 @@ for(const branch of ['saved','current-wsl'])for(const imageStatus of [200,429])t
   const result=direct.run({...request(output),endpoint:'daily'},new AbortController().signal,()=>{});
   if(imageStatus===200)await result;else await assert.rejects(result,{message:'IMAGE_DIRECT_RESOURCE_EXHAUSTED'});
   // Once bound, before/after-send checks validate the frozen credential, not the mutable official session.
-  const perMethod=branch==='saved'?5:10;
-  assert.deepEqual(rpc,{GetAuthStatus:perMethod*2,GetUserStatus:perMethod*2,GetAvailableModels:perMethod});
+  const perMethod=branch==='saved'?7:12;
+  assert.deepEqual(rpc,{GetAuthStatus:perMethod,GetUserStatus:perMethod,GetAvailableModels:0});
   assert.equal(identities,1);assert.equal(calls.length,2);
   assert.deepEqual(calls.map(c=>c.options.path),[fixture.project.path,fixture.image.path]);
   assert.ok(calls.every(c=>c.options.hostname===fixture.hosts.daily));

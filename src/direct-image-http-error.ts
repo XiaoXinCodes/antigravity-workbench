@@ -96,6 +96,12 @@ export function formatImageFailure(error: unknown): string {
     IMAGE_SAVED_AUTH_EXPIRED: tr("directImageHttpError.565c58243c"),
     IMAGE_SAVED_AUTH_PENDING: tr("directImageHttpError.69e6f04f3a"),
     IMAGE_SAVED_MODELS_FORBIDDEN: tr("directImageHttpError.bc9973af3d"),
+    IMAGE_CATALOG_LIST_MISSING: tr('catalog.imageListMissing'),
+    IMAGE_CATALOG_LIST_INVALID: tr('catalog.imageListInvalid'),
+    IMAGE_CATALOG_LIST_EMPTY: tr('catalog.imageListEmpty'),
+    IMAGE_CATALOG_LIST_UNAVAILABLE: tr('catalog.imageListUnavailable'),
+    IMAGE_MODEL_USAGE_REQUIRED: tr("catalog.usageRequired"),
+    IMAGE_DIRECT_MODEL_UNVERIFIED: tr("catalog.unverified"),
     IMAGE_SAVED_MODELS_UNAVAILABLE: tr("directImageHttpError.dd2390bbac"),
     IMAGE_SAVED_MODELS_INVALID: tr("directImageHttpError.7f53a3f2dd"),
     IMAGE_SAVED_MODELS_TRANSIENT: tr("directImageHttpError.b484207952"),
@@ -142,6 +148,11 @@ export function formatImageFailure(error: unknown): string {
  * Relocalize only that representation; prompts, account labels and paths never
  * pass through this helper. It also accepts an enclosing generated batch status. */
 export function localizeImageFailure(value: string): string {
+  // A directory operation heading precedes a separately generated error code.
+  // Translate those components before a broad persisted-message template can
+  // consume the complete heading and treat its suffix as an opaque parameter.
+  const components = value.split(' · ');
+  if (components.length > 1 && /^IMAGE_[A-Z_]+$/.test(components[1]!)) return components.map(localizeMessage).join(' · ');
   const translated = localizeMessage(value);
   if (!/\bIMAGE_[A-Z_]+\b/u.test(value)) return translated;
   return translated.split(' · ').map(localizeMessage).join(' · ');

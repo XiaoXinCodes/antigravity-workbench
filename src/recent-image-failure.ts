@@ -1,3 +1,4 @@
+import { validModelId } from './model-catalog';
 import { t as tr } from './i18n';
 import { debugErrorCode, sanitizeDebugData } from './debug-events';
 import { sanitizeImageErrorEvidence, type ImageErrorEvidence } from './image-error-evidence';
@@ -14,7 +15,6 @@ export interface RecentImageFailure {
   responseEvidence?: ImageResponseEvidence;
 }
 interface State { get<T>(key: string): T | undefined; update(key: string, value: unknown): Thenable<void> }
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._/-]{2,127}$/u;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const STAGES: readonly ImageFailureStage[] = ['preparing', 'generating', 'validating'];
 const MAX_BYTES = 4096;
@@ -25,7 +25,7 @@ function own(value: unknown, key: string): unknown {
   catch { return undefined; }
 }
 function validModel(value: unknown): value is string {
-  return typeof value === 'string' && MODEL.test(value) && /(?:^|[-_.])image(?:[-_.]|$)/iu.test(value);
+  return validModelId(value);
 }
 
 /** Rebuild from an explicit allowlist before either writing or showing stored state. */

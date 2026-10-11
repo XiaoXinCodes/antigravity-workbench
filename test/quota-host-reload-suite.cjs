@@ -10,7 +10,7 @@ exports.run=async()=>{
  try{
   const context=await cdp.find('#quota-compare'),read=expression=>cdp.eval(expression,context);
   await fs.writeFile(path.join(process.env.AG_QUOTA_EVIDENCE,'restart-state-debug.json'),JSON.stringify({stored:fixture.viewState(),api:await read('api.getState()'),seed:await read('document.querySelector("script[nonce]").textContent.match(/const previous=[^;]*/)?.[0]')},null,2));
-  const key=JSON.stringify(['bucket','','gemini-real-bucket','5h']);
+  const key=JSON.stringify(['bucket','synthetic-group-a','gemini-real-bucket','5h']);
   for(let n=0;n<150&&await read('document.querySelector("#quota-compare").value')!==key;n++)await sleep(40);
   assert.equal(await read('document.querySelector("#quota-compare").value'),key);
   assert.equal(await read('document.querySelector("#quota-sort").value'),'low');

@@ -1,12 +1,11 @@
+import { parseModelCatalog } from './model-catalog';
 import { t as tr } from './i18n';
-import { quotaFraction } from './quota-presentation';
 export { quotaPercent as imageQuotaPercent } from './quota-presentation';
 import type { ImageEndpoint } from './direct-image-protocol';
 import type { ImageModelChoice } from './direct-image-binding';
 
 export interface ImageQuotaRow { modelId: string; remainingFraction: number | null; resetAt: string | null }
 export interface ImageQuotaSnapshot extends ImageQuotaRow { accountId: string; endpoint: ImageEndpoint; queriedAt: string }
-const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 export function imageQuotaErrorText(error: unknown): string {
   const code = error instanceof Error ? error.message : '';
@@ -22,15 +21,11 @@ export function imageQuotaErrorText(error: unknown): string {
 /** Only the selected image directory member's own server fields. No grouping,
  * cross-model overrides, credits conversion, or inference about pool sharing. */
 export function imageQuotaFromCatalog(value: unknown, models: ImageModelChoice[]): ImageQuotaRow[] {
-  if (!object(value) || !object(value.models)) throw Error('IMAGE_SAVED_MODELS_INVALID');
-  const records = value.models;
+  let catalog;
+  try { catalog = parseModelCatalog(value); } catch { throw Error('IMAGE_SAVED_MODELS_INVALID'); }
   return models.map(model => {
-    const record = Object.hasOwn(records, model.id) ? records[model.id] : undefined;
-    const quota = object(record) && object(record.quotaInfo) ? record.quotaInfo : {};
-    const fraction = quota.remainingFraction, reset = quota.resetTime;
-    return { modelId: model.id,
-      remainingFraction: quotaFraction(fraction),
-      resetAt: typeof reset === 'string' && reset.length <= 64 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(reset) && Number.isFinite(Date.parse(reset)) ? new Date(reset).toISOString() : null };
+    const row = catalog.models.find(row => row.id === model.id);
+    return { modelId: model.id, remainingFraction: row?.remainingFraction ?? null, resetAt: row?.resetAt ?? null };
   });
 }
 

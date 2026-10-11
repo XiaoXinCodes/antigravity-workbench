@@ -1,3 +1,4 @@
+import { validModelId } from './model-catalog';
 import * as https from 'node:https';
 import { randomUUID } from 'node:crypto';
 import { cloudCodeHost, type CloudCodeEndpoint } from './cloudcode-service';
@@ -6,7 +7,7 @@ import { validBearerToken } from './account-quota-transport';
 import type { WakeResult } from './wake-engine';
 export interface WakeBinding { token: string; projectId: string; modelId: string; endpoint: CloudCodeEndpoint; verify(signal: AbortSignal): Promise<void> }
 export function wakeRequestBody(binding: WakeBinding, outputBudget: number): Record<string, unknown> {
-  if (!validImageProject(binding.projectId) || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/.test(binding.modelId) || !Number.isInteger(outputBudget) || outputBudget < 1 || outputBudget > 64) throw Error('WAKE_REQUEST_INVALID');
+  if (!validImageProject(binding.projectId) || !validModelId(binding.modelId) || !Number.isInteger(outputBudget) || outputBudget < 1 || outputBudget > 64) throw Error('WAKE_REQUEST_INVALID');
   return { project: binding.projectId, model: binding.modelId, requestId: randomUUID(), userAgent: 'antigravity', requestType: 'agent',
     request: { session_id: randomUUID(), contents: [{ role: 'user', parts: [{ text: 'Hi' }] }], generationConfig: { maxOutputTokens: outputBudget, temperature: 0 } } };
 }

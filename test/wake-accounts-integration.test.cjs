@@ -46,10 +46,10 @@ test('wrapped catalog preserves selected conversation quota and does not borrow 
  await assert.rejects(f.api.run({...task,schedule:{mode:'quota-recovery'}},f.signal,async()=>assert.fail('must not send')),/QUOTA_NOT_FULL/);assert.equal(f.payloads.length,0);
 });
 test('models-only legacy catalog remains usable for the manually selected conversation model and exact endpoint',async()=>{
- const f=fixture();await f.api.models(B,'daily',f.signal);f.catalog(()=>({models:{'synthetic-text-B-daily':{supportsImages:true}}}));const choices=await f.api.models(B,'daily',f.signal);assert.equal(choices.length,1);assert.equal(choices[0].classification,'unclassified');assert.equal(f.payloads.length,0);assert.equal((await f.api.run(f.task(),f.signal,async()=>{})).phase,'succeeded');assert.equal(f.payloads[0].body.model,f.task().modelId);assert.deepEqual(f.payloads[0].body.request.contents,[{role:'user',parts:[{text:'Hi'}]}]);
+ const f=fixture();await f.api.models(B,'daily',f.signal);f.catalog(()=>({models:{'synthetic-text-B-daily':{supportsImages:true}}}));const choices=await f.api.models(B,'daily',f.signal);assert.equal(choices.length,1);assert.equal(choices[0].classification,'unclassified');assert.equal(f.payloads.length,0);await assert.rejects(f.api.run(f.task(),f.signal,async()=>{}),/WAKE_MODEL_USAGE_REQUIRED/);assert.equal(f.payloads.length,0);assert.equal((await f.api.run({...f.task(),confirmedModelUse:true},f.signal,async()=>{})).phase,'succeeded');assert.equal(f.payloads[0].body.model,f.task().modelId);assert.deepEqual(f.payloads[0].body.request.contents,[{role:'user',parts:[{text:'Hi'}]}]);
 });
-test('empty confirmed ordinary directory has its own conversation error',async()=>{
- const f=fixture();f.catalog(()=>({models:{},agentModelSorts:[]}));await assert.rejects(f.api.models(B,'daily',f.signal),/WAKE_MODELS_UNAVAILABLE/);assert.equal(f.payloads.length,0);
+test('empty confirmed ordinary directory returns a successful empty snapshot',async()=>{
+ const f=fixture();f.catalog(()=>({models:{},agentModelSorts:[]}));assert.deepEqual(await f.api.models(B,'daily',f.signal),[]);assert.equal(f.payloads.length,0);
 });
 test('replaced account while catalog is pending cannot accept late data or send',async()=>{
  const f=fixture();let finish,started;const entered=new Promise(resolve=>started=resolve);f.catalog(()=>{started();return new Promise(resolve=>finish=resolve)});const task=f.task(),pending=f.api.run(task,f.signal,async()=>assert.fail('must not send'));await entered;f.accounts[1].capturedAt=new Date(Date.now()+1000).toISOString();finish(catalog(task.modelId));await assert.rejects(pending,/ACCOUNT_CHANGED/);assert.equal(f.payloads.length,0);
@@ -59,4 +59,11 @@ test('cancelled late ordinary directory cannot become cached membership',async()
 });
 test('raw wrapped response is checked for credential echoes before normalizing public catalog',async()=>{
  const f=fixture();f.catalog(()=>({credentialEcho:'synthetic-bearer-'+B,response:catalog(f.task().modelId)}));await assert.rejects(f.api.models(B,'daily',f.signal),{message:'ACCOUNT_QUOTA_RESPONSE_INVALID'});assert.equal(f.payloads.length,0);
+});
+
+
+test('a stored unknown-role confirmation never authorizes an image model after classification changes',async()=>{
+ const f=fixture(),task={...f.task(),confirmedModelUse:true};
+ f.catalog(()=>({models:{[task.modelId]:{}},imageGenerationModelIds:[task.modelId],agentModelSorts:[{groups:[{modelIds:[task.modelId]}]}]}));
+ await assert.rejects(f.api.run(task,f.signal,async()=>assert.fail('must not send')),/MODEL_UNVERIFIED/);assert.equal(f.payloads.length,0);
 });

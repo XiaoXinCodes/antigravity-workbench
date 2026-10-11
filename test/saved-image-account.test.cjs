@@ -161,3 +161,15 @@ test('explicit quota observation does not select an image account; refresh guard
  await assert.rejects(engine.observeQuota(A,ma,f.signal,'daily',async()=>{}),/REAUTH_REQUIRED/);assert.equal(f.exchanges,0);assert.equal(engine.isSelected(A),false);
  const snapshot=await engine.observeQuota(B,mb,f.signal,'daily',async()=>{});assert.equal(snapshot.modelId,mb);assert.equal(snapshot.remainingFraction,null);assert.equal(f.exchanges,1);assert.equal(engine.isSelected(B),false);assert.equal(f.vault.has(QUOTA_PENDING_PREFIX+B),false);
 });
+
+
+test('only explicit image members bind; user confirmation cannot override missing membership or disabled',async()=>{
+ const f=fixture(),id='opaque-new-visual';f.engine.selectForWindow(B);f.deps.models=async()=>({models:{[id]:{displayName:'Raw server label',supportsImages:true}}});
+ await assert.rejects(f.engine.directory(B,f.signal,'daily',true),/IMAGE_CATALOG_LIST_MISSING/);
+ await assert.rejects(f.engine.bind(B,id,f.signal,'daily',false,true),/IMAGE_CATALOG_LIST_MISSING/);
+ f.deps.models=async()=>({models:{[id]:{displayName:'Raw server label',supportsImages:false}},imageGenerationModelIds:[id]});
+ const directory=await f.engine.directory(B,f.signal,'daily',true);assert.equal(directory.source,'fetchAvailableModels');assert.equal(directory.queriedAt,new Date(NOW).toISOString());assert.equal(directory.models[0].classification,undefined);
+ const bound=await f.engine.bind(B,id,f.signal,'daily');assert.equal(bound.modelId,id);assert.equal(bound.imageInput,false);
+ f.deps.models=async()=>({models:{[id]:{disabled:true}},imageGenerationModelIds:[id]});assert.deepEqual(await f.engine.choices(B,f.signal,'daily',true),[]);
+ await assert.rejects(f.engine.bind(B,id,f.signal,'daily',false,true),/MODEL_UNVERIFIED/);
+});

@@ -37,3 +37,11 @@ test('transport timeout and cancellation have distinct bounded outcomes',async t
  const timedCheck=assert.rejects(timed,{message:'IMAGE_SAVED_MODELS_TRANSIENT'});t.mock.timers.tick(15000);await timedCheck;
  const abort=new AbortController(),g=transport({late:true}),cancelled=readSavedImageModels(token,project,abort.signal,'daily',g.request);const cancelledCheck=assert.rejects(cancelled,{message:'IMAGE_CANCELLED'});abort.abort();await cancelledCheck;g.finish();
 });
+
+test('catalog failure metadata separates HTTP, parsing, network, TLS and timeout without retaining raw errors',async t=>{
+ const {catalogFailureDetails}=require('../out/model-catalog-error');
+ for(const status of [302,400,401,403,429,500]){const f=transport({status,body:token});await assert.rejects(readSavedImageModels(token,project,new AbortController().signal,'daily',f.request),e=>{assert.deepEqual(catalogFailureDetails(e),{catalogStage:'transport',catalogFailure:'http',httpStatus:status});assert.doesNotMatch(JSON.stringify(e),/synthetic-bearer/);return true})}
+ const invalid=transport({body:'invalid '+token});await assert.rejects(readSavedImageModels(token,project,new AbortController().signal,'daily',invalid.request),e=>{assert.deepEqual(catalogFailureDetails(e),{catalogStage:'parse',catalogFailure:'parse',httpStatus:200});return true});
+ for(const [code,kind]of [['ECONNRESET','network'],['ERR_TLS_CERT_ALTNAME_INVALID','tls'],['CERT_HAS_EXPIRED','tls'],['ETIMEDOUT','timeout'],['PRIVATE_UNKNOWN','network']]){const request=()=>{const req=new EventEmitter();req.destroy=()=>{};req.end=()=>queueMicrotask(()=>req.emit('error',Object.assign(Error(token),{code})));return req};await assert.rejects(readSavedImageModels(token,project,new AbortController().signal,'daily',request),e=>{assert.equal(catalogFailureDetails(e).catalogFailure,kind);assert.doesNotMatch(JSON.stringify(e),/synthetic-bearer|PRIVATE_UNKNOWN/);return true})}
+ t.mock.timers.enable({apis:['setTimeout']});const f=transport({late:true}),p=readSavedImageModels(token,project,new AbortController().signal,'daily',f.request);const check=assert.rejects(p,e=>{assert.equal(catalogFailureDetails(e).catalogFailure,'timeout');return true});t.mock.timers.tick(15000);await check;
+});
