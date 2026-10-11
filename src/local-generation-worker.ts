@@ -40,7 +40,47 @@ async function run() {
       if (typeof idx !== 'number' || !Number.isSafeInteger(idx) || idx < 0 || !(data instanceof Uint8Array)) throw Error();
       total += data.length; rows.push([idx, Buffer.from(data).toString('base64')]);
     }
-    parentPort!.postMessage({ rows, limited });
+    const table = (name: 'steps' | 'trajectory_metadata_blob', required: string[]) => {
+      const entries = [...db.each(`SELECT type,sql FROM sqlite_master WHERE name='${name}'`)];
+      if (!entries.length) return false;
+      if (entries.length !== 1 || entries[0]![0] !== 'table' || typeof entries[0]![1] !== 'string' || !/^CREATE\s+TABLE\b/i.test(entries[0]![1])) throw Error();
+      const names = [...db.each(`PRAGMA table_info(${name})`)].map(row => row[1]);
+      if (!required.every(column => names.includes(column))) throw Error();
+      return true;
+    };
+    const steps: [number, string][] = []; let stepsComplete = true;
+    try {
+      if (table('steps', ['idx', 'metadata'])) {
+        // Read only the linkage and timestamp metadata, never step payloads.
+        for (const [idx, data, size] of db.each('SELECT idx, CASE WHEN length(metadata)<=1048576 THEN metadata ELSE NULL END, length(metadata) FROM steps ORDER BY idx LIMIT 2001')) {
+          if (steps.length >= 2000) { stepsComplete = false; limited = true; break; }
+          if (typeof idx !== 'number' || !Number.isSafeInteger(idx) || idx < 0) throw Error();
+          // SQL NULL is an explicitly absent metadata message, unlike a blob
+          // whose linkage cannot be decoded or whose bytes were truncated.
+          if (data === null && size === null) { steps.push([idx, '']); continue; }
+          if (typeof size !== 'number' || size > 1048576 || total + size > 2097152) { stepsComplete = false; limited = true; break; }
+          if (!(data instanceof Uint8Array)) throw Error();
+          total += data.length; steps.push([idx, Buffer.from(data).toString('base64')]);
+        }
+      }
+    } catch { stepsComplete = false; }
+    // Partial step scans cannot prove a response ID has exactly one match.
+    if (!stepsComplete) steps.length = 0;
+    let workspace: string | undefined, workspaceInvalid = false;
+    try {
+      if (table('trajectory_metadata_blob', ['id', 'data'])) {
+        const entries = [...db.each("SELECT CASE WHEN length(data)<=1048576 THEN data ELSE NULL END, length(data) FROM trajectory_metadata_blob WHERE id='main' LIMIT 2")];
+        if (entries.length > 1) throw Error();
+        if (entries.length === 1) {
+          const [data, size] = entries[0]!;
+          if (data === null && size === null) { /* Explicitly absent workspace metadata. */ }
+          else if (typeof size !== 'number' || size > 1048576 || total + size > 2097152) limited = true;
+          else if (!(data instanceof Uint8Array)) throw Error();
+          else { total += data.length; workspace = Buffer.from(data).toString('base64'); }
+        }
+      }
+    } catch { workspaceInvalid = true; }
+    parentPort!.postMessage({ rows, steps, stepsComplete, workspace, workspaceInvalid, limited });
   } finally { db.close(); }
 }
 if (parentPort) void run().catch(() => parentPort!.postMessage({ error: 'LOCAL_DB_UNSUPPORTED' }));

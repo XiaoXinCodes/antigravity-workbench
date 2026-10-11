@@ -41,7 +41,10 @@ function mergeEvidence<T extends GenerationTimeObservation>(a: T | undefined, b:
   const fields = [...new Set([...a.fields, ...b.fields])];
   if (a.status === 'missing' && b.status === 'provided') return { ...structuredClone(b), fields };
   if (b.status === 'missing' && a.status === 'provided') return { ...structuredClone(a), fields };
-  if (a.status === b.status && a.value === b.value) return { ...structuredClone(a), fields };
+  if (a.status === b.status && a.value === b.value) {
+    const source = a.source === 'generation' || b.source === 'generation' ? 'generation' : a.source ?? b.source;
+    return { ...structuredClone(a), fields, ...(source ? { source } : {}) };
+  }
   return { status: 'conflict', fields } as T;
 }
 

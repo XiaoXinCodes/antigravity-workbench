@@ -50,12 +50,13 @@ export function generationStatsExportContent(snapshot: LocalGenerationStats, for
     const scope = JSON.stringify([row.client, row.session]);
     if (!sessions.has(scope)) sessions.set(scope, sessions.size + 1);
     const time = row.timestamp, timeValue = time?.status === 'provided' && time.fields.length && Number.isSafeInteger(time.value) && Math.abs(time.value!) <= 8.64e15 ? new Date(time.value!).toISOString() : undefined;
+    const timeSource = timeValue && time && 'source' in time && (time.source === 'generation' || time.source === 'step-created') ? time.source : undefined;
     const project = row.project;
     // A project label is optional evidence. Raw filesystem paths never become exported labels.
     const label = project?.values.length === 1 ? project.values[0]?.label : undefined;
     const projectValue = project?.status === 'provided' && project.fields.length && typeof label === 'string' && label.length <= 128 && !/[\\/:\p{Cc}\p{Cf}]/u.test(label) && !label.startsWith('~') ? label : undefined;
     return { id: index + 1, session: sessions.get(scope)!, client: ['cli', 'ide', 'selected'].includes(row.client ?? '') ? row.client! : 'selected',
-      timestamp: { status: timeValue ? 'provided' as const : time?.status === 'provided' ? 'invalid' as const : status(time?.status ?? 'missing'), ...(timeValue ? { value: timeValue } : {}) },
+      timestamp: { status: timeValue ? 'provided' as const : time?.status === 'provided' ? 'invalid' as const : status(time?.status ?? 'missing'), ...(timeValue ? { value: timeValue } : {}), ...(timeSource ? { source: timeSource } : {}) },
       project: { status: projectValue ? 'provided' as const : project?.status === 'provided' ? 'invalid' as const : status(project?.status ?? 'missing'), ...(projectValue ? { value: projectValue } : {}) },
       requestedModel: model(row.requested), returnedModel: model(row.returned),
       ...(row.usageInterpretation === 'unverified' || row.usageInterpretation === 'verified' ? { usageStatus: row.usageInterpretation } : {}),
@@ -72,9 +73,9 @@ export function generationStatsExportContent(snapshot: LocalGenerationStats, for
       unknownTimeCount: snapshot.unknownTimeCount, futureTimeCount: snapshot.futureTimeCount },
     summary: aggregate(aggregateGenerationStats(guarded)), trend: recalculated.trend.map(point => ({ day: point.day, ...aggregate(point) })), records: rows }, null, 2) + '\n';
   else {
-    const headers = ['row_id', 'session_id', 'client', 'range', 'timezone', 'range_start', 'range_end', 'observed_through', 'read_records', 'read_files', 'read_skipped', 'read_limited', 'read_scope', 'timestamp_status', 'timestamp', 'project_status', 'project', 'requested_model_status', 'requested_models', 'returned_model_status', 'returned_models', ...METRICS.flatMap(metric => [metric + '_status', metric]), 'usage_status', 'issue'];
+    const headers = ['row_id', 'session_id', 'client', 'range', 'timezone', 'range_start', 'range_end', 'observed_through', 'read_records', 'read_files', 'read_skipped', 'read_limited', 'read_scope', 'timestamp_status', 'timestamp', 'timestamp_source', 'project_status', 'project', 'requested_model_status', 'requested_models', 'returned_model_status', 'returned_models', ...METRICS.flatMap(metric => [metric + '_status', metric]), 'usage_status', 'issue'];
     const cells = rows.map(row => [row.id, row.session, row.client, snapshot.range, snapshot.timeZone, snapshot.startLocalDate, snapshot.throughLocalDate, observedThrough,
-      snapshot.readRecordCount, sourceCoverage.filesRead, sourceCoverage.skipped, sourceCoverage.limited === undefined ? undefined : String(sourceCoverage.limited), sourceCoverage.kind, row.timestamp.status, row.timestamp.value,
+      snapshot.readRecordCount, sourceCoverage.filesRead, sourceCoverage.skipped, sourceCoverage.limited === undefined ? undefined : String(sourceCoverage.limited), sourceCoverage.kind, row.timestamp.status, row.timestamp.value, row.timestamp.source,
       row.project.status, row.project.value, row.requestedModel.status, row.requestedModel.values.join(' | '), row.returnedModel.status, row.returnedModel.values.join(' | '),
       ...METRICS.flatMap(metric => [row.tokens[metric].status, row.tokens[metric].value]), row.usageStatus, row.issue]);
     content = [headers, ...cells].map(line => line.map(generationExportCsvCell).join(',')).join('\r\n') + '\r\n';

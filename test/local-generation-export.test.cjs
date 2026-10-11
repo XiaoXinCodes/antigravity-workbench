@@ -11,7 +11,7 @@ function fixture() {
  const now = Date.parse('2026-10-11T12:00:00Z');
  const row = { client:'cli',session:'/private/never-export.db',key:'private:response:'+'a'.repeat(64),index:123,usageInterpretation:'verified',
   requested:responseModels({}),returned:responseModels({model:'synthetic-returned'}),
-  timestamp:{status:'provided',value:now,fields:['raw.timestamp']},
+  timestamp:{status:'provided',value:now,source:'generation',fields:['raw.timestamp']},
   project:{status:'provided',values:[{key:'b'.repeat(64),label:'=SUM(1+1)'}],fields:['raw.workspace_uri']},
   tokens:Object.fromEntries(metrics.map((key,index)=>[key,{status:'provided',value:index,fields:['raw.'+key]}])),
   prompt:'private-prompt',credentials:'private-credential',sourcePath:'/private/source.db'};
@@ -79,6 +79,38 @@ test('export freezes calendar boundaries and observed time from the filtered sna
  try {assert.equal(generationStatsExportContent(input,'json'),firstJson);assert.equal(generationStatsExportContent(input,'csv'),firstCsv);}finally{Date.now=original;}
  assert.ok(firstCsv.includes('"7d","UTC","2026-10-05","2026-10-11","2026-10-11T12:00:00.000Z"'));
  const data=JSON.parse(firstJson);assert.equal(data.scope.startLocalDate,'2026-10-05');assert.equal(data.scope.throughLocalDate,'2026-10-11');assert.equal(data.scope.observedThrough,'2026-10-11T12:00:00.000Z');
+});
+test('time provenance exports only the explicit generation or step-created enum',()=>{
+ for(const source of ['generation','step-created',undefined,'raw.private.timestamp','/private/time-source','created','STEP-CREATED',null]) {
+  const input=fixture();if(source===undefined)delete input.rows[0].timestamp.source;else input.rows[0].timestamp.source=source;
+  const content=generationStatsExportContent(input,'json'),data=JSON.parse(content),csv=generationStatsExportContent(input,'csv');
+  if(source==='generation'||source==='step-created') {
+   assert.equal(data.records[0].timestamp.source,source);assert.ok(csv.includes('"2026-10-11T12:00:00.000Z","'+source+'"'));
+  } else {
+   assert.equal(Object.hasOwn(data.records[0].timestamp,'source'),false);assert.ok(csv.includes('"2026-10-11T12:00:00.000Z","","provided"'));
+   if(typeof source==='string') {assert.equal(content.includes(source),false);assert.equal(csv.includes(source),false);}
+  }
+  assert.ok(csv.split('\r\n')[0].includes('"timestamp_source"'));
+ }
+ const missing=fixture();missing.rows[0].timestamp={status:'missing',source:'step-created',fields:[]};
+ assert.deepEqual(JSON.parse(generationStatsExportContent(missing,'json')).records[0].timestamp,{status:'missing'});
+});
+test('exports exactly the filtered records with associated step time and missing cache values intact',()=>{
+ const seed=fixture(),now=seed.now,first=structuredClone(seed.rows[0]),second=structuredClone(first),outsideModel=structuredClone(first),outsideRange=structuredClone(first);
+ first.key='selected:response:'+'1'.repeat(64);first.timestamp={status:'provided',value:now,source:'step-created',fields:['raw.step-created']};
+ first.tokens.cacheRead={status:'missing',fields:[]};first.tokens.cacheWrite={status:'missing',fields:[]};
+ second.key='selected:response:'+'2'.repeat(64);second.timestamp={status:'provided',value:now-86400000,source:'generation',fields:['raw.generation']};
+ outsideModel.key='selected:response:'+'3'.repeat(64);outsideModel.returned=responseModels({model:'other-synthetic-model'});
+ outsideRange.key='selected:response:'+'4'.repeat(64);outsideRange.timestamp.value=now-31*86400000;
+ const input=buildLocalGenerationStats([first,second,outsideModel,outsideRange],{range:'7d',model:'model:synthetic-returned',now,timeZone:'UTC'}),before=JSON.stringify(input);
+ assert.equal(input.rows.length,2);
+ const data=JSON.parse(generationStatsExportContent(input,'json'));
+ assert.equal(data.records.length,input.rows.length);assert.deepEqual(data.records.map(row=>row.timestamp.value),input.rows.map(row=>new Date(row.timestamp.value).toISOString()));
+ assert.deepEqual(data.records.map(row=>row.timestamp.source),['step-created','generation']);
+ assert.deepEqual(data.records[0].tokens.cacheRead,{status:'missing'});assert.deepEqual(data.records[0].tokens.cacheWrite,{status:'missing'});
+ assert.equal(data.records[0].returnedModel.values[0],first.returned.values[0]);
+ const csv=generationStatsExportContent(input,'csv');assert.equal(csv.trimEnd().split('\r\n').length,input.rows.length+1);assert.equal(csv.includes('other-synthetic-model'),false);
+ assert.ok(csv.includes('"missing","","missing",""'));assert.equal(csv.includes('raw.'),false);assert.equal(JSON.stringify(input),before);
 });
 test('new export commits complete private bytes and leaves no temporary files',async t=>{
  const dir=await directory(t),filename=path.join(dir,'stats.json'),target=await prepareGenerationExport(filename);

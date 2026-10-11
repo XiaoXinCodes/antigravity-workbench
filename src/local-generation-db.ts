@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import { constants, type Stats } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { parseLocalGeneration, type LocalGenerationRecord } from './local-generation-record';
+import { applyGenerationMetadata, parseGenerationStepMetadata, parseGenerationWorkspaceMetadata, parseLocalGeneration, type LocalGenerationRecord } from './local-generation-record';
 
 const LIMIT = 32 * 1024 * 1024;
 const same = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
@@ -79,17 +79,26 @@ export async function readLocalGenerationDb(selected: string, signal: AbortSigna
     const result = await queryGenerationSnapshot(path.join(temp, 'conversation.db'), signal, options);
     if (signal.aborted) throw Error('LOCAL_DB_CANCELLED');
     if (!result || typeof result !== 'object' || !('rows' in result) || !Array.isArray(result.rows) || result.rows.length > 1000) throw Error('LOCAL_DB_UNSUPPORTED');
-    // Filenames are session identifiers, never paths or conversation titles.
-    const name = path.basename(selected, '.db');
-    const session = /^[a-f0-9-]{36}$/i.test(name) ? name : 'session-' + createHash('sha256').update(selected).digest('hex').slice(0, 12);
-    const rows = result.rows.map(row => {
+    // A private database identity prevents equal response IDs or filenames in
+    // different databases from merging. Neither filenames nor paths leave here.
+    const session = 'session-' + createHash('sha256').update(selected).digest('hex');
+    let decodedBytes = 0;
+    const decode = (value: unknown): Buffer => {
+      if (typeof value !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length > 1_400_000) throw Error('LOCAL_DB_UNSUPPORTED');
+      const bytes = Buffer.from(value, 'base64'); decodedBytes += bytes.length;
+      if (bytes.length > 1048576 || decodedBytes > 2097152) throw Error('LOCAL_DB_UNSUPPORTED');
+      return bytes;
+    };
+    const pair = (row: unknown): [number, Buffer] => {
       if (!Array.isArray(row) || row.length !== 2 || !Number.isSafeInteger(row[0]) || row[0] < 0 || typeof row[1] !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(row[1]) || row[1].length > 1_400_000) throw Error('LOCAL_DB_UNSUPPORTED');
-      // Only a trusted caller with independently verified record provenance may
-      // supply this contract. Discovery and the UI never infer or select it from
-      // an installed extension version, file timestamps, or numeric wire shapes.
-      return parseLocalGeneration(session, row[0], Buffer.from(row[1], 'base64'), options.schema ? {schema:options.schema} : undefined);
-    });
-    return { rows, limited: 'limited' in result && result.limited === true };
+      return [row[0], decode(row[1])];
+    };
+    const rows = result.rows.map(row => { const [index, bytes] = pair(row); return parseLocalGeneration(session, index, bytes); });
+    if (!('steps' in result) || !Array.isArray(result.steps) || result.steps.length > 2000 || !('stepsComplete' in result) || typeof result.stepsComplete !== 'boolean') throw Error('LOCAL_DB_UNSUPPORTED');
+    const steps = result.steps.map(row => { const [index, bytes] = pair(row); return parseGenerationStepMetadata(index, bytes); });
+    const workspace = 'workspace' in result && result.workspace !== undefined ? parseGenerationWorkspaceMetadata(decode(result.workspace)) : undefined;
+    const project = 'workspaceInvalid' in result && result.workspaceInvalid === true ? {status:'invalid' as const,values:[],fields:['trajectory_metadata_blob.main']} : workspace;
+    return { rows: applyGenerationMetadata(rows, result.stepsComplete ? steps : [], project), limited: 'limited' in result && result.limited === true };
   } catch (e) { if (e instanceof Error && /^LOCAL_DB_[A-Z_]+$/.test(e.message)) throw e; throw Error(signal.aborted ? 'LOCAL_DB_CANCELLED' : 'LOCAL_DB_UNAVAILABLE'); }
   finally { await Promise.allSettled(source.map(f => f.handle.close())); await fs.rm(temp, { recursive: true, force: true, maxRetries: 3, retryDelay: 30 }); }
 }

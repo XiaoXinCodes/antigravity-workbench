@@ -7,9 +7,17 @@ const vi=value=>{let n=BigInt(value),out=[];do{const b=Number(n&127n);n>>=7n;out
 const num=(field,value)=>Buffer.concat([vi(field<<3),vi(value)]);
 const buf=(field,value)=>{const b=Buffer.isBuffer(value)?value:Buffer.from(value);return Buffer.concat([vi((field<<3)|2),vi(b.length),b])};
 const generation=({models=['synthetic-return-a'],usage={1:3,2:7,3:9,5:20,9:5,10:4},id='synthetic-response-a',label='Synthetic display label'}={})=>buf(1,Buffer.concat([...models.map(model=>buf(19,model)),buf(21,label),buf(4,Buffer.concat([...Object.entries(usage).map(([field,n])=>num(Number(field),n)),...(id?[buf(11,id)]:[])]))]));
+const timestamp=value=>{const seconds=Math.floor(value/1000);return Buffer.concat([num(1,BigInt.asUintN(64,BigInt(seconds))),num(2,(value-seconds*1000)*1000000)])};
+const stepMetadata=({id='synthetic-response-a',createdAt}={})=>Buffer.concat([...(createdAt===undefined?[]:[buf(1,timestamp(createdAt))]),buf(9,buf(11,id))]);
+const workspaceMetadata=uris=>Buffer.concat(uris.map(uri=>buf(1,buf(1,uri))));
 const SCRIPT=`import sys,sqlite3,base64,json
-p,mode,rows,page=sys.argv[1:];c=sqlite3.connect(p);c.execute('PRAGMA page_size='+page);c.execute('PRAGMA journal_mode='+('WAL' if mode=='wal' else 'DELETE'));c.execute('PRAGMA wal_autocheckpoint=0');c.execute('CREATE TABLE gen_metadata(idx INTEGER PRIMARY KEY,data BLOB)');c.execute('CREATE TABLE prompts(text TEXT)');c.execute("INSERT INTO prompts VALUES('SYNTHETIC_PROMPT_MUST_NOT_BE_DECODED')");c.commit()
+p,mode,rows,page,extra=sys.argv[1:];extra=json.loads(extra);c=sqlite3.connect(p);c.execute('PRAGMA page_size='+page);c.execute('PRAGMA journal_mode='+('WAL' if mode=='wal' else 'DELETE'));c.execute('PRAGMA wal_autocheckpoint=0');c.execute('CREATE TABLE gen_metadata(idx INTEGER PRIMARY KEY,data BLOB)');c.execute('CREATE TABLE prompts(text TEXT)');c.execute("INSERT INTO prompts VALUES('SYNTHETIC_PROMPT_MUST_NOT_BE_DECODED')");c.commit()
 for i,b in enumerate(json.loads(rows)):c.execute('INSERT INTO gen_metadata VALUES(?,?)',(i,base64.b64decode(b)))
+if 'steps' in extra:
+ c.execute('CREATE TABLE steps(idx INTEGER PRIMARY KEY,metadata BLOB,payload BLOB)')
+ for i,b in enumerate(extra['steps']):c.execute('INSERT INTO steps VALUES(?,?,?)',(i,base64.b64decode(b),b'SYNTHETIC_STEP_PAYLOAD_MUST_NOT_BE_DECODED'))
+if 'workspace' in extra:
+ c.execute('CREATE TABLE trajectory_metadata_blob(id TEXT PRIMARY KEY,data BLOB)');c.execute('INSERT INTO trajectory_metadata_blob VALUES(?,?)',('main',base64.b64decode(extra['workspace'])))
 c.commit()
 if mode=='journal':c.execute('INSERT INTO gen_metadata VALUES(999,?)',(b'pending',))
 print('ready',flush=True)
@@ -23,9 +31,10 @@ for line in sys.stdin:
  if line.strip()=='restart':c.execute('PRAGMA wal_checkpoint(RESTART)');print('restarted',flush=True)
 c.close()
 `;
-async function database(file,rows=[generation()],mode='wal',pageSize=4096) {
- const [name,prefix]=pythonCommand(),child=spawn(name,[...prefix,'-I','-c',SCRIPT,file,mode,JSON.stringify(rows.map(x=>x.toString('base64'))),String(pageSize)],{env:fixtureEnv(),windowsHide:true,stdio:['pipe','pipe','pipe']});let error='';child.stderr.on('data',b=>error+=b);await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('error',reject);child.once('exit',code=>{if(code)reject(Error(error))})});
+async function database(file,rows=[generation()],mode='wal',pageSize=4096,metadata={}) {
+ const extra={...(metadata.steps?{steps:metadata.steps.map(x=>x.toString('base64'))}:{}),...(metadata.workspace?{workspace:metadata.workspace.toString('base64')}:{})};
+ const [name,prefix]=pythonCommand(),child=spawn(name,[...prefix,'-I','-c',SCRIPT,file,mode,JSON.stringify(rows.map(x=>x.toString('base64'))),String(pageSize),JSON.stringify(extra)],{env:fixtureEnv(),windowsHide:true,stdio:['pipe','pipe','pipe']});let error='';child.stderr.on('data',b=>error+=b);await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('error',reject);child.once('exit',code=>{if(code)reject(Error(error))})});
  const command=name=>new Promise((resolve,reject)=>{child.stdout.once('data',resolve);if(child.exitCode!==null)reject(Error('FIXTURE_CLOSED'));else child.stdin.write(name+'\n')});
  return{add:()=>command('add'),command,close:()=>new Promise(resolve=>{child.once('exit',resolve);child.stdin.end('close\n')})};
 }
-module.exports={vi,num,buf,generation,database,runPython};
+module.exports={vi,num,buf,generation,timestamp,stepMetadata,workspaceMetadata,database,runPython};
