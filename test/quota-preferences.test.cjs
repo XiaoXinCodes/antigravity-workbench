@@ -48,3 +48,7 @@ test('queued preference transform reads an external revision when its shared UI 
  data={'quota.ui.revision.v1':'another-window-new','quota.presentation.v1':{favorites:['external'],imageFavorites:['external-image']},'antigravityAccounts.quotaViewState':{sort:'reset'}};
  hold=false;release();await Promise.all([view,favorite]);assert.deepEqual(prefs.getState().favorites,['external','local']);assert.deepEqual(prefs.getState().imageFavorites,['external-image']);assert.equal(data['antigravityAccounts.quotaViewState'].sort,'reset');
 });
+
+test('a pinned historical reading follows ordinary same-identity recapture, stays stale, and rejects explicit replacement',async()=>{
+ const {quotaObservationFingerprint}=require('../out/quota-observation'),{accountQuotaStale}=require('../out/quota-presentation');const key=quotaEntries(account)[0].key,stable={...account,quotaDisplayId:'11111111-1111-4111-8111-111111111111'},pin={accountId:stable.id,fingerprint:quotaObservationFingerprint(stable),key};const recaptured={...stable,capturedAt:'recaptured',quota:{...stable.quota,historical:true}};assert.equal(pinnedQuota([recaptured],pin).row.bucket.remaining,.5);assert.equal(accountQuotaStale(recaptured),true);assert.equal(pinnedQuota([{...recaptured,quotaDisplayId:'22222222-2222-4222-8222-222222222222'}],pin),undefined);
+});

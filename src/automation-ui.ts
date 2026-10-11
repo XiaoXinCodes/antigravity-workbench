@@ -107,7 +107,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
       if (disposed) return;
       const samples: AlertSample[] = [];
       for (const a of live.getAccounts()) {
-        const snapshot = accountQuotaSnapshot(a); if (!snapshot || a.quota?.phase !== 'ready' || a.quota.accountFingerprint !== accountDisplayFingerprint(a)) continue;
+        const snapshot = accountQuotaSnapshot(a); if (!snapshot || a.quota?.phase !== 'ready' || a.quota.historical || a.quota.accountFingerprint !== accountDisplayFingerprint(a)) continue;
         for (const row of quotaEntries(a)) if (!row.bucket.disabled) samples.push({ accountId: a.id, fingerprint: accountDisplayFingerprint(a), quotaKey: row.key, modelLabel: row.bucket.label, observedAt: snapshot.observedAt, fraction: row.bucket.remaining });
       }
       for (const sample of extra) if (accounts.fingerprint(sample.accountId) === sample.fingerprint) samples.push(sample);

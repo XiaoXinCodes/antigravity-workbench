@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import pathlib
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -194,6 +195,104 @@ class RecoverySafety(unittest.TestCase):
         self.assertEqual(api.call_args.args[:3], ('releases', '--method', 'POST'))
         self.assertIn('/releases/501/assets?name=reviewed.vsix', command.call_args.args[2])
         self.assertEqual(command.call_args.args[3:7], ('--method', 'POST', '--input', 'reviewed.vsix'))
+
+
+cleanup_spec = importlib.util.spec_from_file_location('cleanup', pathlib.Path(__file__).resolve().parents[1] / 'scripts/cleanup-release-branch.py')
+cleanup = importlib.util.module_from_spec(cleanup_spec)
+cleanup_spec.loader.exec_module(cleanup)
+
+
+class ReleaseBranchCleanup(unittest.TestCase):
+    def exercise(self, *, absent=False, moved=False, unmerged=False, wrong_repo=False, unpublished=False,
+                 wrong_tag=False, main_moved=False, unique=False, raced=False, event='push'):
+        sha, head = 'a' * 40, 'b' * 40
+        calls = []
+        deleted = False
+        pr = {'number': 8, 'merged': not unmerged, 'merge_commit_sha': sha, 'base': {'ref': 'main'},
+              'head': {'ref': cleanup.BRANCH, 'sha': head, 'repo': {'id': 0 if wrong_repo else publish.REPO_ID}}}
+        def api(path):
+            if path == '':
+                return {'id': publish.REPO_ID, 'full_name': publish.REPO}
+            if path == 'git/ref/heads/main':
+                return {'object': {'sha': 'c' * 40 if main_moved else sha}}
+            if path == 'releases/tags/' + publish.TAG:
+                return {'draft': unpublished, 'prerelease': False, 'published_at': None if unpublished else '2026-10-11T00:00:00Z'}
+            if path == 'git/ref/tags/' + publish.TAG:
+                return {'object': {'type': 'commit', 'sha': 'd' * 40 if wrong_tag else sha}}
+            if path == 'git/matching-refs/heads/' + cleanup.BRANCH:
+                return [] if absent or deleted else [{'ref': cleanup.REF, 'object': {'type': 'commit', 'sha': 'c' * 40 if moved else head}}]
+            if path == 'commits/' + sha + '/pulls':
+                return [pr]
+            if path == 'pulls/8':
+                return pr
+            raise AssertionError('Unexpected API')
+        def run(*args):
+            nonlocal deleted
+            if args == ('git', 'rev-parse', 'HEAD'):
+                return sha
+            if args == ('git', 'remote', 'get-url', 'origin'):
+                return 'https://github.com/' + publish.REPO
+            if args == ('git', 'merge-base', '--is-ancestor', head, sha):
+                if unique:
+                    raise subprocess.CalledProcessError(1, args)
+                return ''
+            calls.append(args)
+            expected = ('git', '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
+                        'push', '--force-with-lease=' + cleanup.REF + ':' + head, 'origin', ':' + cleanup.REF)
+            assert args == expected, 'Only the leased deletion of this branch is allowed'
+            if raced:
+                raise subprocess.CalledProcessError(1, args)
+            deleted = True
+            return ''
+        env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': publish.REPO, 'GITHUB_REF': 'refs/heads/main',
+               'GITHUB_EVENT_NAME': event, 'GITHUB_SHA': sha}
+        with patch.dict(cleanup.os.environ, env, clear=True), patch.object(cleanup, 'api', side_effect=api), patch.object(cleanup, 'run', side_effect=run):
+            cleanup.main()
+        return calls, deleted
+
+    def test_exact_published_merge_deletes_only_unchanged_branch_with_lease(self):
+        calls, deleted = self.exercise()
+        self.assertTrue(deleted)
+        self.assertEqual(len(calls), 1)
+
+    def test_missing_branch_is_read_only(self):
+        self.assertEqual(self.exercise(absent=True), ([], False))
+
+    def test_missing_branch_does_not_block_later_nonrelease_main_changes(self):
+        self.assertEqual(self.exercise(absent=True, unpublished=True, wrong_tag=True), ([], False))
+
+    def test_moved_branch_is_refused(self):
+        with self.assertRaisesRegex(AssertionError, 'head moved'):
+            self.exercise(moved=True)
+
+    def test_unmerged_pr_is_refused(self):
+        with self.assertRaisesRegex(AssertionError, 'not merged'):
+            self.exercise(unmerged=True)
+
+    def test_other_repository_branch_is_refused(self):
+        with self.assertRaisesRegex(AssertionError, 'merged PR'):
+            self.exercise(wrong_repo=True)
+
+    def test_unpublished_release_or_wrong_tag_is_refused(self):
+        for option in ['unpublished', 'wrong_tag']:
+            with self.assertRaises(AssertionError):
+                self.exercise(**{option: True})
+
+    def test_moved_main_is_refused(self):
+        with self.assertRaisesRegex(AssertionError, 'main moved'):
+            self.exercise(main_moved=True)
+
+    def test_unique_branch_commits_are_refused(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.exercise(unique=True)
+
+    def test_concurrent_update_is_refused_by_atomic_lease(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.exercise(raced=True)
+
+    def test_pr_workflow_cannot_cleanup(self):
+        with self.assertRaises(AssertionError):
+            self.exercise(event='pull_request')
 
 
 if __name__ == '__main__':

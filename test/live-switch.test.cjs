@@ -662,3 +662,10 @@ test('saved local usability rejects expired nonrefreshable or inconsistent crede
  record.slots.file=JSON.stringify({...JSON.parse(expired),auth_method:'consumer'});x.data.set(key,JSON.stringify(record));assert.equal(await x.service.savedLoginUsable(a),true);
  record.slots.file=JSON.stringify({...JSON.parse(expired),token:{...JSON.parse(expired).token,token_type:'Basic'}});x.data.set(key,JSON.stringify(record));assert.equal(await x.service.savedLoginUsable(a),false);
 });
+
+test('display identity persists across verified same-principal captures, but known subject change and repaired credentials reset it',async()=>{
+ const token=(subject,revision)=>JSON.stringify({token:{access_token:'synthetic-access-'+revision,refresh_token:'synthetic-refresh-'+revision,token_type:'Bearer'},id_token:'e30.'+Buffer.from(JSON.stringify({email:'a@example.test',sub:subject})).toString('base64url')+'.synthetic'});
+ const raw=token('subject-a','first'),x=setup({keyring:raw,file:raw},'host');let rows=[];const index={read:()=>rows,write:async next=>rows=next},metadata={label:'A',expectedEmail:'a@example.test',identitySource:'hub'},verify=async()=>{};
+ const first=(await x.service.captureCurrent(metadata,index,verify)).account;const next=token('subject-a','second');x.set({keyring:next,file:next});const same=(await x.service.captureCurrent(metadata,index,verify,true,undefined,true)).account;assert.equal(same.id,first.id);assert.equal(same.quotaDisplayId,first.quotaDisplayId);
+ const changed=token('subject-b','third');x.set({keyring:changed,file:changed});const different=(await x.service.captureCurrent(metadata,index,verify,true,undefined,true)).account;assert.equal(different.id,first.id);assert.notEqual(different.quotaDisplayId,first.quotaDisplayId);const prior=different.quotaDisplayId;x.data.delete(ACCOUNT_PREFIX+first.id);const repaired=(await x.service.captureCurrent(metadata,index,verify)).account;assert.notEqual(repaired.quotaDisplayId,prior);assert.equal(x.writes(),0);
+});

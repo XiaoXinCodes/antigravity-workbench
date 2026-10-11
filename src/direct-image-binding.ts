@@ -11,7 +11,7 @@ const object = (x: unknown): x is RecordValue => !!x && typeof x === 'object' &&
 const EMAIL = /^[^\s@\x00-\x1f<>]+@[^\s@\x00-\x1f<>]+$/;
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/;
 const ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-export interface AccountChoice { id: string; label: string; expectedEmail: string; active: boolean; hostCurrent: boolean; migrationState?: string; hostId?: string; capturedAt?: string }
+export interface AccountChoice { id: string; label: string; expectedEmail: string; active: boolean; hostCurrent: boolean; migrationState?: string; hostId?: string; capturedAt?: string; quotaDisplayId?: string; verifiedSubject?: string }
 export interface ImageModelChoice { id: string; label: string; modelEnum?: string }
 export interface VaultReader { get(key: string): PromiseLike<string | undefined> }
 // Unforgeable in-process membership proof. The binding also rechecks the current

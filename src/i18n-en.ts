@@ -111,7 +111,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "directImageView.70cb67c0c4": "Quota unknown",
   "directImageView.50de7101cd": " · stale value",
   "directImageView.bf4cedf76a": "Query failed",
-  "directImageView.31043c91da": "Previous result · expired",
+  "directImageView.31043c91da": "Last query result · data may have changed",
   "directImageView.434203a723": "Updated",
   "directImageView.bce2a872e0": "Resets ",
   "directImageView.ecce09463f": "Not provided by the server",

@@ -19,7 +19,7 @@ export function accountQuotaSnapshot(account: LiveAccountView): LiveQuotaSnapsho
 }
 export function accountQuotaStale(account: LiveAccountView, now = Date.now()): boolean {
   const snapshot = accountQuotaSnapshot(account);
-  return !!snapshot && (account.quota?.phase !== 'ready' || quotaIsStale(snapshot.observedAt, now));
+  return !!snapshot && (account.quota?.phase !== 'ready' || account.quota.historical === true || quotaIsStale(snapshot.observedAt, now));
 }
 /** Missing choices are authoritative only after a successful, identity-bound,
  * fresh server catalog. Loading, errors and absent caches cannot prove deletion. */

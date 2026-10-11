@@ -4,6 +4,18 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.11](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.11) — 2026-10-11
+
+Keep successful quota readings available and clearly distinguish older data from a fresh query.
+
+- Retain the last successful result and its query time when data expires or a later refresh fails, with a notice that values may have changed.
+- Preserve matching quota readings through identity checks, routine credential updates and unrelated account state changes.
+- Restore the last successful result for the same account, model and endpoint after reopening the image page or reloading the window.
+- Keep quota history and pinned selections through routine updates for the same identity; deleted or explicitly replaced accounts do not inherit old readings.
+- Improve concurrent debug-log reading and rotation across Windows windows.
+
+[Release notes](docs/RELEASE_0.1.11.md) · [Validation scope](docs/VALIDATION_0.1.11.md)
+
 ## [0.1.10](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.10) — 2026-10-10
 
 Adopt the MIT open-source license and refresh the guides for current features.

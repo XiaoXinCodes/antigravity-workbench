@@ -1,5 +1,6 @@
 /* eslint-disable no-control-regex -- Reject control characters in recovered identity metadata. */
 import { t as tr } from './i18n';
+import { validQuotaDisplayId } from './quota-observation';
 import { createHash, randomUUID } from 'node:crypto';
 import { LiveError, equalSlots, validateSlots, validateStoredToken, assertSlotIdentity, validateSlotScope, tokenAccountHint, type Slots, type TokenSlots } from './live-storage';
 import { portableToken, validateMigrationAccounts, type MigrationAccount } from './account-migration';
@@ -12,7 +13,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 export interface SecretVault { get(key: string): Thenable<string | undefined> | Promise<string | undefined>; store(key: string, value: string): Thenable<void> | Promise<void>; delete(key: string): Thenable<void> | Promise<void>; onDidChange?(listener: (event: { key: string }) => void): { dispose(): void } }
-export interface SavedLogin { id: string; label: string; expectedEmail: string; capturedAt: string; identitySource: 'hub' | 'user'; hostId?: string; migrationState?: 'pending' | 'verified'; verifiedSubject?: string }
+export interface SavedLogin { id: string; label: string; expectedEmail: string; capturedAt: string; identitySource: 'hub' | 'user'; hostId?: string; migrationState?: 'pending' | 'verified'; verifiedSubject?: string; quotaDisplayId?: string }
 export interface LiveAccount extends SavedLogin { slots: TokenSlots }
 export interface VerificationState { state: 'pending' | 'retry' | 'verified'; attempts: number; checkedAt?: string; code?: string }
 export interface Journal { schema: 1; id: string; revision?: number; writeId?: string; phase: 'authorizing' | 'prepared' | 'installed' | 'restored'; operation?: 'login'; backup: TokenSlots; loginCurrent?: TokenSlots; target: SavedLogin; oldGeneration: string; hostId?: string; loginMode?: 'save-only'; original?: { email: string | null }; restoreGeneration?: string; verification?: VerificationState }
@@ -43,7 +44,7 @@ const VERIFICATION_ERRORS = new Set([
   'SECURE_SAVE_NOT_VERIFIED', 'MIGRATION_INDEX_CHANGED', 'RECOVERY_DELETE_FAILED', 'RECOVERY_CHANGED',
 ]);
 
-type CaptureMetadata = Omit<SavedLogin, 'id' | 'capturedAt' | 'hostId' | 'migrationState'>;
+type CaptureMetadata = Omit<SavedLogin, 'id' | 'capturedAt' | 'hostId' | 'migrationState' | 'quotaDisplayId'>;
 /** Both slots use the target host's existing native adapters, never source keyring encodings. */
 export function migrationTargetSlots(token: string, platform: NodeJS.Platform = process.platform): TokenSlots {
   const bytes = Buffer.byteLength(token);
@@ -223,7 +224,7 @@ export class LiveSwitchService {
         await assertCurrent();
         if (!quota.proof.authValid || quota.proof.quotaSource !== 'server' || quota.proof.email.toLowerCase() !== entry.expectedEmail || !/^[a-zA-Z0-9_-]{1,255}$/.test(quota.subject) || expectedSubject && quota.subject !== expectedSubject) throw new LiveError('ACCOUNT_QUOTA_IDENTITY_MISMATCH');
         const current = await candidate.account();
-        const account: LiveAccount = { ...current, id: target ?? current.id, label: entry.label, capturedAt: entry.capturedAt, identitySource: 'user', migrationState: 'verified', verifiedSubject: quota.subject };
+        const account: LiveAccount = { ...current, id: target ?? current.id, label: entry.label, capturedAt: entry.capturedAt, identitySource: 'user', migrationState: 'verified', verifiedSubject: quota.subject, quotaDisplayId: randomUUID() };
         results.push({ account, quota, store: candidate });
       }
       await assertCurrent();
@@ -296,7 +297,18 @@ export class LiveSwitchService {
       await assertCapture();
       if (JSON.stringify(index.read()) !== beforeIndex || await this.vault.get(key) !== before) throw new LiveError('MIGRATION_INDEX_CHANGED');
       if (previous && before !== undefined && equalSlots((JSON.parse(before) as LiveAccount).slots, value)) return { account: previous, saved: true };
-      const account: LiveAccount = { ...metadata, label: previous?.label ?? metadata.label, ...this.hostBinding(), id, capturedAt: new Date().toISOString(), slots: value };
+      // An explicitly replaced record gets a new display identity; ordinary
+      // same-identity capture keeps its observation origin, never its request revision.
+      const subjects = [value.keyring, value.file].filter((raw): raw is string => raw !== null).map(raw => tokenAccountHint(raw).subject);
+      let priorSubject = previous?.verifiedSubject, priorReadable = false;
+      try {
+        if (before) { const old = JSON.parse(before) as LiveAccount; validateSlots(old.slots); priorSubject ??= tokenAccountHint(old.slots.keyring ?? old.slots.file!).subject; priorReadable = true; }
+      } catch { /* A repaired/missing credential record gets a new display identity. */ }
+      const sameIdentity = !!previous && priorReadable && (!priorSubject || subjects.every(subject => subject === priorSubject));
+      const account: LiveAccount = { ...metadata, label: previous?.label ?? metadata.label, ...this.hostBinding(), id, capturedAt: new Date().toISOString(), slots: value,
+        quotaDisplayId: previous && sameIdentity ? (validQuotaDisplayId(previous.quotaDisplayId) ? previous.quotaDisplayId : validQuotaDisplayId(previous.capturedAt) ? previous.capturedAt : randomUUID()) : randomUUID(),
+        ...(sameIdentity && previous?.verifiedSubject ? { verifiedSubject: previous.verifiedSubject } : {}),
+        ...(sameIdentity && previous?.migrationState ? { migrationState: previous.migrationState } : {}) };
       const { slots: _slots, ...summary } = account; void _slots;
       const after = JSON.stringify(account);
       try {
@@ -324,7 +336,7 @@ export class LiveSwitchService {
     // incompatible journal verbatim rather than importing or replacing it.
     await this.journal();
     const { label, expectedEmail, identitySource } = metadata;
-    const account: LiveAccount = { label, expectedEmail, identitySource, ...this.hostBinding(), id, capturedAt: new Date().toISOString(), slots: value };
+    const account: LiveAccount = { label, expectedEmail, identitySource, ...this.hostBinding(), id, capturedAt: new Date().toISOString(), quotaDisplayId: randomUUID(), slots: value };
     const key = ACCOUNT_PREFIX + account.id, raw = JSON.stringify(account);
     await assertCurrent?.();
     await this.vault.store(key, raw);
@@ -501,7 +513,7 @@ export class LiveSwitchService {
     let account: LiveAccount;
     try {
       account = JSON.parse(raw) as LiveAccount;
-      if (account.id !== id || !account.expectedEmail || !account.slots || account.hostId !== undefined && !validHostId(account.hostId) || account.migrationState !== undefined && !['pending', 'verified'].includes(account.migrationState) || account.verifiedSubject !== undefined && !/^[a-zA-Z0-9_-]{1,255}$/.test(account.verifiedSubject)) throw 0;
+      if (account.id !== id || !account.expectedEmail || !account.slots || account.hostId !== undefined && !validHostId(account.hostId) || account.migrationState !== undefined && !['pending', 'verified'].includes(account.migrationState) || account.verifiedSubject !== undefined && !/^[a-zA-Z0-9_-]{1,255}$/.test(account.verifiedSubject) || account.quotaDisplayId !== undefined && !validQuotaDisplayId(account.quotaDisplayId)) throw 0;
     } catch { throw new LiveError('SECURE_LOGIN_INVALID'); }
     this.assertHost(account, 'ACCOUNT');
     try { validateSlots(account.slots); } catch { throw new LiveError('SECURE_LOGIN_INVALID'); }

@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
-import { accountDisplayFingerprint, quotaEntries } from './quota-presentation';
+import { quotaEntries } from './quota-presentation';
+import { quotaObservationFingerprint, quotaObservationMatches } from './quota-observation';
 import { writeQuotaPreferences } from './quota-ui-storage';
 import type { LiveAccountView } from './live-ui';
 
@@ -26,12 +27,12 @@ export class QuotaPreferences {
   pin(account?: LiveAccountView, key?: string): Promise<void> {
     return this.write(current => {
       const rest = { ...current }; delete rest.pin;
-      return account && key ? { ...rest, pin: { accountId: account.id, fingerprint: accountDisplayFingerprint(account), key } } : rest;
+      return account && key ? { ...rest, pin: { accountId: account.id, fingerprint: quotaObservationFingerprint(account), key } } : rest;
     });
   }
 }
 export function pinnedQuota(accounts: LiveAccountView[], pin?: QuotaPin) {
-  const account = pin && accounts.find(item => item.id === pin.accountId && item.hostCurrent !== false && accountDisplayFingerprint(item) === pin.fingerprint);
+  const account = pin && accounts.find(item => item.id === pin.accountId && item.hostCurrent !== false && quotaObservationMatches(item, pin.fingerprint));
   const row = account && quotaEntries(account).find(item => item.key === pin!.key);
   return account && row ? { account, row } : undefined;
 }

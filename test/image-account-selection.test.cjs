@@ -11,7 +11,7 @@ async function fixture(t,options={}){
  run:async(request,signal,progress,id)=>{runs.push({request,signal,progress,id});return new Promise((resolve,reject)=>{finish=value=>value instanceof Error?reject(value):resolve(value??{images:[],batch:{outcome:'complete'}})})}};
  const vscode={ViewColumn:{Active:1},env:{},workspace:{workspaceFolders:[{uri:{scheme:'file',authority:'',fsPath:output}}]},commands:{registerCommand:(id,fn)=>{commands.set(id,fn);return{dispose(){}}}},window:{showWarningMessage:(message,...args)=>{prompts.push({message,args});return new Promise(r=>decide=r)},createWebviewPanel:()=>{panel={webview:{postMessage:async s=>states.push(structuredClone(s)),onDidReceiveMessage:fn=>{panel.receive=fn;return{dispose(){}}}},onDidDispose:fn=>{panel.close=fn;return{dispose(){}}},reveal(){}};return panel}}};
  const old=Module._load,entry=require.resolve('../out/direct-image-ui');Module._load=function(name,...args){return name==='vscode'?vscode:old.call(this,name,...args)};
- let ui;try{delete require.cache[entry];ui=require(entry).registerDirectImageUi({subscriptions,globalState:{get:()=>undefined,update:async()=>{}}},direct,undefined,require('./helpers/image-session.cjs').memorySession(options.restore?{value:{schema:3,draft:{prompt:'restored',accountId:B,modelId:mb,ratio:'1:1',count:1,size:'auto',quality:'auto',followCurrent:false},outputDirectory:output,references:[],tasks:[],savedDrafts:[]}}:{}))}finally{Module._load=old;delete require.cache[entry]}
+ let ui;try{delete require.cache[entry];ui=require(entry).registerDirectImageUi({subscriptions,globalState:{get:()=>undefined,update:async()=>{}},...(options.storage?{globalStorageUri:{fsPath:options.storage}}:{})},direct,undefined,require('./helpers/image-session.cjs').memorySession(options.restore?{value:{schema:3,draft:{prompt:'restored',accountId:B,modelId:mb,ratio:'1:1',count:1,size:'auto',quality:'auto',followCurrent:false},outputDirectory:output,references:[],tasks:[],savedDrafts:[]}}:{}))}finally{Module._load=old;delete require.cache[entry]}
  await commands.get('antigravityAccounts.images.open')();
  const send=async value=>{panel.receive(value);await tick();await tick()};
  const form={prompt:'synthetic draft preserved',accountId:A,modelId:ma,ratio:'16:9',count:3,size:'4K',quality:'detail'};
@@ -241,11 +241,11 @@ test('a manual quota click coalesces with the one automatic query after successf
  resolve();await tick();await tick();assert.equal(f.latest().imageQuota.snapshot.remainingFraction,.8);f.close();
 });
 test('a quota request from before generation cannot replace the fresh post-generation response',async t=>{
- const f=await fixture(t);let old;f.quotaLoad((id,modelId)=>new Promise(r=>old=()=>r({accountId:id,modelId,endpoint:'daily',remainingFraction:1,resetAt:null,queriedAt:'2026-10-07T10:29:00Z'})));
+ const f=await fixture(t);let old;f.quotaLoad((id,modelId)=>new Promise(r=>old=()=>r({accountId:id,modelId,endpoint:'daily',remainingFraction:1,resetAt:null,queriedAt:'2026-10-07T10:40:00Z'})));
  await f.send({type:'queryQuota'});await f.send({type:'generate',...f.form});assert.equal(f.quotaReads[0].signal.aborted,true);await f.decide('确认生成');
  f.quotaLoad(async(id,modelId)=>({accountId:id,modelId,endpoint:'daily',remainingFraction:.7,resetAt:null,queriedAt:'2026-10-07T10:30:07Z'}));
  await f.finish({images:[{file:'/synthetic/result.png',width:1,height:1}],batch:{outcome:'complete'}});old();await tick();await tick();
- assert.equal(f.quotaReads.length,2);assert.equal(f.latest().imageQuota.snapshot.remainingFraction,.7);assert.equal(f.latest().imageQuota.stale,false);f.close();
+ assert.equal(f.quotaReads.length,2);assert.equal(f.latest().imageQuota.snapshot.remainingFraction,.7);assert.equal(f.latest().imageQuota.stale,false);await f.ui.flush();f.close();await f.open();assert.equal(f.latest().imageQuota.snapshot.remainingFraction,.7);assert.equal(f.latest().imageQuota.stale,true);f.close();
 });
 
 
@@ -281,4 +281,20 @@ test('permanent or unclassified saved model failures do not enter startup recove
   assert.equal(f.latest().accountRetryPending,false);t.mock.timers.tick(60000);await tick();assert.equal(f.reads.length,reads);assert.equal(f.latest().accountBlocked,true);
  }
  f.close();
+});
+
+test('selected B quota survives unrelated official identity changes, metadata repaint, expiry and failed refresh',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const f=await fixture(t);t.after(f.dispose);await f.send({type:'selectAccount',selection:B,...f.form});await f.send({type:'queryQuota'});const observed=f.latest().imageQuota.snapshot.queriedAt;
+ for(const state of [{pending:true,email:'',accountIds:[A,B]},{pending:false,email:'other@example.test',accountIds:[A,B]}]){f.ui.accountStateChanged(state);await tick();assert.equal(f.latest().imageQuota.snapshot.queriedAt,observed);assert.equal(f.latest().draft.accountId,B)}
+ f.accounts[0].capturedAt='2026-10-11T11:00:00Z';f.ui.accountStateChanged({pending:false,email:'other@example.test',accountIds:[A,B]});assert.equal(f.latest().imageQuota.snapshot.remainingFraction,.3);assert.equal(f.quotaReads.length,1);
+ t.mock.timers.tick(61_000);await tick();await f.send({type:'ready'});assert.equal(f.latest().imageQuota.stale,true);f.quotaLoad(async()=>{throw Error('IMAGE_SAVED_MODELS_FORBIDDEN')});await f.send({type:'queryQuota'});assert.equal(f.latest().imageQuota.snapshot.queriedAt,observed);assert.ok(f.latest().imageQuota.error);assert.equal(f.runs.length,0);
+});
+test('image close/reopen and a reconstructed controller restore only historical exact account/model/endpoint readings',async t=>{
+ const root=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'ag-selection-cache-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const f=await fixture(t,{storage:root});t.after(f.dispose);await f.send({type:'selectAccount',selection:B,...f.form});await f.send({type:'queryQuota'});await f.ui.flush();f.close();await f.open();assert.equal(f.latest().imageQuota.snapshot.accountId,B);assert.equal(f.latest().imageQuota.stale,true);assert.equal(f.quotaReads.length,1);f.dispose();
+ const other=await fixture(t,{storage:root,restore:true});t.after(other.dispose);assert.equal(other.latest().imageQuota.snapshot.accountId,B);assert.equal(other.latest().imageQuota.stale,true);assert.equal(other.quotaReads.length,0);assert.equal(other.latest().draft.followCurrent,false);assert.equal(other.selections.size,1);
+ other.setEndpoint('production');await other.send({type:'ready'});assert.equal(other.latest().imageQuota.snapshot,undefined);assert.equal(other.runs.length,0);
+});
+test('same-ID replacement with identical capture time clears image quota and rejects its delayed completion',async t=>{
+ const f=await fixture(t);t.after(f.dispose);f.accounts[1].quotaDisplayId=B;await f.send({type:'selectAccount',selection:B,...f.form});await f.send({type:'queryQuota'});let reply;f.quotaLoad((id,modelId)=>new Promise(r=>reply=()=>r({accountId:id,modelId,endpoint:'daily',queriedAt:new Date().toISOString(),remainingFraction:.9,resetAt:null})));await f.send({type:'queryQuota'});
+ f.accounts[1].quotaDisplayId=A;f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A,B]});assert.equal(f.latest().imageQuota.snapshot,undefined);reply();await tick();await tick();assert.equal(f.latest().imageQuota.snapshot,undefined);assert.equal(f.runs.length,0);
 });

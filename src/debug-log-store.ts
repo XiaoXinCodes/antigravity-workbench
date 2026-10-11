@@ -195,6 +195,15 @@ export class DebugLogStore {
     if (this.uid !== undefined && (stat.uid !== this.uid || (stat.mode & 0o077) !== 0)) throw unavailable('DEBUG_STORAGE_NOT_PRIVATE');
   }
 
+  private async retryWindowsSharing(error: unknown, attempt: number): Promise<boolean> {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (process.platform !== 'win32' || this.disposed || attempt >= 5 || !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '')) return false;
+    // Windows can report a sharing/delete-pending conflict as permission denied.
+    // Retry the complete guarded lookup, never treat persistent denial as absence.
+    await new Promise(resolve => setTimeout(resolve, 20 * 2 ** attempt));
+    return true;
+  }
+
   private async checkDirectory(create: boolean, shouldWrite?: () => boolean): Promise<boolean> {
     const root = path.parse(this.directory).root;
     const segments = this.directory.slice(root.length).split(path.sep).filter(Boolean);
@@ -243,10 +252,11 @@ export class DebugLogStore {
     if (sameFile(stat, file.stat) && stat.nlink === 0) { return undefined; }
     this.validateFile(stat);
     if (!sameFile(stat, file.stat)) { throw unavailable('DEBUG_STORAGE_CHANGED'); }
-    await this.checkDirectory(false);
     let current: Stats;
-    try { current = await fs.lstat(path.join(this.directory, file.name)); }
-    catch (error) { if (missing(error)) { return undefined; } throw error; }
+    for (let attempt = 0; ; attempt++) {
+      try { await this.checkDirectory(false); current = await fs.lstat(path.join(this.directory, file.name)); break; }
+      catch (error) { if (missing(error)) return undefined; if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
+    }
     if (sameFile(current, stat) && removedFile(current)) return undefined;
     this.validateFile(current);
     if (!sameFile(current, stat)) { throw unavailable('DEBUG_STORAGE_CHANGED'); }
@@ -254,7 +264,7 @@ export class DebugLogStore {
   }
 
   private async writeRecord(record: Buffer, shouldWrite: () => boolean): Promise<void> {
-    for (let attempt = 0; attempt < 3 && this.allowed(shouldWrite); attempt += 1) {
+    for (let attempt = 0; attempt < (process.platform === 'win32' ? 6 : 3) && this.allowed(shouldWrite); attempt += 1) {
       if (!await this.checkDirectory(false, shouldWrite)) { return; }
       let file = this.currentFile;
       let handle: FileHandle | undefined;
@@ -262,7 +272,7 @@ export class DebugLogStore {
         if (file) {
           let stat: Stats;
           try { stat = await fs.lstat(path.join(this.directory, file.name)); }
-          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } throw error; }
+          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
           if (sameFile(stat, file.stat) && removedFile(stat)) { this.currentFile = undefined; continue; }
           this.validateFile(stat);
           if (!sameFile(stat, file.stat)) { throw unavailable('DEBUG_STORAGE_CHANGED'); }
@@ -280,7 +290,7 @@ export class DebugLogStore {
           file = { name, stat: await handle.stat() };
         } else {
           try { handle = await fs.open(path.join(this.directory, file.name), constants.O_WRONLY | constants.O_APPEND | NOFOLLOW | NONBLOCK); }
-          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } throw error; }
+          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
         }
         const stat = await this.verifyHandle(file, handle);
         if (!stat) { this.currentFile = undefined; continue; }
@@ -305,12 +315,15 @@ export class DebugLogStore {
     for await (const entry of directory) {
       if (++count > SCAN_LIMIT) { throw unavailable('DEBUG_STORAGE_LIMIT'); }
       if (!FILE_NAME.test(entry.name)) { continue; }
-      let stat: Stats;
-      try { stat = await fs.lstat(path.join(this.directory, entry.name)); }
-      catch (error) { if (missing(error)) { continue; } throw error; }
-      if (removedFile(stat)) continue;
-      this.validateFile(stat);
-      result.push({ name: entry.name, stat });
+      for (let attempt = 0; ; attempt++) {
+        try {
+          if (attempt > 0) await this.checkDirectory(false);
+          const stat = await fs.lstat(path.join(this.directory, entry.name));
+          if (removedFile(stat)) break;
+          this.validateFile(stat);
+          result.push({ name: entry.name, stat }); break;
+        } catch (error) { if (missing(error)) break; if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
+      }
     }
     await this.checkDirectory(false);
     return result.sort((left, right) => left.name.localeCompare(right.name));
@@ -320,25 +333,27 @@ export class DebugLogStore {
     if (!this.allowed(shouldWrite)) { return; }
     const files = await this.scan();
     for (const file of files.slice(0, Math.max(0, files.length - this.maxFiles + reserve))) {
-      if (!await this.checkDirectory(false, shouldWrite)) { return; }
-      let current: Stats;
-      try { current = await fs.lstat(path.join(this.directory, file.name)); }
-      catch (error) { if (missing(error)) { continue; } throw error; }
-      if (sameFile(current, file.stat) && removedFile(current)) continue;
-      this.validateFile(current);
-      if (!sameFile(current, file.stat)) { throw unavailable('DEBUG_STORAGE_CHANGED'); }
-      if (!this.allowed(shouldWrite)) { return; }
-      try { await fs.unlink(path.join(this.directory, file.name)); }
-      catch (error) { if (!missing(error)) { throw error; } }
+      for (let attempt = 0; ; attempt++) {
+        try {
+          if (!this.allowed(shouldWrite) || !await this.checkDirectory(false, shouldWrite)) return;
+          const current = await fs.lstat(path.join(this.directory, file.name));
+          if (sameFile(current, file.stat) && removedFile(current)) break;
+          this.validateFile(current);
+          if (!sameFile(current, file.stat)) throw unavailable('DEBUG_STORAGE_CHANGED');
+          if (!this.allowed(shouldWrite)) return;
+          await fs.unlink(path.join(this.directory, file.name)); break;
+        } catch (error) { if (missing(error)) break; if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
+      }
       if (this.currentFile?.name === file.name) { this.currentFile = undefined; }
     }
   }
 
   private async readFile(file: LogFile): Promise<string> {
-    await this.checkDirectory(false);
     let handle: FileHandle;
-    try { handle = await fs.open(path.join(this.directory, file.name), constants.O_RDONLY | NOFOLLOW | NONBLOCK); }
-    catch (error) { if (missing(error)) { return ''; } throw error; }
+    for (let attempt = 0; ; attempt++) {
+      try { await this.checkDirectory(false); handle = await fs.open(path.join(this.directory, file.name), constants.O_RDONLY | NOFOLLOW | NONBLOCK); break; }
+      catch (error) { if (missing(error)) return ''; if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
+    }
     try {
       const stat = await this.verifyHandle(file, handle);
       if (!stat || this.disposed) { return ''; }
