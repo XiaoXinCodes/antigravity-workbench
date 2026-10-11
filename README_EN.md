@@ -120,7 +120,7 @@ Command Palette entries, view titles and setting descriptions follow VS Code's d
 
 ### Model catalogs and upgrades
 
-New models appear when the selected account and endpoint catalog refreshes, without a plugin model-list update. Explicit image members cannot receive scheduled text requests. Unknown roles require explicit confirmation; names, image-input support and subscription labels are not role evidence. The picker shows the source and query time. Failed lookups retain the previous display and selection, while sending requires a fresh catalog check. Missing quota remains unknown.
+New models appear when the selected account and endpoint catalog refreshes, without a plugin model-list update. The image picker includes only available members of the explicit server image list. Image members cannot receive scheduled text requests. Unknown conversation roles require explicit confirmation; names, image-input support and subscription labels are not role evidence. The picker shows the source and query time. Failed lookups retain the previous display and selection, while sending requires a fresh catalog check. Missing quota remains unknown.
 
 Upgrades retain accounts, image history, favorites, drafts and scheduled model IDs without switching to the first choice. Existing scheduled tasks continue when the server identifies their conversation role. If their role remains unknown, edit the task and confirm ordinary text use. Confirmation is scoped to that task’s account, endpoint and model; it cannot override an image classification or disabled status. See [the audit and data limits](docs/MODEL_CATALOG_REFACTOR.md) (Chinese).
 
@@ -129,7 +129,7 @@ Upgrades retain accounts, image history, favorites, drafts and scheduled model I
 | Question | Answer |
 | --- | --- |
 | Why is Saved disabled? | The verified current identity already has a usable local copy, so it does not need saving again. This does not guarantee server authorization. |
-| Why is a model missing or unclassified? | Choices use the selected account and endpoint catalog, preserving original IDs and server names. Absence does not prove lack of permission. Unknown roles require explicit confirmation; disabled entries cannot be sent. See [catalog evidence and migration](docs/MODEL_CATALOG_REFACTOR.md) (Chinese). |
+| Why is a model missing or unclassified? | Choices use the selected account and endpoint catalog, preserving original IDs and server names. Absence does not prove lack of permission. Unknown conversation roles require explicit confirmation; image choices require explicit server image membership, and disabled entries cannot be sent. See [catalog evidence and migration](docs/MODEL_CATALOG_REFACTOR.md) (Chinese). |
 | Can quota percentages be converted into image counts? | No. They represent the selected model's server-reported remaining fraction; stale readings are marked. Request counts do not guarantee output counts either. |
 | Does selecting another image account switch the official login? | No. Independent selection affects the image task only; confirmation fixes the selected account and model. |
 | What if switching is unavailable or WSL cannot find my accounts? | Check both extensions' hosts and any pending recovery operation, then follow the recovery prompt. Storage is separate per host. See [troubleshooting](docs/TROUBLESHOOTING.md) (Chinese). |

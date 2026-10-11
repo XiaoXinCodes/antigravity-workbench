@@ -120,7 +120,7 @@ test('revoked authorization stops at reauthentication guidance without a new gra
 
 test('saved catalog binds new IDs unchanged and refuses a nonmember after endpoint recheck',async()=>{
  const f=fixture(),id='gemini-nano-banana-2.1';f.engine.selectForWindow(B);f.deps.models=async()=>({imageGenerationModelIds:[id],models:{[id]:{},'text-only':{}}});
- const bound=await f.engine.bind(B,id,f.signal,'daily');assert.equal(bound.modelId,id);assert.equal(bound.accountId,B);await assert.rejects(f.engine.bind(B,'text-only',f.signal,'daily'),/MODEL_USAGE_REQUIRED/);
+ const bound=await f.engine.bind(B,id,f.signal,'daily');assert.equal(bound.modelId,id);assert.equal(bound.accountId,B);await assert.rejects(f.engine.bind(B,'text-only',f.signal,'daily'),/MODEL_UNVERIFIED/);
  f.deps.models=async()=>({imageGenerationModelIds:[mb],models:{[mb]:{}}});await assert.rejects(f.engine.bind(B,id,f.signal,'production'),/MODEL_UNVERIFIED/);
 });
 test('diagnostic bypasses cache without changing explicit selections or caching disabled/empty catalogs',async()=>{
@@ -163,11 +163,13 @@ test('explicit quota observation does not select an image account; refresh guard
 });
 
 
-test('unknown image role requires explicit confirmation; server disable cannot be overridden',async()=>{
- const f=fixture(),id='opaque-new-visual';f.engine.selectForWindow(B);f.deps.models=async()=>({models:{[id]:{displayName:'Raw server label',supportsImages:false}}});
- const directory=await f.engine.directory(B,f.signal,'daily',true);assert.equal(directory.source,'fetchAvailableModels');assert.equal(directory.queriedAt,new Date(NOW).toISOString());assert.equal(directory.models[0].classification,'unclassified');
- await assert.rejects(f.engine.bind(B,id,f.signal,'daily'),/MODEL_USAGE_REQUIRED/);
- const bound=await f.engine.bind(B,id,f.signal,'daily',false,true);assert.equal(bound.modelId,id);assert.equal(bound.imageInput,false);
+test('only explicit image members bind; user confirmation cannot override missing membership or disabled',async()=>{
+ const f=fixture(),id='opaque-new-visual';f.engine.selectForWindow(B);f.deps.models=async()=>({models:{[id]:{displayName:'Raw server label',supportsImages:true}}});
+ await assert.rejects(f.engine.directory(B,f.signal,'daily',true),/IMAGE_CATALOG_LIST_MISSING/);
+ await assert.rejects(f.engine.bind(B,id,f.signal,'daily',false,true),/IMAGE_CATALOG_LIST_MISSING/);
+ f.deps.models=async()=>({models:{[id]:{displayName:'Raw server label',supportsImages:false}},imageGenerationModelIds:[id]});
+ const directory=await f.engine.directory(B,f.signal,'daily',true);assert.equal(directory.source,'fetchAvailableModels');assert.equal(directory.queriedAt,new Date(NOW).toISOString());assert.equal(directory.models[0].classification,undefined);
+ const bound=await f.engine.bind(B,id,f.signal,'daily');assert.equal(bound.modelId,id);assert.equal(bound.imageInput,false);
  f.deps.models=async()=>({models:{[id]:{disabled:true}},imageGenerationModelIds:[id]});assert.deepEqual(await f.engine.choices(B,f.signal,'daily',true),[]);
  await assert.rejects(f.engine.bind(B,id,f.signal,'daily',false,true),/MODEL_UNVERIFIED/);
 });

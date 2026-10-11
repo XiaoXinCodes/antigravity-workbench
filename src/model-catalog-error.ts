@@ -8,6 +8,9 @@ export interface CatalogFailure { catalogStage: CatalogStage; catalogFailure: Ca
 export function catalogError(code: string, catalogStage: CatalogStage, catalogFailure: CatalogFailureKind, httpStatus?: number): Error & CatalogFailure {
   return Object.assign(new Error(code), { catalogStage, catalogFailure }, Number.isSafeInteger(httpStatus) && httpStatus! >= 100 && httpStatus! <= 599 ? { httpStatus: httpStatus! } : {});
 }
+export function catalogParseError(error: unknown): Error & CatalogFailure {
+  return catalogError(error instanceof Error && error.message === 'MODEL_CATALOG_IMAGE_LIST_INVALID' ? 'IMAGE_CATALOG_LIST_INVALID' : 'IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200);
+}
 export function catalogFailureDetails(error: unknown): CatalogFailure {
   const own = (key: string) => {
     if (!error || typeof error !== 'object') return undefined;

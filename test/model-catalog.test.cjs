@@ -20,11 +20,11 @@ test('randomized unknown IDs and misleading names preserve exact identity, role,
     const catalog = parseModelCatalog(i % 2 ? { response: raw } : raw);
     assert.strictEqual(parseModelCatalog(catalog), catalog);
     const image = catalogChoices(catalog, 'image'), conversation = catalogChoices(catalog, 'conversation');
-    assert.deepEqual(image.map(m => m.id), [visual, unknown]); assert.deepEqual(conversation.map(m => m.id), [chat, unknown]);
-    assert.equal(image[1].classification, 'unclassified'); assert.equal(conversation[1].classification, 'unclassified');
+    assert.deepEqual(image.map(m => m.id), [visual]); assert.deepEqual(conversation.map(m => m.id), [chat, unknown]);
+    assert.equal(conversation[1].classification, 'unclassified');
     assert.throws(() => assertModelUse(conversation[1], false, 'USAGE_REQUIRED'), /USAGE_REQUIRED/);
     assertModelUse(conversation[1], true, 'USAGE_REQUIRED');
-    assert.equal(imageQuotaFromCatalog(catalog, image)[0].remainingFraction, .413); assert.equal(imageQuotaFromCatalog(catalog, image)[1].remainingFraction, null);
+    assert.equal(imageQuotaFromCatalog(catalog, image)[0].remainingFraction, .413); assert.equal(image.length, 1);
     const request = { prompt: 'fixture', accountId, modelId: visual, aspectRatio: '1:1', size: '4K', quality: 'detail' };
     const bound = { accountId, token: 'synthetic', projectId: 'synthetic-project', modelId: visual, modelEnum: image[0].modelEnum, verify: async () => {} };
     const body = buildDirectImageBody(request, bound, []);
@@ -43,9 +43,9 @@ test('catalog addition/removal/rename/disabled updates never synthesize permissi
   assert.equal(catalogChoices(raw, 'image')[0].label, 'Server renamed (future-a)');
   assert.equal(catalogChoices(raw, 'conversation')[0].id, 'future-d'); assert.equal(catalogChoices(raw, 'conversation')[0].classification, 'unclassified');
   raw.imageGenerationModelIds = []; delete raw.models['future-a'];
-  assert.deepEqual(catalogChoices(raw, 'image').map(m => m.id), ['future-d']);
+  assert.deepEqual(catalogChoices(raw, 'image'), []);
   assert.equal(imageQuotaFromCatalog(raw, [{ id: 'future-d' }])[0].remainingFraction, null);
-  for (const bad of [{ ...raw, imageGenerationModelIds: null }, { ...raw, response: raw }, { ...raw, agentModelSorts: [{ groups: null }] }]) assert.throws(() => parseModelCatalog(bad), /CATALOG_INVALID/);
+  for (const bad of [{ ...raw, imageGenerationModelIds: null }, { ...raw, response: raw }, { ...raw, agentModelSorts: [{ groups: null }] }]) assert.throws(() => parseModelCatalog(bad), /CATALOG_(?:IMAGE_LIST_)?INVALID/);
 });
 test('display persistence isolates accounts/endpoints/roles, retains last selection and is never a membership proof', async () => {
   const state = new Map(), storage = { get: key => state.get(key), update: async (key, value) => state.set(key, value) };
@@ -72,4 +72,15 @@ test('older native storage echoes cannot erase acknowledged confirmation or sele
  echo=older;assert.deepEqual(second.get(key).confirmedIds,['synthetic-future']);await second.save(key,{...row,queriedAt:'2026-10-11T10:01:00Z'});echo=undefined;assert.deepEqual(first.get(key).confirmedIds,['synthetic-future']);assert.equal(first.get(key).selectedId,'synthetic-future');assert.ok(value[key].displayRevision>older[key].displayRevision);
  await first.confirm(key,'synthetic-future',false);echo=confirmed;assert.deepEqual(second.get(key).confirmedIds,[]);echo=undefined;
  const external=new ModelCatalogDisplay({get:()=>structuredClone(value),update:async(_key,next)=>{value=structuredClone(next)}});await external.confirm(key,'synthetic-future',true);assert.deepEqual(first.get(key).confirmedIds,['synthetic-future']);
+});
+
+test('image picker requires explicit same-response membership, never names or input/generation method hints',()=>{
+ const {imageCatalogIssue}=require('../out/model-catalog'),{imageModelsFromCatalog}=require('../out/direct-image-binding');
+ const models={'opaque-server-id':{displayName:'Image Generator Pro',supportsImages:true,supportedGenerationMethods:['generateContent']},'disabled-server-id':{disabled:true},'invalid-server-id':{disabled:'false'}};
+ assert.deepEqual(catalogChoices({models},'image'),[]);assert.equal(imageCatalogIssue({models}),'IMAGE_CATALOG_LIST_MISSING');assert.throws(()=>imageModelsFromCatalog({models}),/LIST_MISSING/);
+ assert.equal(imageCatalogIssue({models,imageGenerationModelIds:[]}),'IMAGE_CATALOG_LIST_EMPTY');assert.deepEqual(catalogChoices({models,imageGenerationModelIds:[]},'image'),[]);
+ assert.equal(imageCatalogIssue({models,imageGenerationModelIds:['disabled-server-id','invalid-server-id']}),'IMAGE_CATALOG_LIST_UNAVAILABLE');
+ for(const imageGenerationModelIds of [null,'opaque-server-id',[null],['bad\nID'],['not-in-model-map'],['opaque-server-id','opaque-server-id']])assert.throws(()=>parseModelCatalog({models,imageGenerationModelIds}),/IMAGE_LIST_INVALID/);
+ assert.deepEqual(catalogChoices({models,imageGenerationModelIds:['opaque-server-id']},'image').map(row=>row.id),['opaque-server-id']);
+ assert.equal(imageCatalogIssue({models,imageGenerationModelIds:['opaque-server-id']}),undefined);
 });

@@ -48,3 +48,11 @@ test('catalog HTTP, network, TLS and parse diagnostics are fixed fields on a sep
 test('late current catalog response cannot authorize a new identity, revision or endpoint',async t=>{
  for(const change of [{email:'synthetic-b@example.test'},{revision:'replacement'},{endpoint:'production'}]){const f=await fixture(t);let release;f.set({late:()=>new Promise(r=>release=r)});const pending=f.read();for(let i=0;i<50&&!release;i++)await new Promise(setImmediate);assert.ok(release);f.set(change);release();const result=await pending;assert.equal(result.readiness,'error');assert.equal(result.models.length,0);assert.equal(f.sends.length,0)}
 });
+
+test('current image metadata distinguishes missing, invalid, empty and disabled without any generation probe',async t=>{
+ const f=await fixture(t);const raw={models:{[model]:{displayName:'Raw server name',supportsImages:true}}};
+ for(const [payload,code,readiness]of [[raw,'IMAGE_CATALOG_LIST_MISSING','error'],[{...raw,imageGenerationModelIds:null},'IMAGE_CATALOG_LIST_INVALID','error'],[{...raw,imageGenerationModelIds:[]},'IMAGE_CATALOG_LIST_EMPTY','ready'],[{models:{[model]:{disabled:true}},imageGenerationModelIds:[model]},'IMAGE_CATALOG_LIST_UNAVAILABLE','ready']]){
+  f.set({raw:payload});const result=await f.read(true);assert.equal(result.accountMessage,code);assert.equal(result.readiness,readiness);assert.deepEqual(result.models,[]);assert.equal(f.sends.length,0);
+ }
+ f.set({raw:{...raw,imageGenerationModelIds:[model]}});assert.equal((await f.read(true)).models[0].id,model);assert.equal(f.sends.length,0);
+});

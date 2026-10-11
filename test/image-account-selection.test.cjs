@@ -311,16 +311,12 @@ test('catalog failure retains original display and selection; removal and rename
  f.load(async()=>({accounts:f.accounts,models:[{id:ma,label:'服务端重新命名'}],readiness:'ready'}));await f.send({type:'checkAccount'});
  assert.equal(f.latest().draft.modelId,ma);assert.equal(f.latest().choices.models[0].label,'服务端重新命名');assert.equal(f.latest().accountBlocked,false);
 });
-test('unknown image use is confirmed beside selection once and isolated by account/endpoint/model',async t=>{
- const sharedState=new Map(),f=await fixture(t,{sharedState});t.after(f.dispose);
+test('unclassified image adapter records cannot enter the picker or be authorized by legacy confirmation',async t=>{
+ const f=await fixture(t);t.after(f.dispose);
  f.load(async()=>({accounts:f.accounts,models:[{id:ma,label:'Original server name',classification:'unclassified'}],readiness:'ready'}));await f.send({type:'checkAccount'});
- await f.send({...f.form,type:'generate'});assert.equal(f.prompts.length,0);assert.equal(f.runs.length,0);
- await f.send({type:'confirmModelUse',modelId:ma,confirmed:true});assert.equal(f.latest().confirmedModelUse,true);
- await f.send({type:'checkAccount'});assert.equal(f.latest().confirmedModelUse,true);f.close();await f.open();assert.equal(f.latest().confirmedModelUse,true);
- await f.send({...f.form,type:'generate'});assert.equal(f.prompts.length,1);assert.doesNotMatch(f.prompts[0].message,/未标明用途/);await f.decide('确认生成');assert.equal(f.runs[0].request.confirmedModelUse,true);await f.finish();
- f.setEndpoint('production');await f.send({type:'checkAccount'});assert.equal(f.latest().confirmedModelUse,false);await f.send({...f.form,type:'draft',modelId:ma});assert.equal(f.latest().confirmedModelUse,false);
- f.setEndpoint('daily');await f.send({type:'checkAccount'});assert.equal(f.latest().confirmedModelUse,true);
- await f.send({type:'selectAccount',selection:B,...f.form});await f.send({...f.form,type:'draft',accountId:B,modelId:ma});assert.equal(f.latest().confirmedModelUse,false);
+ assert.deepEqual(f.latest().choices.models,[]);assert.equal(f.latest().accountBlocked,true);
+ await f.send({type:'confirmModelUse',modelId:ma,confirmed:true});await f.send({...f.form,type:'generate'});
+ assert.equal(f.prompts.length,0);assert.equal(f.runs.length,0);
 });
 test('late catalog after same-ID account replacement is rejected without leaving loading stuck',async t=>{
  const f=await fixture(t);t.after(f.dispose);let finish;
@@ -375,4 +371,11 @@ test('same official notification with changed endpoint isolates current and inde
 });
 test('same current email with a replaced account record invalidates the old display even after an earlier refresh failure',async t=>{
  const f=await fixture(t);t.after(f.dispose);f.load(async()=>{throw Error('IMAGE_SAVED_MODELS_FAILED')});await f.send({type:'checkAccount'});assert.equal(f.latest().choices.models.length,1);f.accounts[0].capturedAt='replacement';f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A]});await tick();await tick();assert.equal(f.latest().choices.models.length,0);assert.equal(f.latest().accountBlocked,true);assert.equal(f.runs.length,0);
+});
+
+test('upgrade hides legacy unclassified image display while retaining original selected ID on failure',async t=>{
+ const sharedState=new Map(),f=await fixture(t,{sharedState});t.after(f.dispose);const old=sharedState.get('model.catalog.display.v1');assert.ok(old);
+ for(const row of Object.values(old)){row.models=row.models.map(model=>({...model,classification:'unclassified'}));row.displayRevision=Date.now()+10000;}
+ sharedState.set('model.catalog.display.v1',old);f.dispose();const upgraded=await fixture(t,{sharedState,loader:async()=>{throw Error('IMAGE_CATALOG_LIST_MISSING')}});t.after(upgraded.dispose);
+ assert.deepEqual(upgraded.latest().choices.models,[]);assert.equal(upgraded.latest().draft.modelId,ma);assert.equal(upgraded.latest().accountBlocked,true);assert.equal(upgraded.runs.length,0);
 });

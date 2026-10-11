@@ -1,5 +1,5 @@
-import { catalogError } from './model-catalog-error';
-import { parseModelCatalog, assertModelUse } from './model-catalog';
+import { catalogParseError } from './model-catalog-error';
+import { parseModelCatalog, imageCatalogIssue, assertModelUse } from './model-catalog';
 import { summarizeImageCatalog, type CatalogSummary } from './image-catalog-diagnostic';
 import { imageQuotaFromCatalog, type ImageQuotaRow } from './image-quota';
 import { createHash } from 'node:crypto';
@@ -29,7 +29,7 @@ export interface SavedImageDependencies {
   now?: () => number;
 }
 interface Prepared {
-  cacheHit: boolean; key: string; accountId: string; revision: string; expiresAt: number; tokenExpiry: number;
+  imageIssue: string | undefined; cacheHit: boolean; key: string; accountId: string; revision: string; expiresAt: number; tokenExpiry: number;
   token: string; projectId: string; endpoint: ImageEndpoint; models: ImageModelChoice[]; catalog: CatalogSummary; quota: ImageQuotaRow[]; queriedAt: string; verify(signal: AbortSignal): Promise<void>;
 }
 const check = (signal: AbortSignal) => { if (signal.aborted) throw new Error('IMAGE_CANCELLED'); };
@@ -102,12 +102,12 @@ export class SavedImageAccounts {
           access.assertPublicResponse(rawResponse);
           let response;
           try { response = parseModelCatalog(this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse); }
-          catch { throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200); }
+          catch (error) { throw catalogParseError(error); }
           await diagnostic?.assertCurrent();
           const catalog = summarizeImageCatalog(response);
           let models: ImageModelChoice[] = [];
           try { models = this.deps.parseModels(response); } catch (error) { if (!diagnostic) throw error; }
-          return { token: access.accessToken, tokenExpiry: access.expiry, projectId: project.projectId, models, catalog,
+          return { token: access.accessToken, tokenExpiry: access.expiry, projectId: project.projectId, models, catalog, imageIssue: imageCatalogIssue(response),
             quota: models.length ? imageQuotaFromCatalog(response, models) : [], queriedAt: new Date(this.now()).toISOString() };
         });
         check(signal); assertPresent();
@@ -135,7 +135,7 @@ export class SavedImageAccounts {
   }
   async directory(id: string, signal: AbortSignal, endpoint: ImageEndpoint, force = false) {
     const prepared = await this.prepare(id, signal, endpoint, force);
-    return { models: prepared.models.map(x => ({ ...x })), queriedAt: prepared.queriedAt, source: 'fetchAvailableModels' as const, cacheHit: prepared.cacheHit };
+    return { models: prepared.models.map(x => ({ ...x })), queriedAt: prepared.queriedAt, source: 'fetchAvailableModels' as const, cacheHit: prepared.cacheHit, ...(prepared.imageIssue ? { imageIssue: prepared.imageIssue } : {}) };
   }
   async choices(id: string, signal: AbortSignal, endpoint: ImageEndpoint, force = false): Promise<ImageModelChoice[]> {
     return (await this.directory(id, signal, endpoint, force)).models;

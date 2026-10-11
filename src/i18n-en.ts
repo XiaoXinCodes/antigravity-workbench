@@ -3,7 +3,6 @@ import type { MessageKey } from './i18n-zh';
 export const en: Readonly<Record<MessageKey, string>> = {
   "catalog.localArtifact": "Local PNG",
   "catalog.confirmConversation": "The server did not declare a role. I confirm this model is for ordinary text requests.",
-  "catalog.confirmImage": "The server did not declare a role. I confirm this model is for image generation.",
   "catalog.unverified": "The selected model is not verified by this account and endpoint catalog. Refresh the catalog; absence does not prove lack of permission.",
   "catalog.usageRequired": "The model’s role is unconfirmed or excluded by the server classification. Refresh the catalog and confirm the selected model’s role.",
   "catalog.notListed": "Not in the current catalog; selection retained",
@@ -1129,6 +1128,10 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "advanced.WAKE_QUOTA_STALE": "Recovery observation expired; no request sent",
   "advanced.baselineInvalid": "Baseline invalid; awaiting a new observation",
   "advanced.endpoint": "Conversation service endpoint",
+  "catalog.imageListMissing": "The server catalog did not provide an image model list. Available image models cannot be confirmed yet; this does not establish account denial.",
+  "catalog.imageListInvalid": "The server image model list or its associated records are invalid. Check again.",
+  "catalog.imageListEmpty": "The server image model list is empty; this does not establish account denial.",
+  "catalog.imageListUnavailable": "The image list has no available associated models. Check again.",
   "catalog.refreshFailed": "Model catalog check incomplete",
   "catalog.resultsKept": "Generated images and history are preserved",
 };

@@ -36,8 +36,9 @@ export function parseModelCatalog(value: unknown): ModelCatalog {
   if (object(value) && parsed.has(value as object)) return value as ModelCatalog;
   const payload = catalogPayload(value), records = object(payload.models)!;
   if (Object.keys(records).length > 500) invalid();
-  const imageIds = ids(payload.imageGenerationModelIds, true);
-  if (new Set(imageIds).size !== imageIds.length) invalid();
+  let imageIds: string[];
+  try { imageIds = ids(payload.imageGenerationModelIds, true); if (new Set(imageIds).size !== imageIds.length) invalid(); }
+  catch { throw Error('MODEL_CATALOG_IMAGE_LIST_INVALID'); }
   const agentIds: string[] = [];
   if (payload.agentModelSorts !== undefined) {
     if (!Array.isArray(payload.agentModelSorts) || payload.agentModelSorts.length > 100) invalid();
@@ -54,7 +55,7 @@ export function parseModelCatalog(value: unknown): ModelCatalog {
   }
   const images = new Set(imageIds), agents = new Set(agentIds);
   // Malformed listed image records cannot turn into unclassified conversation choices.
-  if (imageIds.some(id => !Object.hasOwn(records, id) || !object(records[id]))) invalid();
+  if (imageIds.some(id => !Object.hasOwn(records, id) || !object(records[id]))) throw Error('MODEL_CATALOG_IMAGE_LIST_INVALID');
   const models = Object.entries(records).flatMap(([id, value]): CatalogModel[] => {
     const row = object(value); if (!validModelId(id) || !row) return [];
     const displayName = typeof row.displayName === 'string' && row.displayName.length > 0 && row.displayName.length <= 200 && !/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(row.displayName) ? row.displayName : id;
@@ -74,11 +75,19 @@ export function catalogChoices(value: unknown, usage: ModelUse): ModelChoice[] {
   const order = usage === 'image' ? catalog.imageIds : catalog.agentIds;
   return [...new Set([...order, ...records.keys()])].flatMap(id => {
     const row = records.get(id);
-    if (!row || row.disabled === true || row.disabled === 'invalid' || (usage === 'conversation' ? row.image : row.agent && !row.image)) return [];
+    if (!row || row.disabled === true || row.disabled === 'invalid' || (usage === 'conversation' ? row.image : !row.image)) return [];
     return [Object.freeze({ id, label: row.displayName === id ? id : `${row.displayName} (${id})`,
       ...(!row.image && !row.agent ? { classification: 'unclassified' as const } : {}),
       ...(row.modelEnum ? { modelEnum: row.modelEnum } : {}), ...(row.imageInput === undefined ? {} : { imageInput: row.imageInput }) })];
   });
+}
+/** Explicit image members only. Missing metadata does not establish denial. */
+export function imageCatalogIssue(value: unknown): string | undefined {
+  const catalog = parseModelCatalog(value);
+  if (!catalog.imageListDeclared) return 'IMAGE_CATALOG_LIST_MISSING';
+  if (!catalog.imageIds.length) return 'IMAGE_CATALOG_LIST_EMPTY';
+  if (!catalogChoices(catalog, 'image').length) return 'IMAGE_CATALOG_LIST_UNAVAILABLE';
+  return undefined;
 }
 /** Confirmation belongs to one selected ID/account/endpoint, never a vendor table. */
 export function assertModelUse(model: ModelChoice | undefined, confirmed: boolean, code: string): asserts model is ModelChoice {

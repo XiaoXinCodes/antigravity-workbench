@@ -1,4 +1,4 @@
-import { parseModelCatalog, validModelId } from './model-catalog';
+import { parseModelCatalog, imageCatalogIssue, validModelId } from './model-catalog';
 import { t as tr } from './i18n';
 import type { AccountChoice } from './direct-image-binding';
 import { imageEndpointHost, type ImageEndpoint } from './direct-image-protocol';
@@ -6,6 +6,7 @@ import { imageEndpointHost, type ImageEndpoint } from './direct-image-protocol';
 const safeId = (value: unknown): value is string => typeof value === 'string' && validModelId(value) && !/^(?:ya29\.|1\/\/|gh[pousr]_|bearer|token|secret)/i.test(value);
 export interface CatalogSummary {
   status: 'queried' | 'invalid';
+  imageListIssue?: string;
   imageModels: { id: string; disabled: boolean | 'unspecified' }[];
   allModels: { id: string; listed: boolean; disabled: boolean | 'unspecified' }[];
 }
@@ -16,8 +17,9 @@ export function summarizeImageCatalog(value: unknown): CatalogSummary {
     const catalog = parseModelCatalog(value);
     if (catalog.models.some(row => row.disabled === 'invalid') || catalog.imageIds.some(id => !safeId(id))) return invalid;
     const rows = catalog.models.filter(row => safeId(row.id)).map(row => ({ id: row.id, listed: row.image, disabled: row.disabled as boolean | 'unspecified' }));
-    return { status: 'queried', imageModels: rows.filter(row => row.listed).map(({ id, disabled }) => ({ id, disabled })), allModels: rows };
-  } catch { return invalid; }
+    const issue = imageCatalogIssue(catalog);
+    return { status: 'queried', ...(issue ? { imageListIssue: issue } : {}), imageModels: rows.filter(row => row.listed).map(({ id, disabled }) => ({ id, disabled })), allModels: rows };
+  } catch (error) { return error instanceof Error && error.message === 'MODEL_CATALOG_IMAGE_LIST_INVALID' ? { ...invalid, imageListIssue: 'IMAGE_CATALOG_LIST_INVALID' } : invalid; }
 }
 export interface CatalogDiagnosticDependencies {
   endpoint(): ImageEndpoint;
@@ -29,6 +31,7 @@ export interface CatalogDiagnosticDependencies {
 const declaration = (disabled: boolean | 'unspecified') => disabled === true ? tr("imageCatalogDiagnostic.c282a1dc85") : disabled === false ? tr("imageCatalogDiagnostic.e50db0604e") : tr("imageCatalogDiagnostic.12687fedf4");
 function sourceLines(label: string, endpoint: string, summary: CatalogSummary | undefined, failure: string, observedAt: string): string[] {
   const lines = [`${label} · ${endpoint}`, tr("imageCatalogDiagnostic.7ec3a233e2", { p0: observedAt }), tr("imageCatalogDiagnostic.d2448497a2", { p0: summary?.status === 'queried' ? tr("imageCatalogDiagnostic.54a3c7bc15") : summary ? tr("imageCatalogDiagnostic.23bb3a4098") : failure })];
+  if (summary?.imageListIssue) lines.push(summary.imageListIssue);
   if (summary?.status !== 'queried') return lines;
   lines.push(tr("imageCatalogDiagnostic.ad2aeadc51"), ...(summary.imageModels.length ? summary.imageModels.map(m => `  ${m.id} · ${declaration(m.disabled)}`) : [tr("imageCatalogDiagnostic.909aff071c")]));
   lines.push(tr("imageCatalogDiagnostic.5587c66677"), ...(summary.allModels.length ? summary.allModels.map(m => `  ${m.id} · ${m.listed ? tr("imageCatalogDiagnostic.c27ef48917") : tr("imageCatalogDiagnostic.541ef70700")} · ${declaration(m.disabled)}`) : [tr("imageCatalogDiagnostic.22db2dc2bf")]));
@@ -74,6 +77,7 @@ export async function diagnoseImageCatalog(deps: CatalogDiagnosticDependencies, 
     const changed = error instanceof Error && ['IMAGE_DIRECT_ACCOUNT_CHANGED', 'IMAGE_DIRECT_ENDPOINT_CHANGED', 'IMAGE_SAVED_ACCOUNT_CHANGED', 'IMAGE_SAVED_ACCOUNT_REMOVED', 'IMAGE_CANCELLED'].includes(error.message);
     if (changed) { hub = undefined; direct = undefined; hubFailure = tr("imageCatalogDiagnostic.38e0d1e737"); directFailure = tr("imageCatalogDiagnostic.7b58679f30"); }
     else if (!hub) hubFailure = tr("imageCatalogDiagnostic.09178a4726");
+    else if (error instanceof Error && error.message === 'IMAGE_CATALOG_LIST_INVALID') directFailure = 'IMAGE_CATALOG_LIST_INVALID';
     comparison = tr("imageCatalogDiagnostic.0106577830");
   }
   return [tr("imageCatalogDiagnostic.982a28516e"), tr("imageCatalogDiagnostic.95edefc608"),

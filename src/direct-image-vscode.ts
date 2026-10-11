@@ -1,5 +1,5 @@
-import { catalogError, catalogErrorCode, catalogFailureDetails, type CatalogFailure } from './model-catalog-error';
-import { parseModelCatalog, assertModelUse } from './model-catalog';
+import { catalogError, catalogParseError, catalogErrorCode, catalogFailureDetails, type CatalogFailure } from './model-catalog-error';
+import { parseModelCatalog, imageCatalogIssue, assertModelUse } from './model-catalog';
 import { accountDisplayFingerprint } from './quota-presentation';
 import { savedAccountStore } from './saved-account-store';
 import { t as tr } from './i18n';
@@ -128,7 +128,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
     const raw = await readSavedImageModels(binding.access.token, binding.access.projectId, signal, endpoint);
     if (JSON.stringify(raw).includes(binding.access.token)) throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200);
     let catalog;
-    try { catalog = parseModelCatalog(raw); } catch { throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200); }
+    try { catalog = parseModelCatalog(raw); } catch (error) { throw catalogParseError(error); }
     await binding.access.verify(signal); await binding.assertCurrent();
     const entry = { key, catalog, models: imageModelsFromCatalog(catalog), queriedAt: new Date().toISOString(),
       expiresAt: Math.min(Date.now() + 5 * 60_000, binding.access.credentialExpiresAt - 30_000) };
@@ -152,11 +152,12 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       const directory = await saved.directory(savedAccountId, signal, endpoint, force);
       if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
       return { accounts, models: directory.models, catalogCacheHit: directory.cacheHit,
-        catalog: { source: directory.source, queriedAt: directory.queriedAt }, readiness: 'ready' };
+        catalog: { source: directory.source, queriedAt: directory.queriedAt }, readiness: 'ready', ...(directory.imageIssue ? { accountMessage: directory.imageIssue } : {}) };
     }
     const directory = await locks().withOperation(() => currentDirectory(signal, getEndpoint(), force));
+    const imageIssue = imageCatalogIssue(directory.catalog);
     return { accounts: summaries().map(a => ({ ...a, active: a.id === directory.selected.id })), models: directory.models, catalogCacheHit: directory.cacheHit,
-      catalog: { source: 'fetchAvailableModels', queriedAt: directory.queriedAt }, readiness: 'ready' };
+      catalog: { source: 'fetchAvailableModels', queriedAt: directory.queriedAt }, readiness: 'ready', ...(imageIssue ? { accountMessage: imageIssue } : {}) };
   };
   const readChoices = async (signal: AbortSignal, savedAccountId?: string, force = false): Promise<ImageChoices> => {
     const endpoint = getEndpoint(), diagnostic = beginDebugOperation('image.catalog');

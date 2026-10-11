@@ -149,7 +149,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         ...(comparison?.versions.filter(v => [comparison?.left, comparison?.right].includes(v.key) && !comparison?.unavailable[v.key]).map(v => path.dirname(v.file)) ?? [])])].map(directory => vscode.Uri.file(directory)) };
     const compareSide = (key: string) => { const v = comparison?.versions.find(v => v.key === key); return v ? { key, label: localizeMessage(v.label), name: path.basename(v.file), width: v.width, height: v.height,
       unavailable: comparison?.unavailable[key] ? localizeMessage(comparison.unavailable[key]!) : undefined, preview: comparison?.unavailable[key] ? '' : panel?.webview.asWebviewUri?.(vscode.Uri.file(v.file)).toString() ?? '' } : undefined; };
-    void panel.webview.postMessage({ type: 'state', confirmedModelUse: catalogDisplay.get(selectionKey())?.confirmedIds?.includes(draft.modelId) === true, endpoint: direct.getEndpoint(), languageOnly, busy, draftRevision, draftEpoch, actionRevision, status: privateText(localizeImageFailure(status)), storageNotice: privateText(localizeMessage(storageNotice)), storageBlocked: !!storageNotice, actionNotice: privateText(localizeMessage(actionNotice)), editorTarget: project.state(),
+    void panel.webview.postMessage({ type: 'state', endpoint: direct.getEndpoint(), languageOnly, busy, draftRevision, draftEpoch, actionRevision, status: privateText(localizeImageFailure(status)), storageNotice: privateText(localizeMessage(storageNotice)), storageBlocked: !!storageNotice, actionNotice: privateText(localizeMessage(actionNotice)), editorTarget: project.state(),
     iteration: origin ? { taskId: origin.taskId, imageIndex: origin.imageIndex, name: path.basename(origin.file), modelUnavailable } : undefined,
     savedDrafts: savedDrafts.map(s => ({ id: s.id, savedAt: s.savedAt, summary: s.draft.prompt.slice(0, 80) || tr("directImageUi.de5f067d27") })),
     comparison: comparison ? { versions: comparison.versions.map(v => ({ key: v.key, label: localizeMessage(v.label) })), left: compareSide(comparison.left), right: compareSide(comparison.right) } : undefined,
@@ -190,7 +190,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     const previous = scope ? catalogDisplay.get(scope) : undefined;
     if (scope && scope !== displayedCatalogKey) {
       if (displayedCatalogKey && !origin && !preserveRestoredModel) draft.modelId = selectedModels.get(scope) ?? previous?.selectedId ?? '';
-      choices = { accounts: direct.listAccounts?.() ?? choices.accounts, models: previous?.models ?? [], ...(previous ? { catalog: previous } : {}) };
+      choices = { accounts: direct.listAccounts?.() ?? choices.accounts, models: previous?.models.filter(model => model.classification !== 'unclassified') ?? [], ...(previous ? { catalog: previous } : {}) };
       displayedCatalogKey = scope; catalogStale = !!previous;
     }
     choicesLoading = true; emit();
@@ -226,6 +226,8 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       choices = { accounts: next.accounts, models: [] }; displayedCatalogKey = ''; choiceEndpoint = undefined;
       accountStatus = code(Error('IMAGE_DIRECT_ACCOUNT_CHANGED')); emit(); return;
     }
+    // A custom adapter cannot reintroduce unclassified image choices.
+    next = { ...next, models: next.models.filter(model => model.classification !== 'unclassified') };
     const retained = next.readiness === 'error' && scopeNow === displayedCatalogKey;
     choicesLoading = false; refreshPending = false;
     choices = retained ? { ...next, models: choices.models, ...(choices.catalog ? { catalog: choices.catalog } : {}) } : next;
@@ -262,7 +264,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       }, delay);
       retryTimer.unref?.();
     } else if (!accountBlocked) stopRetry(true);
-    accountStatus = next.accountMessage ? tr('catalog.refreshFailed') + ' · ' + code(Object.assign(new Error(next.accountMessage), next.failure)) : accountBlocked ? code(new Error(selection ? 'IMAGE_SAVED_MODELS_UNAVAILABLE' : 'IMAGE_DIRECT_MODEL_UNVERIFIED')) : selection ? tr("directImageUi.fff0ffca40") : currentIdentityChanged ? tr("directImageUi.f299aacd12") : '';
+    accountStatus = next.accountMessage ? (next.readiness === 'error' ? tr('catalog.refreshFailed') + ' · ' : '') + code(Object.assign(new Error(next.accountMessage), next.failure)) : accountBlocked ? code(new Error(selection ? 'IMAGE_SAVED_MODELS_UNAVAILABLE' : 'IMAGE_DIRECT_MODEL_UNVERIFIED')) : selection ? tr("directImageUi.fff0ffca40") : currentIdentityChanged ? tr("directImageUi.f299aacd12") : '';
     if (startupTransient) accountStatus = next.accountMessage === 'IMAGE_SAVED_MODELS_TRANSIENT' ? retryTimer ? tr("directImageUi.607af85f14") : tr("directImageUi.e4256f5f9a") : retryTimer ? tr("directImageUi.4b5e5bb474") : tr("directImageUi.bc7960b9e7");
     if (next.readiness === 'error' && tasks.some(task => task.images.length > 0)) accountStatus += ' · ' + tr('catalog.resultsKept');
     if (!selection && !accountBlocked) currentIdentityChanged = false;
@@ -366,10 +368,6 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     if (!value || typeof value !== 'object' || Array.isArray(value) || panel !== owner) return;
     const msg = value as Record<string, unknown>;
     if (Number.isSafeInteger(msg.actionRevision) && Number(msg.actionRevision) >= actionRevision) actionRevision = Number(msg.actionRevision);
-    if (msg.type === 'confirmModelUse') {
-      if (busy || choicesLoading || accountBlocked || typeof msg.confirmed !== 'boolean' || msg.modelId !== draft.modelId || !choices.models.some(model => model.id === draft.modelId && model.classification === 'unclassified')) return;
-      await catalogDisplay.confirm(selectionKey(), draft.modelId, msg.confirmed).catch(() => undefined); emit(false); return;
-    }
     if (msg.type === 'queryQuota') { await querySelectedQuota(); return; }
     if (msg.type === 'layout') {
       if (typeof msg.resultsShare !== 'number' || !Number.isFinite(msg.resultsShare) || typeof msg.resultsCollapsed !== 'boolean') return;
@@ -569,8 +567,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         const account = choices.accounts.find(x => x.id === draft.accountId && (selectedSavedId ? x.id === selectedSavedId : x.active));
         const model = choices.models.find(x => x.id === draft.modelId);
         if (!account || !model) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
-        const confirmedModelUse = catalogDisplay.get(selectionKey())?.confirmedIds?.includes(model.id) === true;
-        if (model.classification === 'unclassified' && !confirmedModelUse) throw Error('IMAGE_MODEL_USAGE_REQUIRED');
+        if (model.classification === 'unclassified') throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
         if (!draft.prompt.trim()) throw Error('IMAGE_PROMPT_REQUIRED');
         if (!outputDirectory) throw Error('IMAGE_LOCAL_DIRECTORY_REQUIRED');
         if (origin) { if (origin.accountId !== account.id || !references.includes(origin.file)) throw Error('IMAGE_EDIT_SOURCE_CHANGED'); await verifyImageOrigin(origin); }
@@ -603,7 +600,6 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
           { modal: true }, generationConsent), cancelledConsent]); }
         finally { consentSignal.removeEventListener('abort', stopConsent); }
         if (answer !== generationConsent || cancelRequested || panel !== owner || (accountBlocked && !selectedSavedId)) { status = tr("directImageUi.5c3249c289"); task.phase = 'cancelled'; task.status = status; return; }
-        request.confirmedModelUse = model.classification === 'unclassified' && confirmedModelUse;
         attempt = { modelId: model.id, operationId, stage: 'preparing' };
         task.phase = 'preparing'; task.status = tr("directImageUi.29a2a153fb"); emit();
         if (!await persistNow()) throw Error('IMAGE_SESSION_SAVE_REQUIRED');

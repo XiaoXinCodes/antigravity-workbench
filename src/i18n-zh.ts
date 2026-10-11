@@ -2,7 +2,6 @@
 export const zhCN = {
   "catalog.localArtifact": "本机 PNG",
   "catalog.confirmConversation": "服务端未标明用途。我确认所选模型用于普通文本请求。",
-  "catalog.confirmImage": "服务端未标明用途。我确认所选模型用于图片生成。",
   "catalog.unverified": "所选模型尚未由当前账号及端点的目录核验。请刷新目录；未列出不代表没有权限。",
   "catalog.usageRequired": "模型用途尚未确认或已被服务端分类排除。请刷新目录并重新确认所选模型用途。",
   "catalog.notListed": "当前目录未列出；保留原选择",
@@ -1129,6 +1128,10 @@ export const zhCN = {
   "advanced.WAKE_QUOTA_STALE": "恢复观察已过期，未发送",
   "advanced.baselineInvalid": "基线已失效，等待重新观察",
   "advanced.endpoint": "对话服务端点",
+  "catalog.imageListMissing": "服务端目录未提供图片模型清单，暂时无法确认可用图片模型；这不表示账号无权限。",
+  "catalog.imageListInvalid": "服务端图片模型清单格式或关联记录无效，请重新检查。",
+  "catalog.imageListEmpty": "服务端图片模型清单为空；这不表示账号无权限。",
+  "catalog.imageListUnavailable": "图片清单中没有可用的关联模型，请重新检查。",
   "catalog.refreshFailed": "模型目录检查未完成",
   "catalog.resultsKept": "已生成的图片和历史仍保留",
 } as const;

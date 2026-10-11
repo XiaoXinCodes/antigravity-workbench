@@ -1,4 +1,5 @@
-import { validModelId, catalogChoices, assertModelUse, type ModelChoice } from './model-catalog';
+import { catalogError } from './model-catalog-error';
+import { validModelId, catalogChoices, parseModelCatalog, assertModelUse, type ModelChoice } from './model-catalog';
 /* eslint-disable no-control-regex -- Email and model identifiers must reject controls. */
 import { createHash } from 'node:crypto';
 import type { BoundImageAccount } from './direct-image-core';
@@ -17,7 +18,7 @@ export interface VaultReader { get(key: string): PromiseLike<string | undefined>
 // Unforgeable in-process membership proof. The binding also rechecks the current
 // account/catalog and endpoint before resolving a project and freezing the request.
 const currentModelProof = new WeakMap<ImageModelChoice, string>();
-/** Hub compatibility adapter: identity-checked image or explicitly unclassified choices. */
+/** Legacy Hub adapter. Only an explicit image array in this response supplies membership. */
 export function currentImageModels(authResponse: unknown, statusResponse: unknown, availableResponse: unknown, email: string): ImageModelChoice[] {
   if (!object(authResponse) || !object(authResponse.authResult) || authResponse.authResult.hasValidAuth !== true ||
       !object(statusResponse) || !object(statusResponse.userStatus)) throw new Error('IMAGE_DIRECT_AUTH_REQUIRED');
@@ -31,8 +32,11 @@ export function currentImageModels(authResponse: unknown, statusResponse: unknow
 
 /** A catalog returned for the bearer verified by the saved-account transaction. */
 export function imageModelsFromCatalog(data: unknown): ImageModelChoice[] {
-  try { return catalogChoices(data, 'image'); }
+  let catalog;
+  try { catalog = parseModelCatalog(data); }
   catch { throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED'); }
+  if (!catalog.imageListDeclared) throw catalogError('IMAGE_CATALOG_LIST_MISSING', 'parse', 'parse');
+  return catalogChoices(catalog, 'image');
 }
 
 /** Read the already saved, host-bound account; never initiate refresh, login or a storage write. */

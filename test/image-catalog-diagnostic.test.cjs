@@ -30,3 +30,10 @@ for(const kind of ['identity','endpoint','removed'])test(`late diagnostic ${kind
  const f=fixture(),read=f.deps.direct;f.deps.direct=async(...args)=>{const value=await read(...args);if(kind==='identity')f.change();if(kind==='endpoint')f.endpoint('production');if(kind==='removed')f.accounts.shift();return value};
  const report=await diagnoseImageCatalog(f.deps,signal);assert.match(report,/结果已丢弃/);assert.doesNotMatch(report,/仅直连列出：gemini/);
 });
+
+test('on-demand diagnostic retains minimal image-list presence reasons without credentials or Hub assumptions',async()=>{
+ const f=fixture();f.deps.hub=async()=>({email:'synthetic@example.test',catalog:{models:{'opaque-input-id':{supportsImages:true}}},verify:async()=>{}});f.deps.direct=async()=>summarizeImageCatalog({models:{},imageGenerationModelIds:[]});
+ const report=await diagnoseImageCatalog(f.deps,signal);assert.match(report,/IMAGE_CATALOG_LIST_MISSING/);assert.match(report,/IMAGE_CATALOG_LIST_EMPTY/);assert.doesNotMatch(report,/synthetic@example|supportsImages|SENTINEL|projectId/);
+ assert.equal(summarizeImageCatalog({models:{},imageGenerationModelIds:null}).imageListIssue,'IMAGE_CATALOG_LIST_INVALID');
+ f.deps.direct=async()=>{throw Error('IMAGE_CATALOG_LIST_INVALID')};assert.match(await diagnoseImageCatalog(f.deps,signal),/IMAGE_CATALOG_LIST_INVALID/);
+});
