@@ -17,6 +17,9 @@ const running = (i: WakeInstance) => i.phase === 'preparing' || i.phase === 'sen
  * A crashed or timed-out sent instance is never re-issued by any window. */
 export class WakeEngine {
   private active = new Map<string, AbortController>();
+  // Keep a received result in this host until its guarded state write succeeds.
+  // Polling retries only this persistence step, never execution or a model request.
+  private completions = new Map<string, () => Promise<void>>();
   private ticking: Promise<void> | undefined;
   private disposed = false;
   constructor(readonly store: LocalState<WakeState>, private readonly execution: WakeExecution, private readonly changed: () => void = () => undefined, private readonly now: () => number = Date.now) {}
@@ -67,6 +70,7 @@ export class WakeEngine {
   }
   async test(id: string, expectedRevision?: string): Promise<void> {
     if (this.disposed || this.active.has(id)) return;
+    await this.flushCompletions();
     const claimed = await this.store.transaction(s => {
       if (!s.consent) throw Error('WAKE_CONSENT_REQUIRED');
       const task = s.tasks.find(t => t.id === id); if (!task) throw Error('WAKE_TASK_MISSING');
@@ -80,6 +84,7 @@ export class WakeEngine {
     const work = this.scan().finally(() => { this.ticking = undefined; }); this.ticking = work; return work;
   }
   private async scan(): Promise<void> {
+    await this.flushCompletions();
     const claims = await this.store.transaction(s => {
       for (const i of s.instances.filter(running)) if (i.leaseUntil <= this.now()) {
         i.phase = i.phase === 'sent' ? 'unknown' : 'skipped'; i.code = i.phase === 'unknown' ? 'WAKE_OUTCOME_UNKNOWN' : 'WAKE_LEASE_EXPIRED';
@@ -132,17 +137,24 @@ export class WakeEngine {
 
     } catch (e) { const code = e instanceof Error && /^[A-Z_0-9]{1,100}$/.test(e.message) ? e.message : 'WAKE_REQUEST_FAILED'; result = { phase: sent ? 'unknown' : 'failed', code: sent ? 'WAKE_OUTCOME_UNKNOWN' : code }; }
     finally { clearInterval(timer); if (this.active.get(task.id) === abort) this.active.delete(task.id); }
-    await this.store.transaction(s => {
+    this.completions.set(instance.id, () => this.store.transaction(s => {
       const row = s.instances.find(i => i.id === instance.id); if (!row || row.nonce !== instance.nonce) return;
       // Evidence belongs to this attempt even if another window already expired
       // its lease. It must never resurrect execution or overwrite terminal status.
       if (result.responseModel) row.responseModel = result.responseModel;
       if (!running(row)) return;
-      const current = s.tasks.find(t => t.id === task.id), invalid = abort.signal.aborted || !current || current.revision !== task.revision || this.execution.fingerprint(task.accountId) !== task.fingerprint;
+      const current = s.tasks.find(t => t.id === task.id), invalid = this.disposed || abort.signal.aborted || row.leaseUntil <= this.now() || !current || current.revision !== task.revision || this.execution.fingerprint(task.accountId) !== task.fingerprint;
       const phase = sent && invalid ? 'unknown' : !sent && invalid ? 'cancelled' : result.phase;
       Object.assign(row, result, { phase, code: phase === 'unknown' ? 'WAKE_OUTCOME_UNKNOWN' : phase === 'cancelled' ? 'WAKE_CANCELLED' : result.code });
       if (phase === 'unknown' && current) current.enabled = false;
-    }); this.changed();
+    }));
+    await this.flushCompletions(); this.changed();
+  }
+  private async flushCompletions(): Promise<void> {
+    for (const [id, persist] of this.completions) {
+      await persist();
+      if (this.completions.get(id) === persist) this.completions.delete(id);
+    }
   }
   private send(task: WakeTask, instance: WakeInstance, abort: AbortController, valid: (s: WakeState) => boolean, markSent: () => void, recoveryObservedAt?: string): Promise<WakeResult> {
     return this.execution.run(task, abort.signal, async () => {

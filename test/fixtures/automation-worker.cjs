@@ -7,5 +7,16 @@ const {LiveError}=require('../../out/live-storage');
  const engine=new WakeEngine(store,{fingerprint:()=> 'synthetic-bound-A',run:async(_task,_signal,before)=>{await before();await fs.appendFile(path.join(directory,'synthetic-sends.txt'),String(process.pid)+'\n');await new Promise(r=>setTimeout(r,150));return{phase:'succeeded',code:'WAKE_COMPLETE'}}},()=>{},()=>now);
  // A sibling can be writing its lock marker. A later poll may try again, but
  // neither this fixture nor the store repairs or removes an uncertain lock.
- for(let n=0;n<8;n++){try{await engine.tick()}catch(error){if(!(error instanceof LiveError)||!['LIVE_OPERATION_OR_RECOVERY_LOCKED','LOCK_RECORD_REQUIRES_MANUAL_CHECK'].includes(error.code))throw error}await new Promise(r=>setTimeout(r,100))}engine.dispose();
+ // A successful worker must observe durable completion, not merely exhaust a
+ // fixed number of polls while its received result is still waiting on a lock.
+ const deadline=Date.now()+30_000;
+ try{for(;;){
+  try{await engine.tick()}catch(error){if(!(error instanceof LiveError)||!['LIVE_OPERATION_OR_RECOVERY_LOCKED','LOCK_RECORD_REQUIRES_MANUAL_CHECK'].includes(error.code))throw error}
+  const state=await store.read(),row=state.instances[0];
+  if(state.instances.length>1)throw Error('SYNTHETIC_WAKE_DUPLICATE_INSTANCE');
+  if(row?.phase==='succeeded')break;
+  if(row&&!['preparing','sent'].includes(row.phase))throw Error('SYNTHETIC_WAKE_UNEXPECTED_TERMINAL:'+row.phase);
+  if(Date.now()>=deadline)throw Error('SYNTHETIC_WAKE_TERMINAL_TIMEOUT:'+(row?.phase??'missing'));
+  await new Promise(r=>setTimeout(r,100));
+ }}finally{engine.dispose()}
 })().catch(error=>{console.error(error);process.exitCode=1});
