@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { quotaObservationFingerprint } from './quota-observation';
 import * as path from 'node:path';
 import { PrivateState, type LocalState } from './private-state';
 import { initialQuotaHistory, parseQuotaHistory, QuotaHistory, type QuotaHistoryState, type QuotaObservation } from './quota-history';
@@ -27,9 +28,9 @@ export function registerQuotaHistory(context: vscode.ExtensionContext, live: Liv
       for (const account of live.getAccounts()) {
         const fingerprint = accountDisplayFingerprint(account), snapshot = accountQuotaSnapshot(account);
         if (account.quota?.accountFingerprint !== fingerprint) continue;
-        if (account.quota.phase === 'ready' && snapshot && !quotaIsStale(snapshot.observedAt, now())) {
+        if (account.quota.phase === 'ready' && !account.quota.historical && snapshot && !quotaIsStale(snapshot.observedAt, now())) {
           lastErrors.delete(account.id);
-          for (const row of quotaEntries(account)) await history.record({ accountId: account.id, fingerprint, kind: 'bucket', key: row.key, label: row.bucket.label.slice(0, 200), observedAt: snapshot.observedAt, fraction: quotaFraction(row.bucket.remaining), resetAt: row.bucket.resetAt ?? null, unavailable: row.bucket.disabled === true });
+          for (const row of quotaEntries(account)) await history.record({ accountId: account.id, fingerprint: quotaObservationFingerprint(account), kind: 'bucket', key: row.key, label: row.bucket.label.slice(0, 200), observedAt: snapshot.observedAt, fraction: quotaFraction(row.bucket.remaining), resetAt: row.bucket.resetAt ?? null, unavailable: row.bucket.disabled === true });
         } else if (account.quota.phase === 'error' && lastErrors.get(account.id) !== account.quota) {
           lastErrors.set(account.id, account.quota);
           const prior = (await history.read({ accountId: account.id, kind: 'bucket' })).rows;
@@ -39,8 +40,8 @@ export function registerQuotaHistory(context: vscode.ExtensionContext, live: Liv
       await history.reconcile();
     }).catch(() => undefined); return tail;
   };
-  const imageObservation = (snapshot: ImageQuotaSnapshot, fingerprint: string) => history.record({ accountId: snapshot.accountId, fingerprint, kind: 'image-model', key: JSON.stringify([snapshot.endpoint, snapshot.modelId]), label: snapshot.modelId, observedAt: snapshot.queriedAt, fraction: quotaFraction(snapshot.remainingFraction), resetAt: snapshot.resetAt });
-  const imageGap = (accountId: string, fingerprint: string, modelId: string, endpoint: string) => history.gap({ accountId, fingerprint, kind: 'image-model', key: JSON.stringify([endpoint, modelId]), label: modelId });
+  const imageObservation = (snapshot: ImageQuotaSnapshot, fingerprint: string) => { const account = live.getAccounts().find(a => a.id === snapshot.accountId && accountDisplayFingerprint(a) === fingerprint); return account ? history.record({ accountId: snapshot.accountId, fingerprint: quotaObservationFingerprint(account), kind: 'image-model', key: JSON.stringify([snapshot.endpoint, snapshot.modelId]), label: snapshot.modelId, observedAt: snapshot.queriedAt, fraction: quotaFraction(snapshot.remainingFraction), resetAt: snapshot.resetAt }) : Promise.resolve(); };
+  const imageGap = (accountId: string, fingerprint: string, modelId: string, endpoint: string) => { const account = live.getAccounts().find(a => a.id === accountId && accountDisplayFingerprint(a) === fingerprint); return account ? history.gap({ accountId, fingerprint: quotaObservationFingerprint(account), kind: 'image-model', key: JSON.stringify([endpoint, modelId]), label: modelId }) : Promise.resolve(); };
   const handle = async (raw: unknown, owner: vscode.WebviewPanel) => {
     if (disposed || panel !== owner || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
     const m = raw as Record<string, unknown>;

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { LiveError, validateSlots, assertSlotIdentity } from './live-storage';
+import { validQuotaDisplayId } from './quota-observation';
 import { ACCOUNT_PREFIX, QUOTA_PENDING_PREFIX, QUOTA_UNKNOWN_PREFIX, type LiveAccount, type SavedLogin, type SecretVault } from './live-switch';
 
 export interface AccountIndex { read(): SavedLogin[]; write(accounts: SavedLogin[]): Promise<void> }
@@ -74,7 +75,7 @@ export class AccountImportTransaction {
   private get replacementKey(): string { return this.key + '.v2'; }
   private changeKey(id: string): string { return this.replacementKey + '.' + id; }
   private validateMetadata(item: SavedLogin): void {
-    if (!item || !uuid.test(item.id) || item.hostId !== this.hostId || !['user', 'hub'].includes(item.identitySource) || typeof item.label !== 'string' || item.label.length > 260 || typeof item.expectedEmail !== 'string' || item.expectedEmail.length > 260 || typeof item.capturedAt !== 'string' || !Number.isFinite(Date.parse(item.capturedAt)) || item.migrationState !== undefined && !['pending', 'verified'].includes(item.migrationState) || item.verifiedSubject !== undefined && !/^[a-zA-Z0-9_-]{1,255}$/.test(item.verifiedSubject) || Object.keys(item).some(key => !['id', 'label', 'expectedEmail', 'capturedAt', 'identitySource', 'hostId', 'migrationState', 'verifiedSubject'].includes(key))) throw 0;
+    if (!item || !uuid.test(item.id) || item.hostId !== this.hostId || !['user', 'hub'].includes(item.identitySource) || typeof item.label !== 'string' || item.label.length > 260 || typeof item.expectedEmail !== 'string' || item.expectedEmail.length > 260 || typeof item.capturedAt !== 'string' || !Number.isFinite(Date.parse(item.capturedAt)) || item.migrationState !== undefined && !['pending', 'verified'].includes(item.migrationState) || item.verifiedSubject !== undefined && !/^[a-zA-Z0-9_-]{1,255}$/.test(item.verifiedSubject) || item.quotaDisplayId !== undefined && !validQuotaDisplayId(item.quotaDisplayId) || Object.keys(item).some(key => !['id', 'label', 'expectedEmail', 'capturedAt', 'identitySource', 'hostId', 'migrationState', 'verifiedSubject', 'quotaDisplayId'].includes(key))) throw 0;
   }
   private async replacementJournal(): Promise<ReplacementJournal | undefined> {
     const raw = await this.vault.get(this.replacementKey);

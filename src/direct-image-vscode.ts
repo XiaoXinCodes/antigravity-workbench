@@ -29,7 +29,7 @@ import { enterImageOperation } from './image-activity';
 import { ImageOperationJournal, imageOperationStart, imageOperationResponse, imageOperationFailure, formatImageOperations } from './image-operation-record';
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-type AccountSummary = Pick<AccountChoice, 'id' | 'label' | 'expectedEmail'> & { hostCurrent?: boolean; hostId?: string; migrationState?: string; capturedAt?: string; active?: boolean };
+type AccountSummary = Pick<AccountChoice, 'id' | 'label' | 'expectedEmail'> & { hostCurrent?: boolean; hostId?: string; migrationState?: string; capturedAt?: string; quotaDisplayId?: string; verifiedSubject?: string; active?: boolean };
 export interface ImageChoices { accounts: AccountChoice[]; models: ImageModelChoice[]; readiness?: 'ready' | 'error'; accountMessage?: string }
 
 /** New independent image route, reachable only through the existing image confirmation. */

@@ -44,9 +44,10 @@ export class ImageQuotaQuery {
   private expiry: ReturnType<typeof setTimeout> | undefined;
   private state: ImageQuotaState = { loading: false, stale: false };
   constructor(private readonly changed: () => void) {}
-  selection(key: string): void {
-    if (key === this.key) return;
-    this.invalidate(); this.key = key; this.state = { loading: false, stale: false };
+  selection(key: string, previous?: ImageQuotaSnapshot): void {
+    if (key === this.key) { if (!this.state.loading && !this.state.snapshot && previous) this.state = { loading: false, stale: true, snapshot: { ...previous } }; return; }
+    this.invalidate(); this.key = key;
+    this.state = previous ? { loading: false, stale: true, snapshot: { ...previous } } : { loading: false, stale: false };
   }
   invalidate(keepReading = false): void {
     clearTimeout(this.expiry); this.expiry = undefined;

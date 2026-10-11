@@ -1,5 +1,7 @@
 import { displayAccount, hideIdentityText, onIdentityPresentationChange, identityAlias, identityHidden } from './identity-presentation';
 import { accountDisplayFingerprint } from './quota-presentation';
+import { quotaDisplayCache } from './quota-display';
+import { quotaObservationFingerprint } from './quota-observation';
 import { ImageRecommendation } from './image-recommendation';
 import type { ImageHistoryObserver } from './quota-history-ui';
 import type { AlertSample } from './quota-alerts';
@@ -45,6 +47,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
   const session = sessionStorage ?? new ImageSessionStore(storageRoot ? path.join(storageRoot, context.storageUri ? 'image-session' : 'image-session-no-workspace') : undefined);
   let initialized: Promise<void> | undefined, loaded = false, storageNotice = '', saveTimer: ReturnType<typeof setTimeout> | undefined;
   const recent = new RecentImageFailureStore(context.globalState);
+  const display = quotaDisplayCache(context, () => direct.listAccounts?.() ?? choices.accounts);
   let panel: vscode.WebviewPanel | undefined;
   let layout = readImageLayout(context.globalState.get(IMAGE_LAYOUT_KEY));
   let layoutSave: Promise<unknown> = Promise.resolve();
@@ -105,6 +108,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
   };
   const initialize = () => initialized ??= (async () => {
     try {
+      await display.load();
       const restored = await session.load();
       if (restored) {
         draft = restored.draft; preserveRestoredModel = !!draft.modelId; outputDirectory = restored.outputDirectory; references = restored.references;
@@ -131,7 +135,8 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
   const emit = (save = true, languageOnly = false) => { if (save) scheduleSave(); if (!panel) return;
     const currentId = verifiedCurrentAccountId(choices.accounts, accountSnapshot === undefined ? choices.accounts.find(account => account.active)?.expectedEmail : officialEmail, officialBlocked);
     recommendation.selection(draft.modelId, direct.getEndpoint());
-    quota.selection(JSON.stringify([selectedSavedId ?? '@current', draft.accountId, draft.modelId, direct.getEndpoint()]));
+    const quotaAccount = (direct.listAccounts?.() ?? choices.accounts).find(account => account.id === draft.accountId);
+    quota.selection(quotaSelection(), display.image(quotaAccount, draft.modelId, direct.getEndpoint()));
     if (vscode.Uri?.file) panel.webview.options = { ...panel.webview.options,
       localResourceRoots: [...new Set([...images.filter(image => !image.unavailable).map(image => path.dirname(image.file)),
         ...references.map(file => path.dirname(file)),
@@ -300,7 +305,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       if (reason) current.unavailable[key] = reason; else delete current.unavailable[key];
     }
   };
-  const quotaSelection = () => JSON.stringify([selectedSavedId ?? '@current', draft.accountId, draft.modelId, direct.getEndpoint()]);
+  const quotaSelection = () => { const account = (direct.listAccounts?.() ?? choices.accounts).find(account => account.id === draft.accountId); return JSON.stringify([selectedSavedId ?? '@current', draft.accountId, draft.modelId, direct.getEndpoint(), account ? accountDisplayFingerprint(account) : null, account ? quotaObservationFingerprint(account) : null]); };
   const querySelectedQuota = async (expected?: string) => {
     if (disposed || !panel || busy || choicesLoading || accountBlocked || modelUnavailable || !draft.accountId ||
         !choices.models.some(model => model.id === draft.modelId) || typeof direct.readImageQuota !== 'function') return;
@@ -311,11 +316,14 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     const id = draft.accountId, model = draft.modelId, selection = selectedSavedId, endpoint = direct.getEndpoint();
     await quota.query(async signal => {
       const result = await direct.readImageQuota(id, model, signal, selection);
-      if (panel !== owner || quotaSelection() !== key || result.accountId !== id || result.modelId !== model || result.endpoint !== endpoint)
+      if (signal.aborted || panel !== owner || quotaSelection() !== key || result.accountId !== id || result.modelId !== model || result.endpoint !== endpoint)
         throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
       const current = (direct.listAccounts?.() ?? choices.accounts).find(a => a.id === id);
-      if (fingerprint && current && accountDisplayFingerprint(current) === fingerprint) observeQuota?.({ accountId: id, fingerprint, quotaKey: JSON.stringify([endpoint, model]), modelLabel: model, observedAt: result.queriedAt, fraction: result.remainingFraction });
-      if (fingerprint && current && accountDisplayFingerprint(current) === fingerprint) void history?.imageObservation(result, fingerprint).catch(() => undefined);
+      if (!fingerprint || !current || accountDisplayFingerprint(current) !== fingerprint) throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
+      observeQuota?.({ accountId: id, fingerprint, quotaKey: JSON.stringify([endpoint, model]), modelLabel: model, observedAt: result.queriedAt, fraction: result.remainingFraction });
+      void history?.imageObservation(result, fingerprint).catch(() => undefined);
+      await display.rememberImage(current, result).catch(() => undefined);
+      if (signal.aborted || panel !== owner || quotaSelection() !== key) throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
       return result;
     }, imageQuotaErrorText);
     if (quotaSelection() === key && quota.getState().error && fingerprint) void history?.imageGap(id, fingerprint, model, endpoint).catch(() => undefined);
@@ -536,7 +544,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         if (origin) { if (origin.accountId !== account.id || !references.includes(origin.file)) throw Error('IMAGE_EDIT_SOURCE_CHANGED'); await verifyImageOrigin(origin); }
         const endpoint = direct.getEndpoint();
         if (choiceEndpoint !== undefined && endpoint !== choiceEndpoint) { refreshPending = true; throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED'); }
-        const operationId = randomUUID();
+        const operationId = randomUUID(), generationQuotaSelection = quotaSelection();
         releaseImage = enterImageOperation(operationId, { cancel });
         const request: DirectImageRequest = { prompt: draft.prompt, accountId: account.id, modelId: model.id,
           aspectRatio: draft.ratio, count: draft.count, size: draft.size as NonNullable<DirectImageRequest['size']>,
@@ -579,7 +587,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         status = result.batch.outcome === 'complete' ? tr("directImageUi.87bc993c01", { p0: result.images.length }) : tr("directImageUi.5129adff5e", { p0: result.images.length, p1: result.batch.error ? code(new Error(result.batch.error)) : result.batch.outcome });
         task.status = status;
         if (result.batch.outcome === 'complete') {
-          if (!cancelRequested && !active.signal.aborted && result.images.length) completedQuotaSelection = JSON.stringify([request.accountSource === 'saved' ? request.accountId : '@current', request.accountId, request.modelId, request.endpoint]);
+          if (!cancelRequested && !active.signal.aborted && result.images.length) completedQuotaSelection = generationQuotaSelection;
           try { await recent.clear(); } catch { status += tr("directImageUi.f43319f6a2"); }
         } else {
           const partial = Object.assign(new Error(result.batch.error ?? 'IMAGE_CANCELLED'),
@@ -626,7 +634,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     await refresh();
   }));
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.images.cancel', cancel));
-  const flush = async () => { await persistNow(); await session.flush(); await layoutSave; };
+  const flush = async () => { await persistNow(); await session.flush(); await layoutSave; await display.flush(); };
   context.subscriptions.push({ dispose: () => { disposed = true; stopRetry(); recommendation.dispose(); quota.invalidate(); choicesAbort?.abort(); active?.abort(); void flush(); } });
   return { flush, getStatus: () => status, getOutputDirectory: () => outputDirectory,
     accountStateChanged(state: { pending: boolean; email: string; accountIds: string[] }) {
@@ -637,9 +645,8 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       const summaries = direct.listAccounts?.();
       const savedIds = summaries?.map(account => account.id) ?? state.accountIds;
       const snapshot = JSON.stringify([state.pending, email, [...state.accountIds].sort(), summaries?.map(account =>
-        [account.id, account.expectedEmail, account.hostCurrent, account.hostId, account.capturedAt, account.migrationState]).sort() ?? [...savedIds].sort()]);
+        [account.id, account.expectedEmail, account.hostCurrent, account.hostId, account.capturedAt, account.migrationState, account.quotaDisplayId, account.verifiedSubject]).sort() ?? [...savedIds].sort()]);
       if (snapshot === accountSnapshot) return;
-      quota.invalidate();
       accountSnapshot = snapshot;
       const wasOfficialBlocked = officialBlocked;
       officialBlocked = state.pending || !email;
@@ -668,9 +675,10 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       if (email && !state.pending) verifiedEmail = email;
       if (checkSuspended && !officialBlocked) { choices.accounts = summaries ?? choices.accounts; emit(); return; }
       const blocked = state.pending || !email;
+      quota.invalidate(!changed);
       if (busy) { refreshPending = true; if (blocked) accountBlocked = true; return; }
       accountBlocked = blocked; ++choicesRevision; choicesAbort?.abort(); choicesLoading = false; refreshPending = true;
-      choices = { accounts: direct.listAccounts?.() ?? [], models: [] }; draft = { ...draft, accountId: '' };
+      choices = { accounts: direct.listAccounts?.() ?? [], models: [] }; if (changed) draft = { ...draft, accountId: '' };
       // Identity availability and operation results are separate. A transient
       // unknown proof must not announce a switch or erase a saved-image result.
       accountStatus = state.pending ? tr("directImageUi.1924bf8451") : !email ? tr("directImageUi.65e617c2d2") : changed ? tr("directImageUi.1c5b4ac149") : '';

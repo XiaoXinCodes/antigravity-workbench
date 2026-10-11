@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { LocalState } from './private-state';
-import { quotaFraction, accountDisplayFingerprint } from './quota-presentation';
+import { quotaFraction } from './quota-presentation';
+import { quotaObservationMatches, type QuotaObservationAccount } from './quota-observation';
 export type ObservationKind = 'bucket' | 'image-model';
 export interface QuotaObservation {
   id: string; accountId: string; fingerprint: string; kind: ObservationKind; key: string; label: string;
@@ -9,7 +10,7 @@ export interface QuotaObservation {
 }
 export interface QuotaHistoryState { schema: 1; retentionDays: number; rows: QuotaObservation[]; seen: { accountId: string; fingerprint: string; kind: ObservationKind; key: string; observedAt: string }[] }
 export interface HistoryFilter { accountId?: string; kind?: ObservationKind; key?: string; after?: number }
-export interface HistoryAccount { id: string; expectedEmail: string; hostId?: string; capturedAt?: string; migrationState?: string }
+export type HistoryAccount = QuotaObservationAccount;
 export const initialQuotaHistory = (): QuotaHistoryState => ({ schema: 1, retentionDays: 30, rows: [], seen: [] });
 const object = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : bad();
 const bad = (): never => { throw Error('QUOTA_HISTORY_INVALID'); };
@@ -33,7 +34,7 @@ const same = (a: Pick<QuotaObservation, 'accountId' | 'fingerprint' | 'kind' | '
 /** Observations, not consumption estimates. No sampling, interpolated values or credentials. */
 export class QuotaHistory {
   constructor(readonly store: LocalState<QuotaHistoryState>, private readonly accounts: () => HistoryAccount[], private readonly changed: () => void = () => undefined, private readonly now: () => number = Date.now) {}
-  private present(r: Pick<QuotaObservation, 'accountId' | 'fingerprint'>): boolean { const a = this.accounts().find(a => a.id === r.accountId); return !!a && accountDisplayFingerprint(a) === r.fingerprint; }
+  private present(r: Pick<QuotaObservation, 'accountId' | 'fingerprint'>): boolean { const a = this.accounts().find(a => a.id === r.accountId); return !!a && quotaObservationMatches(a, r.fingerprint); }
   private prune(s: QuotaHistoryState): void {
     const cutoff = this.now() - s.retentionDays * 86_400_000;
     s.rows = s.rows.filter(r => this.present(r) && Date.parse(r.eventAt) >= cutoff).sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt)).slice(-5000);

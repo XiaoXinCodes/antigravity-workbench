@@ -28,3 +28,8 @@ test('independent processes deduplicate history, preserve clear watermarks and r
   assert.equal((await store.read()).rows.length,0);assert.equal((await store.read()).seen.length,0);
  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
+
+test('ordinary recapture preserves both legacy and new observations; explicit same-ID replacement drops both',async()=>{
+ const {quotaObservationFingerprint}=require('../out/quota-observation'),f=fixture();await f.history.record(f.sample);const original=f.accounts[0].capturedAt;f.accounts[0].quotaDisplayId=original;f.accounts[0].capturedAt='2026-10-09T11:00:00.000Z';await f.history.reconcile();assert.equal((await f.history.read()).rows.length,1);await f.history.record({...f.sample,key:'new-bucket',fingerprint:quotaObservationFingerprint(f.accounts[0])});assert.equal((await f.history.read()).rows.length,2);
+ f.accounts[0].quotaDisplayId='22222222-2222-4222-8222-222222222222';await f.history.reconcile();assert.equal((await f.history.read()).rows.length,0);assert.equal((await f.store.read()).seen.length,0);
+});

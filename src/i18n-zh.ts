@@ -284,7 +284,7 @@ export const zhCN = {
   "directImageView.70cb67c0c4": "额度未知",
   "directImageView.50de7101cd": " · 旧值",
   "directImageView.bf4cedf76a": "查询失败",
-  "directImageView.31043c91da": "上次结果 · 已过期",
+  "directImageView.31043c91da": "上次查询结果 · 数据可能已变化",
   "directImageView.434203a723": "已更新",
   "directImageView.bce2a872e0": "重置 ",
   "directImageView.ecce09463f": "服务端未提供",
