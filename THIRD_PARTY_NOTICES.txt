@@ -27,3 +27,26 @@ ThirdPartyNoticeText.txt were reviewed. Compiler-only type definitions, Unicode
 identifier tables and other compiler components listed in that notice are not
 included in these four helper bodies or in this VSIX; they are not presented
 here as bundled components.
+
+
+sql.js 1.14.2 — bundled SQLite WebAssembly fallback
+
+Copyright (c) 2017 sql.js authors (see vendor/sql.js/AUTHORS).
+Licensed under MIT; full upstream license: LICENSES/sql.js-MIT.txt.
+Unmodified npm release files: vendor/sql.js/sql-wasm.js and sql-wasm.wasm.
+Release integrity and individual SHA-256 hashes: vendor/sql.js/provenance.json.
+Source: https://github.com/sql-js/sql.js/tree/1d5db4546e5feb944a3415739eb2a54103b54882
+
+The WASM contains SQLite 3.49.1 (public domain) and the public-domain
+extension-functions.c contribution. The sql.js generated Emscripten runtime
+is covered by MIT/NCSA; its bundled libc uses musl notices. Full texts:
+LICENSES/Emscripten-MIT-NCSA.txt and LICENSES/musl-COPYRIGHT.txt.
+These include the Node.js path-helper notice. This inventory includes the
+runtime licenses; the Emscripten compiler/build tools are not shipped.
+
+SQLite: https://sqlite.org/copyright.html
+Contributed functions: https://sqlite.org/contrib/download/extension-functions.c?get=25
+Emscripten license text: https://github.com/emscripten-core/emscripten/blob/3.1.64/LICENSE
+Musl notices: https://github.com/emscripten-core/emscripten/blob/3.1.64/system/lib/libc/musl/COPYRIGHT
+The license-text reference version does not assert the upstream binary's
+compiler version; sql.js does not publish it in the release metadata.

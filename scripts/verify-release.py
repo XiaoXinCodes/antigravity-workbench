@@ -17,6 +17,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 LICENSE_TEXT_HASHES = {
     'LICENSE': '12da070e58faaca8fa54ebc1f9b099b0c2a3c80fe0b92786776e3c52bd7b8698',
     'LICENSES/TypeScript-Apache-2.0.txt': 'a5e9f9b1575301c7a7a03508fdaa2e05a918cc17fd21c6e898096a96d6a34f61',
+    'LICENSES/sql.js-MIT.txt': '60a3f6e4d7b29b4321359e683b36cf198d24f58e24582070f56e6fa89d5ee2be',
+    'LICENSES/Emscripten-MIT-NCSA.txt': '1d678c6d3e6fca3245faaf72b66097b8df241172b38c8d9a16601e3a72b66386',
+    'LICENSES/musl-COPYRIGHT.txt': 'dd3d670b96794146071703a75b07421203e23e4ef11b4f8c484d90c465bcd6f5',
 }
 
 
@@ -29,6 +32,7 @@ def verify_license_notices(package, lock):
     third_party_notices = (ROOT / 'THIRD_PARTY_NOTICES.txt').read_text(encoding='utf-8')
     assert f'TypeScript {compiler_version}' in third_party_notices
     assert 'Copyright (c) Microsoft Corporation. All rights reserved.' in third_party_notices
+    assert 'sql.js 1.14.2' in third_party_notices and 'Copyright (c) 2017 sql.js authors' in third_party_notices
     return third_party_notices
 
 
@@ -74,7 +78,8 @@ def verify(vsix, source=None):
                 for source_name, member in {
                     'LICENSE': 'extension/LICENSE.txt',
                     'THIRD_PARTY_NOTICES.txt': 'extension/THIRD_PARTY_NOTICES.txt',
-                    'LICENSES/TypeScript-Apache-2.0.txt': 'extension/LICENSES/TypeScript-Apache-2.0.txt',
+                    **{name: 'extension/' + name for name in LICENSE_TEXT_HASHES if name != 'LICENSE'},
+                    **{str(p.relative_to(ROOT)): 'extension/' + str(p.relative_to(ROOT)) for p in (ROOT / 'vendor/sql.js').iterdir() if p.is_file()},
                 }.items():
                     assert member in archive.namelist(), f'Missing license notice: {member}'
                     assert archive.read(member) == (ROOT / source_name).read_bytes(), f'Changed license notice: {member}'

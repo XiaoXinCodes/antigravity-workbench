@@ -1,10 +1,11 @@
+import type { ModelObservation } from './model-observation';
 import { quotaFraction, quotaIsStale } from './quota-presentation';
 import type { ImageQuotaSnapshot } from './image-quota';
 import { randomUUID } from 'node:crypto';
 import type { LocalState } from './private-state';
 import { wakeOccurrences } from './wake-schedule';
 import { parseWakeTask, type WakeState, type WakeTask, type WakeInstance } from './wake-state';
-export interface WakeResult { phase: 'succeeded' | 'failed' | 'unknown' | 'skipped'; code: string; outputTokens?: number; totalTokens?: number }
+export interface WakeResult { phase: 'succeeded' | 'failed' | 'unknown' | 'skipped'; code: string; outputTokens?: number; totalTokens?: number; responseModel?: ModelObservation }
 export interface WakeExecution {
   fingerprint(accountId: string): string | undefined;
   quota?(task: WakeTask, signal: AbortSignal): Promise<ImageQuotaSnapshot>;
@@ -132,7 +133,11 @@ export class WakeEngine {
     } catch (e) { const code = e instanceof Error && /^[A-Z_0-9]{1,100}$/.test(e.message) ? e.message : 'WAKE_REQUEST_FAILED'; result = { phase: sent ? 'unknown' : 'failed', code: sent ? 'WAKE_OUTCOME_UNKNOWN' : code }; }
     finally { clearInterval(timer); if (this.active.get(task.id) === abort) this.active.delete(task.id); }
     await this.store.transaction(s => {
-      const row = s.instances.find(i => i.id === instance.id); if (!row || row.nonce !== instance.nonce || !running(row)) return;
+      const row = s.instances.find(i => i.id === instance.id); if (!row || row.nonce !== instance.nonce) return;
+      // Evidence belongs to this attempt even if another window already expired
+      // its lease. It must never resurrect execution or overwrite terminal status.
+      if (result.responseModel) row.responseModel = result.responseModel;
+      if (!running(row)) return;
       const current = s.tasks.find(t => t.id === task.id), invalid = abort.signal.aborted || !current || current.revision !== task.revision || this.execution.fingerprint(task.accountId) !== task.fingerprint;
       const phase = sent && invalid ? 'unknown' : !sent && invalid ? 'cancelled' : result.phase;
       Object.assign(row, result, { phase, code: phase === 'unknown' ? 'WAKE_OUTCOME_UNKNOWN' : phase === 'cancelled' ? 'WAKE_CANCELLED' : result.code });

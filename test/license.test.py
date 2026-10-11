@@ -18,7 +18,7 @@ class LicenseNotices(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = pathlib.Path(self.directory.name)
-        for name in ['LICENSE', 'LICENSES/TypeScript-Apache-2.0.txt', 'THIRD_PARTY_NOTICES.txt']:
+        for name in [*verify_release.LICENSE_TEXT_HASHES, 'THIRD_PARTY_NOTICES.txt']:
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)

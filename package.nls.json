@@ -50,5 +50,6 @@
   "command.automation.open": "Manage Scheduled Requests and Alerts",
   "command.privacy.toggle": "Toggle Account Identity Privacy",
   "configuration.hideIdentity": "Show stable account aliases across the workbench, images, tasks, quick picks and status bar.",
-  "command.quota.history": "Quota observations"
+  "command.quota.history": "Quota observations",
+  "command.observations.open": "Model and token records"
 }

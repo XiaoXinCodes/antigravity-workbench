@@ -1,3 +1,4 @@
+import { registerObservationsUi } from './request-observation-ui';
 import { registerQuotaHistory } from './quota-history-ui';
 import { registerAutomationUi, registerIdentityPrivacy } from './automation-ui';
 import { registerLocalizedHelp } from './localized-help';
@@ -23,6 +24,7 @@ let flushImageSession: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionDiagnosticsApi> {
   registerI18n(context);
+  registerObservationsUi(context);
   registerIdentityPrivacy(context);
   const helpUri = registerLocalizedHelp(context);
   let refreshDebug = (): void => undefined;
