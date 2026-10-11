@@ -29,7 +29,7 @@
 
 ## 验证
 
-- `npm run check`：1493 项，1489 通过，4 项按平台条件跳过；类型与静态检查通过。
+- `npm run check`：1494 项，1490 通过，4 项按平台条件跳过；类型与静态检查通过。
 - `python3 test/license.test.py`：8 项通过；`python3 test/release-safety.test.py`：34 项通过；`python3 test/package-docs.test.py`：5 项通过。
 - `npm run test:host`：隔离 Linux VS Code 1.141.0 的激活、命令、空闲操作和语言更新通过。
 - `npm run test:quota-host`：隔离 Linux VS Code 1.141.0；实际 Webview 重建、搜索/排序/折叠/焦点/滚动、原生 QuickPick、置顶状态栏与中英文布局通过。新增图片查询 37.50% 的关闭重开恢复，以及测试窗口完整重载后的四张历史账号卡片与图片读数恢复通过。

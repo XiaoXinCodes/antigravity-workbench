@@ -443,3 +443,10 @@ test('non-Windows permission denial remains immediate', async t => {
   fs.open = async function (name, ...args) { if (name === target && new Error().stack.includes('DebugLogStore.readFile')) { attempts++; throw sharingError(); } return original.call(this, name, ...args); };
   try { await assert.rejects(f.store.readLines(), { code: 'DEBUG_STORAGE_PERMISSION_DENIED' }); assert.equal(attempts, 1); } finally { fs.open = original; }
 });
+
+test('Windows transient append sharing retries before one bounded write', async t => {
+  const f = await fixture(t); await f.store.append(record(1), enabled); sharingPlatform(t);
+  const target = path.join(f.directory, (await files(f.directory))[0]), original = fs.open; let attempts = 0;
+  fs.open = async function (name, ...args) { if (name === target && new Error().stack.includes('DebugLogStore.writeRecord')) { if (++attempts <= 2) throw sharingError(); } return original.call(this, name, ...args); };
+  try { await f.store.append(record(2), enabled); assert.equal(attempts, 3); assert.deepEqual(await f.store.readLines(), [record(1), record(2)]); } finally { fs.open = original; }
+});

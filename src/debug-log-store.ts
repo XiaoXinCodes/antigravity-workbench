@@ -264,7 +264,7 @@ export class DebugLogStore {
   }
 
   private async writeRecord(record: Buffer, shouldWrite: () => boolean): Promise<void> {
-    for (let attempt = 0; attempt < 3 && this.allowed(shouldWrite); attempt += 1) {
+    for (let attempt = 0; attempt < (process.platform === 'win32' ? 6 : 3) && this.allowed(shouldWrite); attempt += 1) {
       if (!await this.checkDirectory(false, shouldWrite)) { return; }
       let file = this.currentFile;
       let handle: FileHandle | undefined;
@@ -272,7 +272,7 @@ export class DebugLogStore {
         if (file) {
           let stat: Stats;
           try { stat = await fs.lstat(path.join(this.directory, file.name)); }
-          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } throw error; }
+          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
           if (sameFile(stat, file.stat) && removedFile(stat)) { this.currentFile = undefined; continue; }
           this.validateFile(stat);
           if (!sameFile(stat, file.stat)) { throw unavailable('DEBUG_STORAGE_CHANGED'); }
@@ -290,7 +290,7 @@ export class DebugLogStore {
           file = { name, stat: await handle.stat() };
         } else {
           try { handle = await fs.open(path.join(this.directory, file.name), constants.O_WRONLY | constants.O_APPEND | NOFOLLOW | NONBLOCK); }
-          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } throw error; }
+          catch (error) { if (missing(error)) { this.currentFile = undefined; continue; } if (await this.retryWindowsSharing(error, attempt)) continue; throw error; }
         }
         const stat = await this.verifyHandle(file, handle);
         if (!stat) { this.currentFile = undefined; continue; }
