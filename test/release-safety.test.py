@@ -258,6 +258,9 @@ class ReleaseBranchCleanup(unittest.TestCase):
     def test_missing_branch_is_read_only(self):
         self.assertEqual(self.exercise(absent=True), ([], False))
 
+    def test_missing_branch_does_not_block_later_nonrelease_main_changes(self):
+        self.assertEqual(self.exercise(absent=True, unpublished=True, wrong_tag=True), ([], False))
+
     def test_moved_branch_is_refused(self):
         with self.assertRaisesRegex(AssertionError, 'head moved'):
             self.exercise(moved=True)

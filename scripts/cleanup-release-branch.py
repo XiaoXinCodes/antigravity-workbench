@@ -32,14 +32,14 @@ def main():
     assert run('git', 'remote', 'get-url', 'origin') in {'https://github.com/' + publish.REPO, 'https://github.com/' + publish.REPO + '.git'}
     publish.assert_repository_identity(api(''))
     assert api('git/ref/heads/main')['object']['sha'] == sha, 'main moved'
-    release = api('releases/tags/' + publish.TAG)
-    assert release['draft'] is False and release['prerelease'] is False and release.get('published_at'), 'Release is not published'
-    tag = api('git/ref/tags/' + publish.TAG)['object']
-    assert tag['type'] == 'commit' and tag['sha'] == sha, 'Release tag differs'
     refs = branch_refs()
     if not refs:
         print(BRANCH + ' already absent; no refs changed.')
         return
+    release = api('releases/tags/' + publish.TAG)
+    assert release['draft'] is False and release['prerelease'] is False and release.get('published_at'), 'Release is not published'
+    tag = api('git/ref/tags/' + publish.TAG)['object']
+    assert tag['type'] == 'commit' and tag['sha'] == sha, 'Release tag differs'
     prs = [pr for pr in api('commits/' + sha + '/pulls') if pr['head']['ref'] == BRANCH
            and pr['head']['repo']['id'] == publish.REPO_ID and pr['base']['ref'] == 'main']
     assert len(prs) == 1, 'Expected this release merged PR'
