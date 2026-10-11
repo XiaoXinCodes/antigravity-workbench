@@ -53,11 +53,11 @@ test('read-only hub model list requires current verified identity and explicit i
   const state = { userStatus: { email, cascadeModelConfigData: { clientModelConfigs: [{ modelId: 'text-only', label: 'Text' }] } } };
   const available = { response: { imageGenerationModelIds: [model.id], models: { [model.id]: {} } } };
   assert.deepEqual(currentImageModels(auth, state, available, email), [model]);
-  for (const [id, name] of [['gemini-3.1-flash-lite-image', 'Nano Banana 2 Lite'],
-    ['gemini-3-pro-image', 'Nano Banana Pro'], ['gemini-2.5-flash-image', 'Nano Banana']]) {
+  for (const [id, name] of [['synthetic-visual-one', 'Server original one'],
+    ['synthetic-visual-two', 'Server original two'], ['synthetic-visual-three', '服务端名称']]) {
     assert.deepEqual(currentImageModels(auth, state,
-      { response: { imageGenerationModelIds: [id], models: { [id]: {} } } }, email),
-      [{ id, label: `${name}（${id}）` }]);
+      { response: { imageGenerationModelIds: [id], models: { [id]: {displayName:name} } } }, email),
+      [{ id, label: `${name} (${id})` }]);
   }
   assert.throws(() => currentImageModels(auth, { userStatus: { ...state.userStatus, email: 'other@example.test' } }, available, email), { message: 'IMAGE_DIRECT_ACCOUNT_CHANGED' });
   assert.throws(() => currentImageModels({}, state, available, email), { message: 'IMAGE_DIRECT_AUTH_REQUIRED' });
@@ -73,7 +73,11 @@ test('official Hub identity selects one host-bound account even if sidebar activ
     if (name === 'vscode') return { UIKind: { Desktop: 1 }, env: { uiKind: 1, remoteName: 'wsl' },
       workspace: { isTrusted: true, getConfiguration: () => ({ inspect: () => undefined }) }, extensions: { getExtension: () => extension } };
     if (name === './official-extension-identity') return { pinOfficialExtension: () => ({}), matchesOfficialExtension: () => true };
-    if (name === './native-host') return { nativeHostStatus: () => ({ available: true }) };
+    if (name === './native-host') return { nativeHostStatus: () => ({ available: true }), resolveCredentialHostId: async () => hostId };
+    if (name === './live-lock') return { LiveLocks: class { async withOperation(fn) { return fn(); } } };
+    if (name === './live-environment') return { EnvironmentTokenSlots: class { async mode() { return 'wsl-file'; } } };
+    if (name === './direct-image-binding') return { ...require('../out/direct-image-binding'), bindCurrentAccountAccess: async input => {await input.assertCurrent();return {token,projectId:'offline-project',verify:async()=>{}}} };
+    if (name === './saved-image-models') return { readSavedImageModels: async () => ({imageGenerationModelIds:[model.id],models:{[model.id]:{}}}) };
     if (name === './live-hub') return { generation: require('../out/live-hub').generation, hasOfficialHubApi: () => true, hubRpc: async (_api, method) => {
       requested++;
       if (method === 'GetAuthStatus') return { authResult: { hasValidAuth: true } };
@@ -85,12 +89,12 @@ test('official Hub identity selects one host-bound account even if sidebar activ
   try {
     delete require.cache[entry];
     const { createDirectImageIntegration } = require(entry);
-    const direct = createDirectImageIntegration({}, () => [{ ...selected, active: false }]);
+    const direct = createDirectImageIntegration({globalStorageUri:{toString:()=> 'synthetic'},globalState:{get:(_k,f)=>f}}, () => [{ ...selected, active: false }]);
     const result = await direct.readChoices(new AbortController().signal);
     assert.equal(result.accounts.length, 1);
     assert.equal(result.accounts[0].id, accountId);
     assert.equal(result.accounts[0].active, true);
-    assert.equal(requested, 5);
+    assert.equal(requested, 8);
   } finally { Module._load = original; delete require.cache[entry]; }
 });
 
@@ -103,7 +107,11 @@ test('storage and official Hub startup readiness recover without premature RPC o
     if (name === 'vscode') return { UIKind: { Desktop: 1 }, env: { uiKind: 1, remoteName: 'wsl' },
       workspace: { isTrusted: true, getConfiguration: () => ({ inspect: () => undefined }) }, extensions: { getExtension: () => extension } };
     if (name === './official-extension-identity') return { pinOfficialExtension: () => ({}), matchesOfficialExtension: () => true };
-    if (name === './native-host') return { nativeHostStatus: () => ({ available: true }) };
+    if (name === './native-host') return { nativeHostStatus: () => ({ available: true }), resolveCredentialHostId: async () => hostId };
+    if (name === './live-lock') return { LiveLocks: class { async withOperation(fn) { return fn(); } } };
+    if (name === './live-environment') return { EnvironmentTokenSlots: class { async mode() { return 'wsl-file'; } } };
+    if (name === './direct-image-binding') return { ...require('../out/direct-image-binding'), bindCurrentAccountAccess: async input => {await input.assertCurrent();return {token,projectId:'offline-project',verify:async()=>{}}} };
+    if (name === './saved-image-models') return { readSavedImageModels: async () => ({imageGenerationModelIds:[model.id],models:{[model.id]:{}}}) };
     if (name === './live-hub') return { generation: require('../out/live-hub').generation, hasOfficialHubApi: () => apiReady, hubRpc: async (_api, method) => {
       requested++;
       if (method === 'GetAuthStatus') return { authResult: { hasValidAuth: true } };
@@ -115,7 +123,7 @@ test('storage and official Hub startup readiness recover without premature RPC o
   try {
     delete require.cache[entry];
     const { createDirectImageIntegration } = require(entry);
-    const direct = createDirectImageIntegration({}, () => [{ ...selected, active: false }], { accountsReady: () => ready });
+    const direct = createDirectImageIntegration({globalStorageUri:{toString:()=> 'synthetic'},globalState:{get:(_k,f)=>f}}, () => [{ ...selected, active: false }], { accountsReady: () => ready });
     const signal = new AbortController().signal;
     await assert.rejects(direct.readChoices(signal), { message: 'IMAGE_ACCOUNT_INITIALIZING' });
     assert.throws(() => direct.selectSavedAccount(accountId), { message: 'IMAGE_ACCOUNT_INITIALIZING' });
@@ -129,7 +137,7 @@ test('storage and official Hub startup readiness recover without premature RPC o
     assert.equal(result.accounts.length, 1);
     assert.equal(result.accounts[0].id, accountId);
     assert.equal(result.accounts[0].active, true);
-    assert.equal(requested, 5);
+    assert.equal(requested, 8);
   } finally { Module._load = original; delete require.cache[entry]; }
 });
 
@@ -159,7 +167,7 @@ test('current account changing to another saved account blocks the integration b
       if (method === 'GetUserStatus') return { userStatus: { email: currentEmail } };
       return { response: { imageGenerationModelIds: [model.id], models: { [model.id]: {} } } };
     } };
-    if (name === './direct-image-binding') return { currentImageModels, bindSavedImageAccount: async input => {
+    if (name === './direct-image-binding') return { imageModelsFromCatalog: require('../out/direct-image-binding').imageModelsFromCatalog, bindCurrentAccountAccess: async input => {
       await input.assertCurrent(); verifyCalls++;
       currentEmail = other.expectedEmail;
       await input.assertCurrent(); verifyCalls++;
@@ -537,19 +545,23 @@ test('catalog membership accepts new and unknown image IDs and rejects invented,
  for(const id of ['gemini-nano-banana-2.1','future-visual-v4']){
   const choice=currentImageModels(auth,state,{response:{imageGenerationModelIds:[id],models:{[id]:{},'text-model':{}}}},email)[0];
   assert.equal(Object.isFrozen(choice),true);const bound=await binding(vault(),{model:choice});assert.equal(bound.modelId,id);
-  if(id==='gemini-nano-banana-2.1')assert.match(choice.label,/Nano Banana 2.1/);
+  assert.equal(choice.label,id);
   await assert.rejects(binding(vault(),{model:{...choice}}),/MODEL_UNVERIFIED/);
  }
  const other=currentImageModels(auth,{userStatus:{email:'other@example.test'}},{response:{imageGenerationModelIds:[model.id],models:{[model.id]:{}}}},'other@example.test')[0];
  for(const candidate of [other,{id:'invented-image',label:'Fake'},{id:'text-model',label:'Text'}])await assert.rejects(binding(vault(),{model:candidate}),/MODEL_UNVERIFIED/);
- for(const disabled of [true,'false',1,null])assert.throws(()=>currentImageModels(auth,state,{response:{imageGenerationModelIds:[model.id],models:{[model.id]:{disabled}}}},email),/MODEL_UNVERIFIED/);
+ for(const disabled of [true,'false',1,null])assert.deepEqual(currentImageModels(auth,state,{response:{imageGenerationModelIds:[model.id],models:{[model.id]:{disabled}}}},email),[]);
 });
-for(const change of ['identity','auth','endpoint'])test(`current catalog rejects ${change} changes during GetAvailableModels before publishing choices`,async()=>{
+for(const change of ['identity','auth','endpoint'])test(`current catalog rejects ${change} changes during endpoint directory lookup before publishing choices`,async()=>{
  const entry=require.resolve('../out/direct-image-vscode'),old=Module._load;let changed=false,catalogs=0,endpoint='daily';const extension={isActive:true,exports:{port:40001,csrfToken:'synthetic-local-session'}};
  Module._load=function(name,...args){
   if(name==='vscode')return{UIKind:{Desktop:1},env:{uiKind:1,remoteName:'wsl'},workspace:{isTrusted:true,getConfiguration:()=>({inspect:()=>({globalValue:endpoint})})},extensions:{getExtension:()=>extension}};
   if(name==='./official-extension-identity')return{pinOfficialExtension:()=>({}),matchesOfficialExtension:()=>true};
-  if(name==='./native-host')return{nativeHostStatus:()=>({available:true})};
+  if(name==='./native-host')return{nativeHostStatus:()=>({available:true}),resolveCredentialHostId:async()=>hostId};
+  if(name==='./live-lock')return{LiveLocks:class{async withOperation(fn){return fn()}}};
+  if(name==='./live-environment')return{EnvironmentTokenSlots:class{async mode(){return 'wsl-file'}}};
+  if(name==='./direct-image-binding')return{...require('../out/direct-image-binding'),bindCurrentAccountAccess:async input=>{await input.assertCurrent();return{token,projectId:'offline-project',verify:async()=>{}}}};
+  if(name==='./saved-image-models')return{readSavedImageModels:async()=>{catalogs++;changed=true;if(change==='endpoint')endpoint='production';return{imageGenerationModelIds:[model.id],models:{[model.id]:{}}}}};
   if(name==='./live-hub')return{generation:require('../out/live-hub').generation,hasOfficialHubApi:()=>true,hubRpc:async(_api,method)=>{
    if(method==='GetAuthStatus')return{authResult:{hasValidAuth:!changed||change!=='auth'}};
    if(method==='GetUserStatus')return{userStatus:{email:changed&&change==='identity'?'other@example.test':email}};
@@ -557,5 +569,5 @@ for(const change of ['identity','auth','endpoint'])test(`current catalog rejects
   }};
   return old.call(this,name,...args);
  };
- try{delete require.cache[entry];const direct=require(entry).createDirectImageIntegration({subscriptions:[]},()=>[selected],{journal:{dispose(){},read:async()=>[],write:async()=>true}});await assert.rejects(direct.readChoices(new AbortController().signal),new RegExp(change==='endpoint'?'ENDPOINT_CHANGED':'ACCOUNT_CHANGED'));assert.equal(catalogs,1);}finally{Module._load=old;delete require.cache[entry]}
+ try{delete require.cache[entry];const direct=require(entry).createDirectImageIntegration({subscriptions:[],globalStorageUri:{toString:()=> 'synthetic'},globalState:{get:(_k,f)=>f}},()=>[selected],{journal:{dispose(){},read:async()=>[],write:async()=>true}});await assert.rejects(direct.readChoices(new AbortController().signal),new RegExp(change==='endpoint'?'ENDPOINT_CHANGED':'ACCOUNT_CHANGED'));assert.equal(catalogs,1);}finally{Module._load=old;delete require.cache[entry]}
 });

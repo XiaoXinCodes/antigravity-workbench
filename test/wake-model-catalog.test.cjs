@@ -7,7 +7,7 @@ const {sendWake}=require('../out/wake-transport');
 const {catalog}=require('./fixtures/conversation-catalog.cjs');
 test('server agent choices use exact map keys, preserving multimodal input support and excluding image generation',()=>{
  const raw=catalog();assert.deepEqual(parse(raw).map(x=>x.id),['synthetic-text-alpha','synthetic-unlisted-model']);assert.equal(parse(raw)[1].classification,'unclassified');
- assert.match(parse(raw)[0].label,/synthetic-text-alpha/);assert.deepEqual(imageModelsFromCatalog(raw).map(x=>x.id),['synthetic-image-model']);
+ assert.match(parse(raw)[0].label,/synthetic-text-alpha/);assert.deepEqual(imageModelsFromCatalog(raw).map(x=>x.id),['synthetic-image-model','synthetic-unlisted-model']);
  assert.ok(raw.models['synthetic-text-alpha'].supportsImages);assert.equal(raw.models['synthetic-text-alpha'].model,'MODEL_SYNTHETIC_AGENT');
 });
 test('names, constants and quota pool IDs do not classify models or replace callable IDs',()=>{

@@ -1,3 +1,4 @@
+import { assertModelUse } from './model-catalog';
 import * as vscode from 'vscode';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -49,8 +50,11 @@ export function createWakeAccounts(context: vscode.ExtensionContext, live: LiveU
       if (!available() || fingerprint(task.accountId) !== task.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
       saved.selectForWindow(task.accountId);
       // Requery this account before every actual send; a stale catalog is not a membership proof.
-      await saved.choices(task.accountId, signal, task.endpoint, true);
-      const binding = await saved.bind(task.accountId, task.modelId, signal, task.endpoint, task.schedule.mode === 'quota-recovery');
+      const models = await saved.choices(task.accountId, signal, task.endpoint, true);
+      const model = models.find(model => model.id === task.modelId);
+      if (!model) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+      assertModelUse(model, task.confirmedModelUse === true, 'WAKE_MODEL_USAGE_REQUIRED');
+      const binding = await saved.bind(task.accountId, task.modelId, signal, task.endpoint, task.schedule.mode === 'quota-recovery', task.confirmedModelUse === true);
       return locks.withOperation(async () => {
         if (!available() || fingerprint(task.accountId) !== task.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
         return sendWake({ ...binding, endpoint: task.endpoint }, task.outputBudget, signal, async () => {

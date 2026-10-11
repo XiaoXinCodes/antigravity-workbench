@@ -1,3 +1,4 @@
+require('../helpers/offline-only.cjs');
 const path=require('node:path'),root=path.resolve(__dirname,'../..');
 exports.activate=context=>{
  require(path.join(root,'out/i18n-vscode')).registerI18n(context);require(path.join(root,'out/automation-ui')).registerIdentityPrivacy(context);

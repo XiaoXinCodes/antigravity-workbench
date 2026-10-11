@@ -1,3 +1,4 @@
+import { validModelId } from './model-catalog';
 import { t as tr } from './i18n';
 import * as path from 'node:path';
 import * as files from './image-files';
@@ -10,6 +11,7 @@ import { readDirectRaster, type RasterMime } from './direct-image-raster';
 export { decodeDirectImageResponse } from './direct-image-response';
 
 export interface DirectImageRequest {
+  confirmedModelUse?: boolean;
   prompt: string; accountId: string; modelId: string; aspectRatio: string;
   outputDirectory: string; references: string[]; count?: number;
   size?: 'auto' | '1K' | '2K' | '4K'; quality?: 'auto' | 'detail';
@@ -20,6 +22,7 @@ export interface BoundImageAccount {
   readonly accountId?: string; readonly modelSource?: 'official-hub' | 'saved-account';
   readonly token: string; readonly projectId: string; readonly modelId: string;
   readonly projectSource?: 'saved-token' | 'loadCodeAssist';
+  readonly imageInput?: boolean;
   readonly endpoint?: ImageEndpoint; readonly modelEnum?: string;
   verify(signal: AbortSignal): Promise<void>;
 }
@@ -29,15 +32,17 @@ export interface DirectImageDependencies {
   onProgress?: (value: { phase: string; message: string }) => void;
 }
 const ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const MODEL = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{2,127}$/;
 const RATIOS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
 function check(signal: AbortSignal) { if (signal.aborted) throw new Error('IMAGE_CANCELLED'); }
 
 /** The image operation has no agent, commands, plugins, SDK identity, or tool execution. */
 export function buildDirectImageBody(request: DirectImageRequest, bound: BoundImageAccount, refs: readonly (Buffer | { data: Buffer; mime: RasterMime })[]) {
   const rasterRefs = refs.map(ref => Buffer.isBuffer(ref) ? { data: ref, mime: 'image/png' as const } : ref);
-  if (bound.accountId !== undefined && bound.accountId !== request.accountId || !ID.test(request.accountId) || !MODEL.test(request.modelId) || bound.modelId !== request.modelId ||
+  if (bound.accountId !== undefined && bound.accountId !== request.accountId || !ID.test(request.accountId) || !validModelId(request.modelId) || bound.modelId !== request.modelId ||
       !validImageProject(bound.projectId) || !RATIOS.has(request.aspectRatio) || refs.length > 3 ||
+      request.size !== undefined && !['auto', '1K', '2K', '4K'].includes(request.size) ||
+      request.quality !== undefined && !['auto', 'detail'].includes(request.quality) ||
+      bound.imageInput === false && refs.length > 0 ||
       rasterRefs.some(x => !['image/png', 'image/jpeg'].includes(x.mime) || x.data.length > 8 * 1024 * 1024) || rasterRefs.reduce((n, x) => n + x.data.length, 0) > 16 * 1024 * 1024) throw new Error('IMAGE_DIRECT_SCOPE_INVALID');
   const prompt = [request.prompt, request.quality === 'detail' ? 'Artwork preference: rich fine details.' : ''].filter(Boolean).join('\n');
   const imageConfig: Record<string, string> = { aspectRatio: request.aspectRatio };
@@ -55,7 +60,7 @@ export async function generateDirectImage(request: DirectImageRequest, signal: A
   if (typeof request.prompt !== 'string' || !request.prompt.trim() || request.prompt.length > 16_000 ||
       !Array.isArray(request.references) || request.references.length > 3 ||
       !RATIOS.has(request.aspectRatio) || !request.outputDirectory ||
-      !ID.test(request.accountId) || !MODEL.test(request.modelId)) throw new Error('IMAGE_DIRECT_SCOPE_INVALID');
+      !ID.test(request.accountId) || !validModelId(request.modelId)) throw new Error('IMAGE_DIRECT_SCOPE_INVALID');
   if (running) throw new Error('IMAGE_BUSY');
   check(signal); running = true;
   try {

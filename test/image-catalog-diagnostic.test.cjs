@@ -9,7 +9,7 @@ function fixture(){let endpoint='daily',changed=false,directs=0,checks=0;const a
  return{deps,accounts,get directs(){return directs},get checks(){return checks},change:()=>changed=true,endpoint:e=>endpoint=e};}
 test('catalog projection keeps only bounded IDs and boolean disabled declarations',()=>{
  const result=summarizeImageCatalog({...catalog([n],{[p]:{disabled:true,label:'SENTINEL_EMAIL'}}),token:'SENTINEL_TOKEN',project:'SENTINEL_PROJECT',prompt:'SENTINEL_PROMPT'});
- assert.equal(result.status,'queried');assert.deepEqual(result.imageModels,[{id:n,disabled:'unspecified'}]);assert.deepEqual(result.proModels,[{id:p,disabled:true,listed:false}]);assert.doesNotMatch(JSON.stringify(result),/SENTINEL/);
+ assert.equal(result.status,'queried');assert.deepEqual(result.imageModels,[{id:n,disabled:'unspecified'}]);assert.deepEqual(result.allModels,[{id:n,disabled:'unspecified',listed:true},{id:p,disabled:true,listed:false}]);assert.doesNotMatch(JSON.stringify(result),/SENTINEL/);
  for(const data of [{},catalog([n,n]),{imageGenerationModelIds:[n],models:{}},catalog(['bad\nID']),catalog(['ya29.private-secret']),catalog([n],{[n]:{disabled:'false'}})])assert.equal(summarizeImageCatalog(data).status,'invalid');
 });
 test('same-account diagnosis shows difference, Pro declarations, endpoint and unknown cache age without private fields',async()=>{

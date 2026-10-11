@@ -1,3 +1,4 @@
+require('../helpers/offline-only.cjs');
 const path=require('node:path'),{EventEmitter}=require('node:events');
 const root=path.resolve(__dirname,'../..');
 exports.activate=context=>{

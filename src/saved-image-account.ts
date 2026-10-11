@@ -1,3 +1,4 @@
+import { parseModelCatalog, assertModelUse } from './model-catalog';
 import { summarizeImageCatalog, type CatalogSummary } from './image-catalog-diagnostic';
 import { imageQuotaFromCatalog, type ImageQuotaRow } from './image-quota';
 import { createHash } from 'node:crypto';
@@ -31,7 +32,7 @@ interface Prepared {
   token: string; projectId: string; endpoint: ImageEndpoint; models: ImageModelChoice[]; catalog: CatalogSummary; quota: ImageQuotaRow[]; queriedAt: string; verify(signal: AbortSignal): Promise<void>;
 }
 const check = (signal: AbortSignal) => { if (signal.aborted) throw new Error('IMAGE_CANCELLED'); };
-const fingerprint = (account: AccountChoice) => createHash('sha256').update(JSON.stringify([account.id, account.expectedEmail.toLowerCase(), account.hostId, account.capturedAt])).digest('hex');
+const fingerprint = (account: AccountChoice) => createHash('sha256').update(JSON.stringify([account.id, account.expectedEmail.toLowerCase(), account.hostId, account.capturedAt, account.verifiedSubject, account.quotaDisplayId])).digest('hex');
 /** Explicit selections, cache and bearer material stay in this host's memory.
  * Selecting an existing login permits its normal checks, not a new OAuth grant. */
 export class SavedImageAccounts {
@@ -98,12 +99,13 @@ export class SavedImageAccounts {
           await diagnostic?.assertCurrent();
           const rawResponse = await this.deps.models(access.accessToken, project.projectId, requestSignal, endpoint);
           access.assertPublicResponse(rawResponse);
-          const response = this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse;
+          let response;
+          try { response = parseModelCatalog(this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse); }
+          catch { throw Error('IMAGE_SAVED_MODELS_INVALID'); }
           await diagnostic?.assertCurrent();
           const catalog = summarizeImageCatalog(response);
           let models: ImageModelChoice[] = [];
           try { models = this.deps.parseModels(response); } catch (error) { if (!diagnostic) throw error; }
-          if (!diagnostic && !models.length) throw new Error('IMAGE_SAVED_MODELS_UNAVAILABLE');
           return { token: access.accessToken, tokenExpiry: access.expiry, projectId: project.projectId, models, catalog,
             quota: models.length ? imageQuotaFromCatalog(response, models) : [], queriedAt: new Date(this.now()).toISOString() };
         });
@@ -130,8 +132,12 @@ export class SavedImageAccounts {
     // Local metadata lookups queue; the existing filesystem lock also excludes quota/refresh/removal in other windows.
     const pending = this.queue.then(work, work); this.queue = pending.catch(() => undefined); return pending;
   }
+  async directory(id: string, signal: AbortSignal, endpoint: ImageEndpoint, force = false) {
+    const prepared = await this.prepare(id, signal, endpoint, force);
+    return { models: prepared.models.map(x => ({ ...x })), queriedAt: prepared.queriedAt, source: 'fetchAvailableModels' as const };
+  }
   async choices(id: string, signal: AbortSignal, endpoint: ImageEndpoint, force = false): Promise<ImageModelChoice[]> {
-    return (await this.prepare(id, signal, endpoint, force)).models.map(x => ({ ...x }));
+    return (await this.directory(id, signal, endpoint, force)).models;
   }
   async quota(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint) {
     const prepared = await this.prepare(id, signal, endpoint, true);
@@ -148,13 +154,14 @@ export class SavedImageAccounts {
   async diagnoseCatalog(id: string, signal: AbortSignal, endpoint: ImageEndpoint, assertCurrent: () => Promise<void>): Promise<CatalogSummary> {
     return (await this.prepare(id, signal, endpoint, true, { assertCurrent })).catalog;
   }
-  async bind(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint, requireFull = false): Promise<BoundImageAccount> {
+  async bind(id: string, modelId: string, signal: AbortSignal, endpoint: ImageEndpoint, requireFull = false, confirmedUse = false): Promise<BoundImageAccount> {
     const prepared = await this.prepare(id, signal, endpoint), model = prepared.models.find(x => x.id === modelId);
-    if (!model) throw new Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+    if (!model) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
+    assertModelUse(model, confirmedUse, 'IMAGE_MODEL_USAGE_REQUIRED');
     if (requireFull && (prepared.quota.find(row => row.modelId === modelId)?.remainingFraction !== 1 || this.now() - Date.parse(prepared.queriedAt) >= 60_000)) throw Error('WAKE_QUOTA_NOT_FULL');
     return Object.freeze({ token: prepared.token, projectId: prepared.projectId, modelId: model.id, accountId: id,
       endpoint, projectSource: 'loadCodeAssist' as const, modelSource: 'saved-account' as const,
-      ...(model.modelEnum ? { modelEnum: model.modelEnum } : {}), verify: prepared.verify });
+      ...(model.modelEnum ? { modelEnum: model.modelEnum } : {}), ...(model.imageInput === undefined ? {} : { imageInput: model.imageInput }), verify: prepared.verify });
   }
 }
 /** Exact encrypted-record revision. The value never leaves extension-host memory. */

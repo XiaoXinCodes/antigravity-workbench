@@ -1,25 +1,23 @@
+import { parseModelCatalog, validModelId } from './model-catalog';
 import { t as tr } from './i18n';
 import type { AccountChoice } from './direct-image-binding';
 import { imageEndpointHost, type ImageEndpoint } from './direct-image-protocol';
 
-const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-const safeId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/.test(value) && !/^(?:ya29\.|1\/\/|gh[pousr]_|bearer|token|secret)/i.test(value);
+const safeId = (value: unknown): value is string => typeof value === 'string' && validModelId(value) && !/^(?:ya29\.|1\/\/|gh[pousr]_|bearer|token|secret)/i.test(value);
 export interface CatalogSummary {
   status: 'queried' | 'invalid';
   imageModels: { id: string; disabled: boolean | 'unspecified' }[];
-  proModels: { id: string; listed: boolean; disabled: boolean | 'unspecified' }[];
+  allModels: { id: string; listed: boolean; disabled: boolean | 'unspecified' }[];
 }
 /** Projection only: no arbitrary keys, labels, error text, project or identity values leave this module. */
 export function summarizeImageCatalog(value: unknown): CatalogSummary {
-  const invalid: CatalogSummary = { status: 'invalid', imageModels: [], proModels: [] };
-  if (!object(value) || !Array.isArray(value.imageGenerationModelIds) || value.imageGenerationModelIds.length > 100 || !object(value.models)) return invalid;
-  const ids = value.imageGenerationModelIds, records = value.models;
-  if (new Set(ids).size !== ids.length || ids.some(id => !safeId(id) || !Object.hasOwn(records, id) || !object(records[id]) || records[id].disabled !== undefined && typeof records[id].disabled !== 'boolean')) return invalid;
-  const disabled = (id: string): boolean | 'unspecified' => object(records[id]) && typeof records[id].disabled === 'boolean' ? records[id].disabled : 'unspecified';
-  return { status: 'queried', imageModels: ids.map(id => ({ id, disabled: disabled(id) })),
-    proModels: Object.keys(records).filter(id => safeId(id) && /(?:^|[-_.])pro(?:[-_.]|$)/i.test(id)).sort().slice(0, 100)
-      .filter(id => object(records[id]) && (records[id].disabled === undefined || typeof records[id].disabled === 'boolean'))
-      .map(id => ({ id, listed: ids.includes(id), disabled: disabled(id) })) };
+  const invalid: CatalogSummary = { status: 'invalid', imageModels: [], allModels: [] };
+  try {
+    const catalog = parseModelCatalog(value);
+    if (catalog.models.some(row => row.disabled === 'invalid') || catalog.imageIds.some(id => !safeId(id))) return invalid;
+    const rows = catalog.models.filter(row => safeId(row.id)).map(row => ({ id: row.id, listed: row.image, disabled: row.disabled as boolean | 'unspecified' }));
+    return { status: 'queried', imageModels: rows.filter(row => row.listed).map(({ id, disabled }) => ({ id, disabled })), allModels: rows };
+  } catch { return invalid; }
 }
 export interface CatalogDiagnosticDependencies {
   endpoint(): ImageEndpoint;
@@ -33,7 +31,7 @@ function sourceLines(label: string, endpoint: string, summary: CatalogSummary | 
   const lines = [`${label} · ${endpoint}`, tr("imageCatalogDiagnostic.7ec3a233e2", { p0: observedAt }), tr("imageCatalogDiagnostic.d2448497a2", { p0: summary?.status === 'queried' ? tr("imageCatalogDiagnostic.54a3c7bc15") : summary ? tr("imageCatalogDiagnostic.23bb3a4098") : failure })];
   if (summary?.status !== 'queried') return lines;
   lines.push(tr("imageCatalogDiagnostic.ad2aeadc51"), ...(summary.imageModels.length ? summary.imageModels.map(m => `  ${m.id} · ${declaration(m.disabled)}`) : [tr("imageCatalogDiagnostic.909aff071c")]));
-  lines.push(tr("imageCatalogDiagnostic.5587c66677"), ...(summary.proModels.length ? summary.proModels.map(m => `  ${m.id} · ${m.listed ? tr("imageCatalogDiagnostic.c27ef48917") : tr("imageCatalogDiagnostic.541ef70700")} · ${declaration(m.disabled)}`) : [tr("imageCatalogDiagnostic.22db2dc2bf")]));
+  lines.push(tr("imageCatalogDiagnostic.5587c66677"), ...(summary.allModels.length ? summary.allModels.map(m => `  ${m.id} · ${m.listed ? tr("imageCatalogDiagnostic.c27ef48917") : tr("imageCatalogDiagnostic.541ef70700")} · ${declaration(m.disabled)}`) : [tr("imageCatalogDiagnostic.22db2dc2bf")]));
   return lines;
 }
 /** Explicit one-shot lookup. A failed or changed current identity never authorizes another saved account. */

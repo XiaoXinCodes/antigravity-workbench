@@ -38,12 +38,9 @@
         ],
         "labels": {
           "last_step_index": "0",
-          "model_enum": "MODEL_PLACEHOLDER_M21",
+          "model_enum": "MODEL_SYNTHETIC_WIRE",
           "request_id": "20000000-0000-4000-8000-000000000002-0",
-          "trajectory_id": "20000000-0000-4000-8000-000000000002",
-          "used_claude": "false",
-          "used_claude_conservative": "false",
-          "used_non_gemini_model": "false"
+          "trajectory_id": "20000000-0000-4000-8000-000000000002"
         },
         "generationConfig": {
           "candidateCount": 1,
@@ -52,7 +49,7 @@
           }
         }
       },
-      "model": "gemini-3.1-flash-image",
+      "model": "synthetic-visual-wire",
       "requestType": "image_gen"
     }
   }

@@ -33,7 +33,7 @@ for(const failSecond of [false,true])test(`saved-account integration: independen
  const blocked=await f.direct.readChoices(signal,B);assert.equal(blocked.readiness,'error');assert.equal(blocked.accountMessage,'IMAGE_SAVED_SELECTION_REQUIRED');assert.equal(f.reads,0);assert.equal(f.sends,0);
  f.direct.selectSavedAccount(B);const choices=await f.direct.readChoices(signal,B);assert.equal(choices.readiness,'ready');assert.deepEqual(choices.models.map(x=>x.id),[model]);
  const result=await f.direct.run(f.request,signal,()=>{});assert.equal(result.batch.outcome,failSecond?'partial':'complete');assert.equal(result.images.length,failSecond?1:3);assert.ok(result.images.every(x=>x.accountId===B));
- assert.equal(f.sends,failSecond?2:3);assert.equal(f.exchanges,1);assert.equal(f.events.filter(x=>x==='models-B').length,1);assert.equal(f.events.filter(x=>x==='project-B').length,1);
+ assert.equal(f.sends,failSecond?2:3);assert.equal(f.exchanges,1);assert.equal(f.events.filter(x=>x==='models-B').length,2);assert.equal(f.events.filter(x=>x==='project-B').length,2);
  assert.equal(f.vault.get('live-switch.account.v1.'+A),f.originalA);assert.ok(f.writes.every(k=>k.endsWith(B)));assert.equal(JSON.parse(JSON.parse(f.vault.get('live-switch.account.v1.'+B)).slots.file).token.refresh_token,'fixture-rotated-B');
 });
 

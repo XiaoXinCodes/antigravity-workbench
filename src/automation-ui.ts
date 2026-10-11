@@ -1,3 +1,4 @@
+import { ModelCatalogDisplay, catalogDisplayKey } from './model-catalog-display';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -21,7 +22,8 @@ export function registerIdentityPrivacy(context: vscode.ExtensionContext): void 
 export function registerAutomationUi(context: vscode.ExtensionContext, live: LiveUiController, deps: { store?: LocalState<WakeState>; accounts?: WakeAccounts; now?: () => number; notice?: (text: string) => void } = {}) {
   const now = deps.now ?? Date.now, store = deps.store ?? new PrivateState(path.join(context.globalStorageUri.fsPath, 'automation'), parseWakeState, initialWakeState), accounts = deps.accounts ?? createWakeAccounts(context, live);
   let panel: vscode.WebviewPanel | undefined, disposed = false, sequence = 0, modelsAbort: AbortController | undefined, alertTail = Promise.resolve();
-  const catalog = new Map<string, { accountId: string; fingerprint: string; endpoint: 'daily' | 'production'; models: string[]; queriedAt: number }>();
+  const catalog = new Map<string, { accountId: string; fingerprint: string; endpoint: 'daily' | 'production'; models: string[]; unclassified: string[]; queriedAt: number }>();
+  const displayCatalog = new ModelCatalogDisplay(context.globalState);
   let lastNotice = '';
   const post = (message: Record<string, unknown>) => {
     if (message.type === 'notice' && typeof message.text === 'string') lastNotice = message.text;
@@ -50,7 +52,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
   const handle = async (raw: unknown, owner: vscode.WebviewPanel) => {
     if (disposed || panel !== owner || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
     const m = raw as Record<string, unknown>, type = m.type;
-    if (typeof type !== 'string' || !['ready', 'models', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy'].includes(type)) return;
+    if (typeof type !== 'string' || !['ready', 'models', 'selectModel', 'confirmModelUse', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy'].includes(type)) return;
     if (m.requestId !== undefined && (typeof m.requestId !== 'string' || !/^\d{1,15}$/.test(m.requestId))) return;
     let modelRequest: { abort: AbortController; revision: number } | undefined;
     try {
@@ -61,18 +63,35 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         modelsAbort?.abort(); const abort = new AbortController(); modelsAbort = abort; const revision = ++sequence;
         modelRequest = { abort, revision };
         for (const [key, entry] of catalog) if (entry.accountId === id && entry.endpoint === endpoint) catalog.delete(key);
+        const displayKey = catalogDisplayKey(fingerprint, endpoint, 'conversation', live.getAccounts().find(a => a.id === id)), previous = displayCatalog.get(displayKey);
+        if (previous) await post({ type: 'models', accountId: id, endpoint, catalogKey: '', ...previous, stale: true });
         void post({ type: 'notice', text: tr('automation.loading') });
         const models = await accounts.models(id, endpoint, abort.signal);
         if (abort.signal.aborted || revision !== sequence || panel !== owner || accounts.fingerprint(id) !== fingerprint) return;
-        const key = randomUUID(); catalog.set(key, { accountId: id, fingerprint, endpoint, models: models.map(x => x.id), queriedAt: now() });
+        const queriedAt = new Date(now()).toISOString();
+        await displayCatalog.save(displayKey, { models, queriedAt, source: 'fetchAvailableModels', ...(previous?.selectedId ? { selectedId: previous.selectedId } : {}) }).catch(() => undefined);
+        if (abort.signal.aborted || revision !== sequence || panel !== owner || accounts.fingerprint(id) !== fingerprint) return;
+        const key = randomUUID(); catalog.set(key, { accountId: id, fingerprint, endpoint, models: models.map(x => x.id), unclassified: models.filter(x => x.classification === 'unclassified').map(x => x.id), queriedAt: now() });
         if (catalog.size > 50) catalog.delete(catalog.keys().next().value!);
-        await post({ type: 'models', accountId: id, endpoint, catalogKey: key, models }); await post({ type: 'notice', text: models.length ? models.every(model => model.classification === 'unclassified') ? tr('automation.modelTypesUnspecified') : '' : tr('automation.noChatModels') });
-      } else if (type === 'save') {
+        await post({ type: 'models', accountId: id, endpoint, catalogKey: key, models, confirmedIds: displayCatalog.get(displayKey)?.confirmedIds ?? [], queriedAt, source: 'fetchAvailableModels' }); await post({ type: 'notice', text: models.length ? models.every(model => model.classification === 'unclassified') ? tr('automation.modelTypesUnspecified') : '' : tr('automation.noChatModels') });
+      } else if (type === 'save' || type === 'confirmModelUse' || type === 'selectModel') {
         const entry = typeof m.catalogKey === 'string' ? catalog.get(m.catalogKey) : undefined;
         if (!entry || entry.accountId !== m.accountId || entry.endpoint !== m.endpoint || entry.fingerprint !== accounts.fingerprint(entry.accountId) || now() - entry.queriedAt >= 300_000 || typeof m.modelId !== 'string' || !entry.models.includes(m.modelId)) throw Error('WAKE_MODEL_SELECTION_STALE');
+        if (type === 'selectModel') {
+          await displayCatalog.select(catalogDisplayKey(entry.fingerprint, entry.endpoint, 'conversation', live.getAccounts().find(a => a.id === entry.accountId)), m.modelId);
+          return;
+        }
+        if (type === 'confirmModelUse') {
+          if (typeof m.confirmed !== 'boolean' || !entry.unclassified.includes(m.modelId)) return;
+          await displayCatalog.confirm(catalogDisplayKey(entry.fingerprint, entry.endpoint, 'conversation', live.getAccounts().find(a => a.id === entry.accountId)), m.modelId, m.confirmed);
+          return;
+        }
+        if (entry.unclassified.includes(m.modelId) && m.confirmedModelUse !== true) throw Error('WAKE_MODEL_USAGE_REQUIRED');
         const state = await store.read(), existing = state.tasks.find(t => t.id === m.id);
         if (m.id !== '' && (!existing || existing.revision !== m.revision)) throw Error('WAKE_TASK_CHANGED');
-        await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 }, existing?.revision);
+        await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, ...(m.confirmedModelUse === true ? { confirmedModelUse: true } : {}), endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 }, existing?.revision);
+        const displayKey = catalogDisplayKey(entry.fingerprint, entry.endpoint, 'conversation', live.getAccounts().find(a => a.id === entry.accountId)), previous = displayCatalog.get(displayKey);
+        if (previous) await displayCatalog.select(displayKey, m.modelId).catch(() => undefined);
         await post({ type: 'notice', text: tr('automation.paused') });
       } else if (type === 'preview') { await post({ type: 'preview', times: wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5), timezone: (m.schedule as { timezone: string }).timezone, recovery: (m.schedule as { mode?: string }).mode === 'quota-recovery' }); }
       else if (type === 'enable') { if (typeof m.enabled !== 'boolean') return; if (!m.enabled || await consent()) { if (panel === owner && !disposed) await engine.enable(m.enabled); } }
@@ -97,7 +116,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
     } catch (e) {
       const code = safeCode(e);
       if (panel === owner && !(type === 'models' && (modelRequest?.abort.signal.aborted || modelRequest && modelRequest.revision !== sequence || /CANCELLED/.test(code)))) {
-        await post({ type: 'notice', text: code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) });
+        await post({ type: 'notice', text: code === 'WAKE_MODEL_USAGE_REQUIRED' ? tr('catalog.usageRequired') : code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) });
       }
     }
     finally { if (panel === owner) { await emit(); await post({ type: 'complete', requestType: type, requestId: m.requestId }); } }

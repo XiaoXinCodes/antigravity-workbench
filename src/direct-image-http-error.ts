@@ -96,6 +96,8 @@ export function formatImageFailure(error: unknown): string {
     IMAGE_SAVED_AUTH_EXPIRED: tr("directImageHttpError.565c58243c"),
     IMAGE_SAVED_AUTH_PENDING: tr("directImageHttpError.69e6f04f3a"),
     IMAGE_SAVED_MODELS_FORBIDDEN: tr("directImageHttpError.bc9973af3d"),
+    IMAGE_MODEL_USAGE_REQUIRED: tr("catalog.usageRequired"),
+    IMAGE_DIRECT_MODEL_UNVERIFIED: tr("catalog.unverified"),
     IMAGE_SAVED_MODELS_UNAVAILABLE: tr("directImageHttpError.dd2390bbac"),
     IMAGE_SAVED_MODELS_INVALID: tr("directImageHttpError.7f53a3f2dd"),
     IMAGE_SAVED_MODELS_TRANSIENT: tr("directImageHttpError.b484207952"),

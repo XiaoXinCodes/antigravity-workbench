@@ -1,3 +1,4 @@
+require('./helpers/offline-only.cjs');
 const assert = require('node:assert/strict');
 const vscode = require('vscode');
 exports.run = async () => {

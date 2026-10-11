@@ -31,12 +31,9 @@ export function quotaValue(bucket: QuotaBucket): string {
   const fraction = quotaFraction(bucket.remaining);
   return bucket.disabled ? tr('workbenchView.460b3574e4') : fraction !== null ? quotaPercent(fraction) : bucket.remainingAmount && /^\d{1,20}$/.test(bucket.remainingAmount) ? bucket.remainingAmount : tr('workbenchView.4d8c1c5b42');
 }
-/** Display families only. They do not imply a shared pool, model ID, or shared reset. */
-export function quotaFamily(label: string): string {
-  if (/gemini/i.test(label)) return 'Gemini';
-  if (/claude|sonnet|opus|haiku/i.test(label)) return 'Claude';
-  if (/gpt|openai/i.test(label)) return 'OpenAI';
-  return 'other';
+/** The server's quota group is a display grouping, not proof of pool sharing. */
+export function quotaFamily(bucket: Pick<QuotaBucket, 'groupId'>): string {
+  return bucket.groupId ? `group:${bucket.groupId}` : 'other';
 }
 /** Server bucket IDs are quota identities, never callable model IDs or inferred pools.
  * Without an ID, a row remains visible/favoritable within this saved account. */

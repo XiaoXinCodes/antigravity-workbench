@@ -1,3 +1,4 @@
+require('../helpers/offline-only.cjs');
 const path=require('node:path'),vscode=require('vscode');
 const root=path.resolve(__dirname,'../..'),load=name=>require(path.join(root,'out',name));
 exports.activate=context=>{

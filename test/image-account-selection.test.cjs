@@ -4,14 +4,15 @@ const tick=()=>new Promise(setImmediate);
 async function fixture(t,options={}){
  const output=await fs.mkdtemp(path.join(os.tmpdir(),'ag-selection-'));t.after(()=>fs.rm(output,{recursive:true,force:true}));
  const commands=new Map(),states=[],runs=[],reads=[],selections=new Map(),prompts=[],subscriptions=[];
- let panel,finish,decide,loader,quotaLoader,endpoint='daily',ready=options.ready!==false,startupFailures=options.startupFailures??0;const quotaReads=[];const accounts=[{id:A,label:'A',expectedEmail:'a@example.test',active:true,hostCurrent:true},{id:B,label:'B',expectedEmail:'b@example.test',active:false,hostCurrent:true}];
+ const sharedState=options.sharedState??new Map();
+ let panel,finish,decide,loader=options.loader,quotaLoader,endpoint='daily',ready=options.ready!==false,startupFailures=options.startupFailures??0;const quotaReads=[];const accounts=[{id:A,label:'A',expectedEmail:'a@example.test',active:true,hostCurrent:true},{id:B,label:'B',expectedEmail:'b@example.test',active:false,hostCurrent:true}];
  const identity=id=>{const a=accounts.find(a=>a.id===id);return a&&a.hostCurrent!==false&&a.migrationState!=='pending'?JSON.stringify([a.id,a.expectedEmail,a.hostId,a.capturedAt]):undefined};
  const direct={readImageQuota:async(id,modelId,signal,selection)=>{quotaReads.push({id,modelId,signal,selection,endpoint});if(quotaLoader)return quotaLoader(id,modelId,signal,selection);return{accountId:id,modelId,endpoint,remainingFraction:.3,resetAt:'2026-10-08T00:00:00Z',queriedAt:'2026-10-07T08:00:00Z'}},listAccounts:()=>accounts,hasSavedAccountSelection:id=>selections.has(id)&&selections.get(id)===identity(id),selectSavedAccount:id=>{if(!ready)throw Error('IMAGE_ACCOUNT_INITIALIZING');assert.ok(identity(id));selections.set(id,identity(id))},getEndpoint:()=>endpoint,
  readChoices:async(signal,id,force)=>{reads.push({signal,id,force});if(!ready||startupFailures-->0)throw Error('IMAGE_ACCOUNT_INITIALIZING');if(id&&!direct.hasSavedAccountSelection(id))return{accounts,models:[],readiness:'error',accountMessage:'IMAGE_SAVED_SELECTION_REQUIRED'};if(loader)return loader(signal,id);return{accounts,models:[{id:id===B?mb:ma,label:id===B?'B model':'A model'}],readiness:'ready'}},
  run:async(request,signal,progress,id)=>{runs.push({request,signal,progress,id});return new Promise((resolve,reject)=>{finish=value=>value instanceof Error?reject(value):resolve(value??{images:[],batch:{outcome:'complete'}})})}};
  const vscode={ViewColumn:{Active:1},env:{},workspace:{workspaceFolders:[{uri:{scheme:'file',authority:'',fsPath:output}}]},commands:{registerCommand:(id,fn)=>{commands.set(id,fn);return{dispose(){}}}},window:{showWarningMessage:(message,...args)=>{prompts.push({message,args});return new Promise(r=>decide=r)},createWebviewPanel:()=>{panel={webview:{postMessage:async s=>states.push(structuredClone(s)),onDidReceiveMessage:fn=>{panel.receive=fn;return{dispose(){}}}},onDidDispose:fn=>{panel.close=fn;return{dispose(){}}},reveal(){}};return panel}}};
  const old=Module._load,entry=require.resolve('../out/direct-image-ui');Module._load=function(name,...args){return name==='vscode'?vscode:old.call(this,name,...args)};
- let ui;try{delete require.cache[entry];ui=require(entry).registerDirectImageUi({subscriptions,globalState:{get:()=>undefined,update:async()=>{}},...(options.storage?{globalStorageUri:{fsPath:options.storage}}:{})},direct,undefined,require('./helpers/image-session.cjs').memorySession(options.restore?{value:{schema:3,draft:{prompt:'restored',accountId:B,modelId:mb,ratio:'1:1',count:1,size:'auto',quality:'auto',followCurrent:false},outputDirectory:output,references:[],tasks:[],savedDrafts:[]}}:{}))}finally{Module._load=old;delete require.cache[entry]}
+ let ui;try{delete require.cache[entry];ui=require(entry).registerDirectImageUi({subscriptions,globalState:{get:key=>sharedState.get(key),update:async(key,value)=>sharedState.set(key,value)},...(options.storage?{globalStorageUri:{fsPath:options.storage}}:{})},direct,undefined,require('./helpers/image-session.cjs').memorySession(options.restore?{value:{schema:3,draft:{prompt:'restored',accountId:B,modelId:mb,ratio:'1:1',count:1,size:'auto',quality:'auto',followCurrent:false},outputDirectory:output,references:[],tasks:[],savedDrafts:[]}}:{}))}finally{Module._load=old;delete require.cache[entry]}
  await commands.get('antigravityAccounts.images.open')();
  const send=async value=>{panel.receive(value);await tick();await tick()};
  const form={prompt:'synthetic draft preserved',accountId:A,modelId:ma,ratio:'16:9',count:3,size:'4K',quality:'detail'};
@@ -297,4 +298,32 @@ test('image close/reopen and a reconstructed controller restore only historical 
 test('same-ID replacement with identical capture time clears image quota and rejects its delayed completion',async t=>{
  const f=await fixture(t);t.after(f.dispose);f.accounts[1].quotaDisplayId=B;await f.send({type:'selectAccount',selection:B,...f.form});await f.send({type:'queryQuota'});let reply;f.quotaLoad((id,modelId)=>new Promise(r=>reply=()=>r({accountId:id,modelId,endpoint:'daily',queriedAt:new Date().toISOString(),remainingFraction:.9,resetAt:null})));await f.send({type:'queryQuota'});
  f.accounts[1].quotaDisplayId=A;f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A,B]});assert.equal(f.latest().imageQuota.snapshot,undefined);reply();await tick();await tick();assert.equal(f.latest().imageQuota.snapshot,undefined);assert.equal(f.runs.length,0);
+});
+
+
+test('catalog failure retains original display and selection; removal and rename never select a different ID',async t=>{
+ const f=await fixture(t);t.after(f.dispose);await f.send({...f.form,type:'draft'});const first=f.latest();
+ f.load(async()=>{throw Error('IMAGE_SAVED_MODELS_TRANSIENT')});await f.send({type:'checkAccount'});
+ assert.deepEqual(f.latest().choices.models,first.choices.models);assert.equal(f.latest().choices.catalog.queriedAt,first.choices.catalog.queriedAt);assert.equal(f.latest().draft.modelId,ma);assert.equal(f.latest().choices.stale,true);assert.equal(f.latest().accountBlocked,true);
+ f.load(async()=>({accounts:f.accounts,models:[{id:'new-directory-member',label:'New original name'}],readiness:'ready'}));await f.send({type:'checkAccount'});
+ assert.equal(f.latest().draft.modelId,ma);assert.equal(f.latest().accountBlocked,true);assert.equal(f.runs.length,0);
+ f.load(async()=>({accounts:f.accounts,models:[{id:ma,label:'服务端重新命名'}],readiness:'ready'}));await f.send({type:'checkAccount'});
+ assert.equal(f.latest().draft.modelId,ma);assert.equal(f.latest().choices.models[0].label,'服务端重新命名');assert.equal(f.latest().accountBlocked,false);
+});
+test('unknown image use is confirmed beside selection once and isolated by account/endpoint/model',async t=>{
+ const sharedState=new Map(),f=await fixture(t,{sharedState});t.after(f.dispose);
+ f.load(async()=>({accounts:f.accounts,models:[{id:ma,label:'Original server name',classification:'unclassified'}],readiness:'ready'}));await f.send({type:'checkAccount'});
+ await f.send({...f.form,type:'generate'});assert.equal(f.prompts.length,0);assert.equal(f.runs.length,0);
+ await f.send({type:'confirmModelUse',modelId:ma,confirmed:true});assert.equal(f.latest().confirmedModelUse,true);
+ await f.send({type:'checkAccount'});assert.equal(f.latest().confirmedModelUse,true);f.close();await f.open();assert.equal(f.latest().confirmedModelUse,true);
+ await f.send({...f.form,type:'generate'});assert.equal(f.prompts.length,1);assert.doesNotMatch(f.prompts[0].message,/未标明用途/);await f.decide('确认生成');assert.equal(f.runs[0].request.confirmedModelUse,true);await f.finish();
+ f.setEndpoint('production');await f.send({type:'checkAccount'});assert.equal(f.latest().confirmedModelUse,false);await f.send({...f.form,type:'draft',modelId:ma});assert.equal(f.latest().confirmedModelUse,false);
+ f.setEndpoint('daily');await f.send({type:'checkAccount'});assert.equal(f.latest().confirmedModelUse,true);
+ await f.send({type:'selectAccount',selection:B,...f.form});await f.send({...f.form,type:'draft',accountId:B,modelId:ma});assert.equal(f.latest().confirmedModelUse,false);
+});
+test('late catalog after same-ID account replacement is rejected without leaving loading stuck',async t=>{
+ const f=await fixture(t);t.after(f.dispose);let finish;
+ f.load(()=>new Promise(resolve=>finish=resolve));await f.send({type:'checkAccount'});
+ f.accounts[0].capturedAt='2026-10-11T12:34:56Z';finish({accounts:f.accounts,models:[{id:ma,label:'Old identity directory'}],readiness:'ready'});await tick();await tick();
+ assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,true);assert.deepEqual(f.latest().choices.models,[]);assert.equal(f.runs.length,0);
 });
