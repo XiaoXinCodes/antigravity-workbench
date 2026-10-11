@@ -4,6 +4,17 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.12](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.12) — 2026-10-11
+
+Model selection follows the account's server catalog, so newly listed models appear without a plugin update.
+
+- Preserve server model IDs and names. Image options require explicit image membership; scheduled text requests exclude image models and require confirmation for unknown use.
+- Isolate catalogs by account and endpoint and reject late results. Keep selections, previous display data and query times when catalog refresh fails.
+- Preserve accounts, favorites, image drafts and history, scheduled tasks and successful quota readings on upgrade, without automatically replacing selected models.
+- Keep independent image account selection and its quota display, remove cross-account quota recommendations, and clarify catalog diagnostics and missing data in both languages.
+
+[Release notes](docs/RELEASE_0.1.12.md) · [Validation scope](docs/VALIDATION_0.1.12.md)
+
 ## [0.1.11](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.11) — 2026-10-11
 
 Keep successful quota readings available and clearly distinguish older data from a fresh query.

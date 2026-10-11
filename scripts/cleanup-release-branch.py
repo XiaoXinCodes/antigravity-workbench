@@ -1,4 +1,4 @@
-"""Remove only this release's merged fix branch, with an atomic Git lease."""
+"""Remove only this release's merged model catalog branch, with an atomic Git lease."""
 import importlib.util
 import json
 import os
@@ -11,7 +11,7 @@ publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
 api = publish.api
 run = publish.run
-BRANCH = 'fix/quota-display-retention'
+BRANCH = 'refactor/server-model-catalog'
 REF = 'refs/heads/' + BRANCH
 
 

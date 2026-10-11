@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import { LiveError } from './live-storage';
 import { validImageProject } from './direct-image-project';
 import { cloudCodeHost, type CloudCodeEndpoint } from './cloudcode-service';
-const HTTP_USER_AGENT = 'Antigravity-Workbench/0.1.11';
+const HTTP_USER_AGENT = 'Antigravity-Workbench/0.1.12';
 
 const PATH = '/v1internal:fetchAvailableModels';
 const RESPONSE_LIMIT = 2 * 1024 * 1024;
