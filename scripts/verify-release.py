@@ -79,7 +79,7 @@ def verify(vsix, source=None):
                     'LICENSE': 'extension/LICENSE.txt',
                     'THIRD_PARTY_NOTICES.txt': 'extension/THIRD_PARTY_NOTICES.txt',
                     **{name: 'extension/' + name for name in LICENSE_TEXT_HASHES if name != 'LICENSE'},
-                    **{str(p.relative_to(ROOT)): 'extension/' + str(p.relative_to(ROOT)) for p in (ROOT / 'vendor/sql.js').iterdir() if p.is_file()},
+                    **{p.relative_to(ROOT).as_posix(): 'extension/' + p.relative_to(ROOT).as_posix() for p in (ROOT / 'vendor/sql.js').iterdir() if p.is_file()},
                 }.items():
                     assert member in archive.namelist(), f'Missing license notice: {member}'
                     assert archive.read(member) == (ROOT / source_name).read_bytes(), f'Changed license notice: {member}'
