@@ -64,3 +64,12 @@ test('legacy task migration keeps model and schedule without inventing an unknow
   assert.equal(parseWakeTask(old).modelId, old.modelId); assert.equal(parseWakeTask(old).enabled, true); assert.equal(parseWakeTask(old).confirmedModelUse, undefined);
   assert.equal(parseWakeTask({ ...old, confirmedModelUse: true }).confirmedModelUse, true);
 });
+
+test('older native storage echoes cannot erase acknowledged confirmation or selection; newer external edits and revocation win',async()=>{
+ const {ModelCatalogDisplay,catalogDisplayKey}=require('../out/model-catalog-display');let value,echo;const store={get:()=>structuredClone(echo??value),update:async(_key,next)=>{value=structuredClone(next)}};
+ const key=catalogDisplayKey('synthetic-fingerprint','daily','image'),first=new ModelCatalogDisplay(store),second=new ModelCatalogDisplay(store),row={source:'fetchAvailableModels',queriedAt:'2026-10-11T10:00:00Z',models:[{id:'synthetic-future',label:'Future server name',classification:'unclassified'}],selectedId:'synthetic-future'};
+ await first.save(key,row);const older=structuredClone(value);await first.confirm(key,'synthetic-future',true);const confirmed=structuredClone(value);
+ echo=older;assert.deepEqual(second.get(key).confirmedIds,['synthetic-future']);await second.save(key,{...row,queriedAt:'2026-10-11T10:01:00Z'});echo=undefined;assert.deepEqual(first.get(key).confirmedIds,['synthetic-future']);assert.equal(first.get(key).selectedId,'synthetic-future');assert.ok(value[key].displayRevision>older[key].displayRevision);
+ await first.confirm(key,'synthetic-future',false);echo=confirmed;assert.deepEqual(second.get(key).confirmedIds,[]);echo=undefined;
+ const external=new ModelCatalogDisplay({get:()=>structuredClone(value),update:async(_key,next)=>{value=structuredClone(next)}});await external.confirm(key,'synthetic-future',true);assert.deepEqual(first.get(key).confirmedIds,['synthetic-future']);
+});
