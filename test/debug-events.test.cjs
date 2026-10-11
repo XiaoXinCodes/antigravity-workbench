@@ -82,3 +82,9 @@ test('safe image field-type summaries survive logging while unknown names and ty
 test('failure outcome uses exact known cancellation and timeout codes',()=>{
  const {debugFailureOutcome}=require('../out/debug-events');for(const code of ['IMAGE_CANCELLED','LOGIN_CANCELLED','QUOTA_QUERY_CANCELLED'])assert.equal(debugFailureOutcome(code),'cancelled');for(const code of ['IMAGE_TIMEOUT','IMAGE_WORKER_TIMEOUT','IMAGE_CANCEL_TIMEOUT','IMAGE_CONFIGURATION_TIMEOUT','LOGIN_TIMEOUT','QUOTA_QUERY_TIMEOUT','HUB_RPC_TIMEOUT'])assert.equal(debugFailureOutcome(code),'timed_out');for(const code of ['SECRET_CANCELLED','SECRET_TIMEOUT','UNKNOWN_FAILURE',null,{}])assert.equal(debugFailureOutcome(code),'failed');
 });
+
+test('catalog diagnostics use a separate operation and strict stage/failure/cache fields',async()=>{
+ const f=fixture();await f.log.setEnabled(true);f.log.begin('image.catalog').end('failed',{code:'IMAGE_SAVED_MODELS_FAILED',catalogStage:'transport',catalogFailure:'tls',catalogUse:'current',catalogCacheHit:false,httpStatus:400,token:'SENTINEL_TOKEN',email:'synthetic@example.test',prompt:'SENTINEL_PROMPT',response:'SENTINEL_RESPONSE'});
+ const result=f.records.map(JSON.parse).find(row=>row.phase==='result');assert.equal(result.operation,'image.catalog');assert.equal(result.data.catalogStage,'transport');assert.equal(result.data.catalogFailure,'tls');assert.equal(result.data.catalogCacheHit,false);assert.equal(result.data.httpStatus,400);assert.doesNotMatch(f.records.join('\n'),/SENTINEL|example\.test/);
+ const raw=sanitizeDebugData({catalogStage:'SENTINEL',catalogFailure:'SENTINEL',catalogUse:'SENTINEL',catalogCacheHit:'SENTINEL'});assert.equal(raw,undefined);
+});

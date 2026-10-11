@@ -1,3 +1,4 @@
+import { catalogError } from './model-catalog-error';
 import { parseModelCatalog, assertModelUse } from './model-catalog';
 import { summarizeImageCatalog, type CatalogSummary } from './image-catalog-diagnostic';
 import { imageQuotaFromCatalog, type ImageQuotaRow } from './image-quota';
@@ -28,7 +29,7 @@ export interface SavedImageDependencies {
   now?: () => number;
 }
 interface Prepared {
-  key: string; accountId: string; revision: string; expiresAt: number; tokenExpiry: number;
+  cacheHit: boolean; key: string; accountId: string; revision: string; expiresAt: number; tokenExpiry: number;
   token: string; projectId: string; endpoint: ImageEndpoint; models: ImageModelChoice[]; catalog: CatalogSummary; quota: ImageQuotaRow[]; queriedAt: string; verify(signal: AbortSignal): Promise<void>;
 }
 const check = (signal: AbortSignal) => { if (signal.aborted) throw new Error('IMAGE_CANCELLED'); };
@@ -75,7 +76,7 @@ export class SavedImageAccounts {
         const key = [expected, endpoint, snapshot.revision].join(':');
         if (force && !diagnostic) this.cache.delete(key);
         const cached = this.cache.get(key);
-        if (!diagnostic && cached && cached.expiresAt > this.now()) { await cached.verify(signal); return cached; }
+        if (!diagnostic && cached && cached.expiresAt > this.now()) { await cached.verify(signal); return { ...cached, cacheHit: true }; }
         let expectedRevision = snapshot.revision;
         const refresh = store.refresh(id, assertPresent);
         const prepared = await this.client.withAccess(snapshot.account, signal, this.deps.refreshAllowed?.(this.selected(id)) === false ? {} : { refresh: {
@@ -101,7 +102,7 @@ export class SavedImageAccounts {
           access.assertPublicResponse(rawResponse);
           let response;
           try { response = parseModelCatalog(this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse); }
-          catch { throw Error('IMAGE_SAVED_MODELS_INVALID'); }
+          catch { throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200); }
           await diagnostic?.assertCurrent();
           const catalog = summarizeImageCatalog(response);
           let models: ImageModelChoice[] = [];
@@ -120,7 +121,7 @@ export class SavedImageAccounts {
           if (prepared.tokenExpiry <= this.now() + 5_000) throw new Error('IMAGE_SAVED_AUTH_EXPIRED');
           await store.verify(id, revision); check(requestSignal); assertPresent();
         };
-        const result: Prepared = { ...prepared, endpoint, accountId: id, revision, key: [expected, endpoint, revision].join(':'),
+        const result: Prepared = { ...prepared, cacheHit: false, endpoint, accountId: id, revision, key: [expected, endpoint, revision].join(':'),
           expiresAt: Math.min(this.now() + 5 * 60_000, prepared.tokenExpiry - 30_000), verify };
         await verify(signal);
         if (diagnostic) return result;
@@ -134,7 +135,7 @@ export class SavedImageAccounts {
   }
   async directory(id: string, signal: AbortSignal, endpoint: ImageEndpoint, force = false) {
     const prepared = await this.prepare(id, signal, endpoint, force);
-    return { models: prepared.models.map(x => ({ ...x })), queriedAt: prepared.queriedAt, source: 'fetchAvailableModels' as const };
+    return { models: prepared.models.map(x => ({ ...x })), queriedAt: prepared.queriedAt, source: 'fetchAvailableModels' as const, cacheHit: prepared.cacheHit };
   }
   async choices(id: string, signal: AbortSignal, endpoint: ImageEndpoint, force = false): Promise<ImageModelChoice[]> {
     return (await this.directory(id, signal, endpoint, force)).models;

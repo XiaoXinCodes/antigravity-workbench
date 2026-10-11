@@ -76,7 +76,7 @@ test('official Hub identity selects one host-bound account even if sidebar activ
     if (name === './native-host') return { nativeHostStatus: () => ({ available: true }), resolveCredentialHostId: async () => hostId };
     if (name === './live-lock') return { LiveLocks: class { async withOperation(fn) { return fn(); } } };
     if (name === './live-environment') return { EnvironmentTokenSlots: class { async mode() { return 'wsl-file'; } } };
-    if (name === './direct-image-binding') return { ...require('../out/direct-image-binding'), bindCurrentAccountAccess: async input => {await input.assertCurrent();return {token,projectId:'offline-project',verify:async()=>{}}} };
+    if (name === './direct-image-binding') return { ...require('../out/direct-image-binding'), bindCurrentAccountAccess: async input => {await input.assertCurrent();return {token,projectId:'offline-project',credentialRevision:'synthetic-revision',credentialExpiresAt:Date.now()+3600000,verify:async()=>{}}} };
     if (name === './saved-image-models') return { readSavedImageModels: async () => ({imageGenerationModelIds:[model.id],models:{[model.id]:{}}}) };
     if (name === './live-hub') return { generation: require('../out/live-hub').generation, hasOfficialHubApi: () => true, hubRpc: async (_api, method) => {
       requested++;
@@ -110,7 +110,7 @@ test('storage and official Hub startup readiness recover without premature RPC o
     if (name === './native-host') return { nativeHostStatus: () => ({ available: true }), resolveCredentialHostId: async () => hostId };
     if (name === './live-lock') return { LiveLocks: class { async withOperation(fn) { return fn(); } } };
     if (name === './live-environment') return { EnvironmentTokenSlots: class { async mode() { return 'wsl-file'; } } };
-    if (name === './direct-image-binding') return { ...require('../out/direct-image-binding'), bindCurrentAccountAccess: async input => {await input.assertCurrent();return {token,projectId:'offline-project',verify:async()=>{}}} };
+    if (name === './direct-image-binding') return { ...require('../out/direct-image-binding'), bindCurrentAccountAccess: async input => {await input.assertCurrent();return {token,projectId:'offline-project',credentialRevision:'synthetic-revision',credentialExpiresAt:Date.now()+3600000,verify:async()=>{}}} };
     if (name === './saved-image-models') return { readSavedImageModels: async () => ({imageGenerationModelIds:[model.id],models:{[model.id]:{}}}) };
     if (name === './live-hub') return { generation: require('../out/live-hub').generation, hasOfficialHubApi: () => apiReady, hubRpc: async (_api, method) => {
       requested++;
@@ -125,13 +125,13 @@ test('storage and official Hub startup readiness recover without premature RPC o
     const { createDirectImageIntegration } = require(entry);
     const direct = createDirectImageIntegration({globalStorageUri:{toString:()=> 'synthetic'},globalState:{get:(_k,f)=>f}}, () => [{ ...selected, active: false }], { accountsReady: () => ready });
     const signal = new AbortController().signal;
-    await assert.rejects(direct.readChoices(signal), { message: 'IMAGE_ACCOUNT_INITIALIZING' });
+    { const blocked=await direct.readChoices(signal); assert.equal(blocked.readiness,'error'); assert.equal(blocked.accountMessage,'IMAGE_ACCOUNT_INITIALIZING'); assert.deepEqual(blocked.models,[]); }
     assert.throws(() => direct.selectSavedAccount(accountId), { message: 'IMAGE_ACCOUNT_INITIALIZING' });
     assert.equal(requested, 0);
     ready = true;
-    await assert.rejects(direct.readChoices(signal), { message: 'IMAGE_ACCOUNT_INITIALIZING' });
+    { const blocked=await direct.readChoices(signal); assert.equal(blocked.readiness,'error'); assert.equal(blocked.accountMessage,'IMAGE_ACCOUNT_INITIALIZING'); assert.deepEqual(blocked.models,[]); }
     extension.isActive = true;
-    await assert.rejects(direct.readChoices(signal), { message: 'IMAGE_ACCOUNT_INITIALIZING' });
+    { const blocked=await direct.readChoices(signal); assert.equal(blocked.readiness,'error'); assert.equal(blocked.accountMessage,'IMAGE_ACCOUNT_INITIALIZING'); assert.deepEqual(blocked.models,[]); }
     assert.equal(requested, 0); apiReady = true;
     const result = await direct.readChoices(new AbortController().signal);
     assert.equal(result.accounts.length, 1);
@@ -560,7 +560,7 @@ for(const change of ['identity','auth','endpoint'])test(`current catalog rejects
   if(name==='./native-host')return{nativeHostStatus:()=>({available:true}),resolveCredentialHostId:async()=>hostId};
   if(name==='./live-lock')return{LiveLocks:class{async withOperation(fn){return fn()}}};
   if(name==='./live-environment')return{EnvironmentTokenSlots:class{async mode(){return 'wsl-file'}}};
-  if(name==='./direct-image-binding')return{...require('../out/direct-image-binding'),bindCurrentAccountAccess:async input=>{await input.assertCurrent();return{token,projectId:'offline-project',verify:async()=>{}}}};
+  if(name==='./direct-image-binding')return{...require('../out/direct-image-binding'),bindCurrentAccountAccess:async input=>{await input.assertCurrent();return{token,projectId:'offline-project',credentialRevision:'synthetic-revision',credentialExpiresAt:Date.now()+3600000,verify:async()=>{}}}};
   if(name==='./saved-image-models')return{readSavedImageModels:async()=>{catalogs++;changed=true;if(change==='endpoint')endpoint='production';return{imageGenerationModelIds:[model.id],models:{[model.id]:{}}}}};
   if(name==='./live-hub')return{generation:require('../out/live-hub').generation,hasOfficialHubApi:()=>true,hubRpc:async(_api,method)=>{
    if(method==='GetAuthStatus')return{authResult:{hasValidAuth:!changed||change!=='auth'}};
@@ -569,5 +569,5 @@ for(const change of ['identity','auth','endpoint'])test(`current catalog rejects
   }};
   return old.call(this,name,...args);
  };
- try{delete require.cache[entry];const direct=require(entry).createDirectImageIntegration({subscriptions:[],globalStorageUri:{toString:()=> 'synthetic'},globalState:{get:(_k,f)=>f}},()=>[selected],{journal:{dispose(){},read:async()=>[],write:async()=>true}});await assert.rejects(direct.readChoices(new AbortController().signal),new RegExp(change==='endpoint'?'ENDPOINT_CHANGED':'ACCOUNT_CHANGED'));assert.equal(catalogs,1);}finally{Module._load=old;delete require.cache[entry]}
+ try{delete require.cache[entry];const direct=require(entry).createDirectImageIntegration({subscriptions:[],globalStorageUri:{toString:()=> 'synthetic'},globalState:{get:(_k,f)=>f}},()=>[selected],{journal:{dispose(){},read:async()=>[],write:async()=>true}});const blocked=await direct.readChoices(new AbortController().signal);assert.equal(blocked.readiness,'error');assert.match(blocked.accountMessage,new RegExp(change==='endpoint'?'ENDPOINT_CHANGED':'ACCOUNT_CHANGED'));assert.deepEqual(blocked.models,[]);assert.equal(catalogs,1);}finally{Module._load=old;delete require.cache[entry]}
 });

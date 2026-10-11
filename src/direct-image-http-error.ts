@@ -144,6 +144,11 @@ export function formatImageFailure(error: unknown): string {
  * Relocalize only that representation; prompts, account labels and paths never
  * pass through this helper. It also accepts an enclosing generated batch status. */
 export function localizeImageFailure(value: string): string {
+  // A directory operation heading precedes a separately generated error code.
+  // Translate those components before a broad persisted-message template can
+  // consume the complete heading and treat its suffix as an opaque parameter.
+  const components = value.split(' · ');
+  if (components.length > 1 && /^IMAGE_[A-Z_]+$/.test(components[1]!)) return components.map(localizeMessage).join(' · ');
   const translated = localizeMessage(value);
   if (!/\bIMAGE_[A-Z_]+\b/u.test(value)) return translated;
   return translated.split(' · ').map(localizeMessage).join(' · ');

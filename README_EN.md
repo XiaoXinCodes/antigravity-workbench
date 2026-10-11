@@ -51,7 +51,7 @@ If Marketplace is unavailable, download the `.vsix` attachment from the [latest 
 | Accounts and migration | Add with browser OAuth, save the current login, switch and verify identity; import and export encrypted accounts, replacing or skipping matching emails |
 | Multi-account quota overview | Read server-reported remaining fractions and reset times; search accounts, compare the same model, sort by quota, update or reset time, and cancel batch refresh |
 | Favorite models and history | Favorite models and collapse families; browse quotas in native QuickPick, pin one account/model to the status bar, and filter or clear quota history |
-| Image studio | Follow the current login or choose an account independently; compare accounts by the exact selected model's quota, with prompts, references, ratios, sizes and request counts |
+| Image studio | Follow the current login or choose an account independently; query quota for the selected account and model, with prompts, references, ratios, sizes and request counts |
 | Creation history and reuse | Restore drafts and task cards, reuse historical request parameters, continue editing and compare versions; missing references are flagged and interrupted tasks are not resent automatically |
 | Use in your project | Preview PNG/JPEG, copy paths or Markdown, insert into the editor or copy images into the project; originals are kept, insertion does not save, and copying does not overwrite |
 | Optional alerts and scheduled requests | Disabled by default; low, exhausted and recovered quota alerts, plus text requests on daily/weekly, interval, five-field cron or confirmed full-quota recovery triggers |
@@ -77,7 +77,7 @@ Unknown quota stays unknown, and older readings retain their query time. Family 
 
 ### Generate images and use them in your project
 
-1. Open the image studio and follow the current login or choose a saved account. Models come from that account's server catalog; compare and select accounts by the exact model's quota when needed.
+1. Open the image studio and follow the current login or choose a saved account. Models come from that account's server catalog; query quota for the selected account and model when needed.
 2. Select a model, enter a prompt, ratio and request count, then add references or choose another output directory if needed.
 3. Select **Generate**, check the account, model, request count and destination in the confirmation, then submit. Results default to the current project and can be previewed directly.
 4. Reuse a historical task's model and parameters, checking any missing-reference warning. You can also continue editing a result, compare versions or copy paths, Markdown and images into the project.

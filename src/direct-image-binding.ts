@@ -54,7 +54,7 @@ export async function bindSavedImageAccount(input: CurrentAccountAccessInput & {
 }
 /** Identity/project access does not require a model choice. This lets the current
  * account fetch the actual endpoint's directory before choosing a model. */
-export async function bindCurrentAccountAccess(input: CurrentAccountAccessInput): Promise<Omit<BoundImageAccount, 'modelId'>> {
+export async function bindCurrentAccountAccess(input: CurrentAccountAccessInput): Promise<Omit<BoundImageAccount, 'modelId'> & { credentialRevision: string; credentialExpiresAt: number }> {
   const { vault, selected, hostId, signal } = input;
   const endpoint = input.endpoint === undefined ? undefined : imageEndpoint(input.endpoint);
   if (endpoint !== undefined && !input.resolveEndpointProject) throw new Error('IMAGE_DIRECT_PROJECT_ENDPOINT_MISMATCH');
@@ -152,7 +152,7 @@ export async function bindCurrentAccountAccess(input: CurrentAccountAccessInput)
   }
   await assertCurrent();
   frozen = input.freezeAfterBinding === true;
-  return { token, projectId, accountId: selected.id,
+  return { token, projectId, accountId: selected.id, credentialRevision: revision, credentialExpiresAt: active ? Date.parse(active.expiry as string) : current?.expiresAt ?? 0,
     ...(endpoint !== undefined ? { endpoint } : {}),
     projectSource: endpoint === undefined && project.kind === 'saved' ? 'saved-token' : 'loadCodeAssist', verify: async requestSignal => { if (requestSignal.aborted) throw new Error('IMAGE_CANCELLED'); await assertCurrent(); } };
 }

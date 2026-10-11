@@ -1,6 +1,6 @@
+import { catalogError, catalogErrorCode, catalogFailureDetails, type CatalogFailure } from './model-catalog-error';
 import { parseModelCatalog, assertModelUse } from './model-catalog';
 import { accountDisplayFingerprint } from './quota-presentation';
-import { passiveCurrentEmail } from './passive-current-identity';
 import { savedAccountStore } from './saved-account-store';
 import { t as tr } from './i18n';
 import { diagnoseImageCatalog } from './image-catalog-diagnostic';
@@ -31,7 +31,7 @@ import { ImageOperationJournal, imageOperationStart, imageOperationResponse, ima
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 type AccountSummary = Pick<AccountChoice, 'id' | 'label' | 'expectedEmail'> & { hostCurrent?: boolean; hostId?: string; migrationState?: string; capturedAt?: string; quotaDisplayId?: string; verifiedSubject?: string; active?: boolean };
-export interface ImageChoices { accounts: AccountChoice[]; models: ImageModelChoice[]; readiness?: 'ready' | 'error'; accountMessage?: string; catalog?: { source: 'fetchAvailableModels'; queriedAt: string } }
+export interface ImageChoices { accounts: AccountChoice[]; models: ImageModelChoice[]; readiness?: 'ready' | 'error'; accountMessage?: string; failure?: CatalogFailure; catalogCacheHit?: boolean; catalog?: { source: 'fetchAvailableModels'; queriedAt: string } }
 
 /** New independent image route, reachable only through the existing image confirmation. */
 export function createDirectImageIntegration(context: vscode.ExtensionContext, getAccounts: () => AccountSummary[], runtime: {
@@ -51,12 +51,6 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
     project: resolveEndpointImageProject, models: readSavedImageModels, parseModels: imageModelsFromCatalog,
     store: () => savedAccountStore(context, locks(), () => status().available),
   });
-  let observationCurrentEmail: string | undefined;
-  const observedSaved = new SavedImageAccounts({ accounts: summaries, withOperation: work => locks().withOperation(async () => {
-    observationCurrentEmail = await passiveCurrentEmail(); return work();
-  }), project: resolveEndpointImageProject, models: readSavedImageModels, parseModels: imageModelsFromCatalog,
-    store: () => savedAccountStore(context, locks(), () => status().available),
-    refreshAllowed: a => !a.active && !!observationCurrentEmail && observationCurrentEmail !== a.expectedEmail.toLowerCase() });
   const assertAccountsReady = () => { if (runtime.accountsReady?.() === false) throw Error('IMAGE_ACCOUNT_INITIALIZING'); };
   const session = () => {
     assertAccountsReady();
@@ -96,7 +90,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
     };
     const available = includeCatalog ? await hubRpc(pinned.api, 'GetAvailableModels', signal) : undefined;
     await verify(signal);
-    return { auth, state, available, email, catalog: object(available) ? available.response : undefined, verify };
+    return { auth, state, available, email, hubGeneration: generation(pinned.api), catalog: object(available) ? available.response : undefined, verify };
   };
   const currentAccess = async (signal: AbortSignal, allowProjectLookup = true, endpoint = getEndpoint()) => {
     const snapshot = await readHubCatalog(signal, false);
@@ -116,17 +110,30 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       resolveCurrentToken: checkSignal => readCurrentOfficialWslToken({ api: () => vscode.extensions.getExtension('google.google-antigravity')?.exports, assertCurrent, signal: checkSignal }),
       ...(allowProjectLookup ? { endpoint, resolveEndpointProject: resolveEndpointImageProject } : {}),
       verifyIdentity: async (token, checkSignal) => parseAccountQuotaIdentity(await requestAccountQuota({ endpoint: 'identity', accessToken: token, signal: checkSignal })) });
-    return { access, selected, assertCurrent };
+    return { access, selected, assertCurrent, hubGeneration: snapshot.hubGeneration };
   };
-  const currentDirectory = async (signal: AbortSignal, endpoint = getEndpoint()) => {
+  // Public directory data only. Rebind identity/project and verify the exact secret
+  // revision before reuse; display persistence is never authorization evidence.
+  let currentCatalog: { key: string; catalog: ReturnType<typeof parseModelCatalog>; models: ImageModelChoice[]; queriedAt: string; expiresAt: number } | undefined;
+  const currentDirectory = async (signal: AbortSignal, endpoint = getEndpoint(), force = true) => {
+    if (force) currentCatalog = undefined;
     const binding = await currentAccess(signal, true, endpoint);
+    const key = createHash('sha256').update(JSON.stringify([endpoint, accountDisplayFingerprint(binding.selected), binding.selected.verifiedSubject,
+      binding.selected.quotaDisplayId, binding.hubGeneration, binding.access.credentialRevision, binding.access.token, binding.access.projectId])).digest('hex');
+    if (force || currentCatalog?.key !== key || currentCatalog.expiresAt <= Date.now()) currentCatalog = undefined;
+    if (currentCatalog) {
+      await binding.access.verify(signal); await binding.assertCurrent();
+      return { ...binding, ...currentCatalog, models: currentCatalog.models.map(row => ({ ...row })), cacheHit: true };
+    }
     const raw = await readSavedImageModels(binding.access.token, binding.access.projectId, signal, endpoint);
-    // Never retain an echoed bearer in display state.
-    if (JSON.stringify(raw).includes(binding.access.token)) throw Error('IMAGE_SAVED_MODELS_INVALID');
+    if (JSON.stringify(raw).includes(binding.access.token)) throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200);
     let catalog;
-    try { catalog = parseModelCatalog(raw); } catch { throw Error('IMAGE_SAVED_MODELS_INVALID'); }
+    try { catalog = parseModelCatalog(raw); } catch { throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200); }
     await binding.access.verify(signal); await binding.assertCurrent();
-    return { ...binding, catalog, models: imageModelsFromCatalog(catalog), queriedAt: new Date().toISOString() };
+    const entry = { key, catalog, models: imageModelsFromCatalog(catalog), queriedAt: new Date().toISOString(),
+      expiresAt: Math.min(Date.now() + 5 * 60_000, binding.access.credentialExpiresAt - 30_000) };
+    currentCatalog = entry;
+    return { ...binding, ...entry, models: entry.models.map(row => ({ ...row })), cacheHit: false };
   };
   const diagnoseCatalog = async (signal: AbortSignal) => {
     const release = enterImageOperation('catalog-diagnostic');
@@ -134,7 +141,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       direct: (id, checkSignal, endpoint, assertCurrent) => saved.diagnoseCatalog(id, checkSignal, endpoint, assertCurrent) }, signal); }
     finally { release(); }
   };
-  const readChoices = async (signal: AbortSignal, savedAccountId?: string, force = false): Promise<ImageChoices> => {
+  const readChoicesWork = async (signal: AbortSignal, savedAccountId?: string, force = false): Promise<ImageChoices> => {
     assertAccountsReady();
     if (savedAccountId) {
       saved.forgetMissing();
@@ -142,27 +149,35 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       if (!accounts.some(x => x.id === savedAccountId)) return { accounts, models: [], readiness: 'error', accountMessage: 'IMAGE_SAVED_ACCOUNT_REMOVED' };
       if (!saved.isSelected(savedAccountId)) return { accounts, models: [], readiness: 'error', accountMessage: 'IMAGE_SAVED_SELECTION_REQUIRED' };
       const endpoint = getEndpoint();
-      try {
-        const directory = await saved.directory(savedAccountId, signal, endpoint, force);
-        if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
-        return { accounts, models: directory.models, catalog: { source: directory.source, queriedAt: directory.queriedAt }, readiness: 'ready' };
-      }
-      catch (error) {
-        if (signal.aborted) throw new Error('IMAGE_CANCELLED');
-        let accountMessage = savedImageError(error);
-        if (error instanceof LiveError && error.code === 'LIVE_OPERATION_OR_RECOVERY_LOCKED') {
-          // Startup identity checks share this lock. A recovery journal remains
-          // blocked; an ordinary active operation can be waited out safely.
-          let recovery = true;
-          try { recovery = await locks().hasRecovery(); } catch { /* Unknown lock state stays blocked. */ }
-          accountMessage = recovery ? 'IMAGE_ACCOUNT_RECOVERY_PENDING' : 'IMAGE_ACCOUNT_INITIALIZING';
-        }
-        return { accounts, models: [], readiness: 'error', accountMessage };
-      }
+      const directory = await saved.directory(savedAccountId, signal, endpoint, force);
+      if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
+      return { accounts, models: directory.models, catalogCacheHit: directory.cacheHit,
+        catalog: { source: directory.source, queriedAt: directory.queriedAt }, readiness: 'ready' };
     }
-    const directory = await locks().withOperation(() => currentDirectory(signal));
-    return { accounts: summaries().map(a => ({ ...a, active: a.id === directory.selected.id })), models: directory.models,
+    const directory = await locks().withOperation(() => currentDirectory(signal, getEndpoint(), force));
+    return { accounts: summaries().map(a => ({ ...a, active: a.id === directory.selected.id })), models: directory.models, catalogCacheHit: directory.cacheHit,
       catalog: { source: 'fetchAvailableModels', queriedAt: directory.queriedAt }, readiness: 'ready' };
+  };
+  const readChoices = async (signal: AbortSignal, savedAccountId?: string, force = false): Promise<ImageChoices> => {
+    const endpoint = getEndpoint(), diagnostic = beginDebugOperation('image.catalog');
+    diagnostic.event('preparing', { imageEndpoint: endpoint, catalogUse: savedAccountId ? 'saved' : 'current' });
+    try {
+      const result = await readChoicesWork(signal, savedAccountId, force);
+      if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
+      diagnostic.end(result.readiness === 'error' ? 'failed' : 'completed', { imageEndpoint: endpoint,
+        ...(result.accountMessage ? { code: result.accountMessage } : {}), ...(result.catalogCacheHit === undefined ? {} : { catalogCacheHit: result.catalogCacheHit }), ...(result.readiness === 'error' ? result.failure ?? { catalogStage: 'binding', catalogFailure: 'binding' } : {}) });
+      return result;
+    } catch (error) {
+      const failure = catalogFailureDetails(error);
+      let accountMessage = catalogErrorCode(error);
+      if (error instanceof LiveError && error.code === 'LIVE_OPERATION_OR_RECOVERY_LOCKED') {
+        let recovery = true; try { recovery = await locks().hasRecovery(); } catch { /* Stay blocked. */ }
+        accountMessage = recovery ? 'IMAGE_ACCOUNT_RECOVERY_PENDING' : 'IMAGE_ACCOUNT_INITIALIZING';
+      }
+      diagnostic.end(signal.aborted ? 'cancelled' : 'failed', { code: accountMessage, imageEndpoint: endpoint, ...failure });
+      if (signal.aborted) throw Error('IMAGE_CANCELLED');
+      return { accounts: summaries(), models: [], readiness: 'error', accountMessage, failure };
+    }
   };
   const bind = async (accountId: string, modelId: string, signal: AbortSignal, confirmedUse = false, endpoint = getEndpoint()) => {
     const directory = await currentDirectory(signal, endpoint);
@@ -189,20 +204,6 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       if (!row) throw Error('IMAGE_DIRECT_MODEL_UNVERIFIED');
       return { ...row, accountId, endpoint, queriedAt: new Date().toISOString() };
     });
-  };
-  const readCandidateImageQuota = async (id: string, model: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<ImageQuotaSnapshot> => {
-    assertAccountsReady();
-    const account = summaries().find(a => a.id === id);
-    if (!account || !account.hostCurrent || account.migrationState === 'pending') throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
-    const fingerprint = accountDisplayFingerprint(account);
-    const assertCurrent = async () => {
-      const current = summaries().find(a => a.id === id);
-      if (signal.aborted || !current || accountDisplayFingerprint(current) !== fingerprint || current.active !== account.active) throw Error('IMAGE_SAVED_ACCOUNT_CHANGED');
-      if (getEndpoint() !== endpoint) throw Error('IMAGE_DIRECT_ENDPOINT_CHANGED');
-    };
-    await assertCurrent();
-    const result = account.active ? await readImageQuota(id, model, signal) : await observedSaved.observeQuota(id, model, signal, endpoint, assertCurrent);
-    await assertCurrent(); return result;
   };
   const check = async (signal: AbortSignal, allowProjectLookup: boolean, expectedEndpoint?: ImageEndpoint) => {
     const endpoint = allowProjectLookup ? getEndpoint() : undefined;
@@ -254,7 +255,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
         {requestedCount: result.batch.requested, completedCount: result.batch.completed, ...(sentEndpoint ? {imageEndpoint: sentEndpoint} : {}), ...(result.batch.error ? {code: result.batch.error} : {})});
       return result;
     } catch (caught) {
-      const error = caught instanceof LiveError && !batchEntered ? new Error(caught.code.startsWith('ACCOUNT_QUOTA_') ? savedImageError(caught) : 'IMAGE_ACCOUNT_OPERATION_BUSY') : caught;
+      const error = caught instanceof LiveError && !batchEntered ? new Error(caught.code.startsWith('ACCOUNT_QUOTA_') ? catalogErrorCode(caught) : 'IMAGE_ACCOUNT_OPERATION_BUSY') : caught;
       record.outcome = signal.aborted ? 'cancelled' : 'failed'; record.code = debugErrorCode(error);
       // An HTTP 200 may still fail during parsing/validation. Enrich only its own
       // last response; never attach a prior operation's error to this request.
@@ -268,19 +269,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
       if (!recorded) diagnostic.event('status', { code: 'IMAGE_OPERATION_HISTORY_UNAVAILABLE' });
     }
   };
-  return { readChoices, readImageQuota, readCandidateImageQuota, hasSavedAccountSelection: (id: string) => saved.isSelected(id), selectSavedAccount: (id: string) => { assertAccountsReady(); saved.selectForWindow(id); }, listAccounts: summaries, diagnoseCatalog, diagnose, diagnoseProject, run, getEndpoint,
+  return { readChoices, readImageQuota, hasSavedAccountSelection: (id: string) => saved.isSelected(id), selectSavedAccount: (id: string) => { assertAccountsReady(); saved.selectForWindow(id); }, listAccounts: summaries, diagnoseCatalog, diagnose, diagnoseProject, run, getEndpoint,
     operationRecordWarning: () => historyWriteFailed ? tr("directImageVscode.1da2d70877") : '',
     operationHistory: async () => formatImageOperations(await journal.read()) };
-}
-
-function savedImageError(error: unknown): string {
-  const code = error instanceof Error ? error.message : '';
-  if (/^IMAGE_[A-Z_]+$/.test(code)) return code;
-  if (code === 'ACCOUNT_QUOTA_FORBIDDEN') return 'IMAGE_SAVED_MODELS_FORBIDDEN';
-  if (['ACCOUNT_QUOTA_RESPONSE_INVALID', 'ACCOUNT_QUOTA_RESPONSE_TOO_LARGE'].includes(code)) return 'IMAGE_SAVED_MODELS_INVALID';
-  if (code === 'ACCOUNT_QUOTA_TIMEOUT') return 'IMAGE_ACCOUNT_CHECK_TIMEOUT';
-  if (/REAUTH_REQUIRED|CLIENT_UNVERIFIED|TOKEN_UNSUPPORTED|TOKEN_CONFLICT/.test(code)) return 'IMAGE_SAVED_AUTH_REQUIRED';
-  if (/REFRESH_PENDING|REFRESH_OUTCOME_UNKNOWN|SECURE_SAVE_FAILED|REFRESH_SAVE_FAILED/.test(code)) return 'IMAGE_SAVED_AUTH_PENDING';
-  if (/REFRESH_CONFLICT|IDENTITY_MISMATCH|IDENTITY_INVALID/.test(code)) return 'IMAGE_SAVED_ACCOUNT_CHANGED';
-  return 'IMAGE_SAVED_MODELS_FAILED';
 }

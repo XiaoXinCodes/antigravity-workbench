@@ -65,3 +65,10 @@ test('open native quota picker relocalizes failures and statusbar name while pre
  registerQuotaTools(context,{getAccounts:()=>[account],getState:()=>({busy:false,pending:false,environment:{available:true}})},()=>{});
  try{const quotaKey=JSON.stringify(['bucket','','synthetic-model','']);await commands.get('antigravityAccounts.quota.pin')(account.id,quotaKey);commands.get('antigravityAccounts.quota.quickPick')();pick.value='Gem';fail=true;await commands.get('antigravityAccounts.quota.favorite')(account.id,quotaKey);assert.equal(pick.placeholder,api.t('quota.preferencesFailed'));api.setLanguage('en');assert.equal(pick.value,'Gem');assert.equal(pick.placeholder,api.t('quota.preferencesFailed'));assert.equal(status.name,api.t('quota.quickPick'));assert.doesNotMatch(pick.placeholder,/[\u3400-\u9fff]/u);assert.match(status.text,/50.00%/);}finally{for(const item of subscriptions)item.dispose()}
 });
+
+test('directory operation headings and retained-results notice translate as components in both directions',()=>{
+ const {formatImageFailure,localizeImageFailure}=require('../out/direct-image-http-error');
+ api.setLanguage('en');const english=api.t('catalog.refreshFailed')+' · '+formatImageFailure(Object.assign(Error('IMAGE_SAVED_MODELS_FAILED'),{httpStatus:400}))+' · '+api.t('catalog.resultsKept');
+ api.setLanguage('zh-CN');const chinese=localizeImageFailure(english);assert.match(chinese,/模型目录检查未完成.*HTTP 400.*图片和历史仍保留/);assert.doesNotMatch(chinese,/catalog check|no image submitted|没有提交图片/);
+ api.setLanguage('en');assert.equal(localizeImageFailure(chinese),english);
+});
