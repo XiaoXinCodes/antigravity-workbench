@@ -19,7 +19,7 @@ export interface GenerationModelOption { key: string; kind: ObservationStatus; v
 export interface GenerationProjectOption { key: string; label: string; recordCount: number }
 export interface LocalGenerationStats {
   range: GenerationStatsRange; timeZone: string; now: number; startLocalDate?: string; throughLocalDate: string;
-  readRecordCount: number; duplicatesRemoved: number; unknownTimeCount: number; futureTimeCount: number;
+  readRecordCount: number; matchedRecordCount: number; duplicatesRemoved: number; unknownTimeCount: number; futureTimeCount: number;
   modelOptions: GenerationModelOption[]; projectOptions: GenerationProjectOption[]; summary: GenerationAggregate;
   rows: StatsGenerationRecord[]; undatedRows: StatsGenerationRecord[]; trend: GenerationTrendPoint[];
 }
@@ -157,7 +157,7 @@ export function buildLocalGenerationStats(input: readonly StatsGenerationRecord[
   else trendDays.push(...[...byDay.keys()].sort());
   return {
     range, timeZone, now, ...(startLocalDate ? { startLocalDate } : {}), throughLocalDate,
-    readRecordCount: unique.length, duplicatesRemoved: input.length - unique.length, unknownTimeCount: undatedRows.length, futureTimeCount,
+    readRecordCount: unique.length, matchedRecordCount: filtered.length, duplicatesRemoved: input.length - unique.length, unknownTimeCount: undatedRows.length, futureTimeCount,
     modelOptions: [...models.values()].sort((a, b) => a.key.localeCompare(b.key)),
     projectOptions: [...projects.values()].sort((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key)),
     summary: aggregateGenerationStats(rows), rows, undatedRows,

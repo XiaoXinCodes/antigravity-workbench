@@ -50,6 +50,60 @@ test('calendar boundaries include local midnight and exclude previous days and f
   assert.equal(result.futureTimeCount, 1); assert.equal(result.trend[0].recordCount, 2);
 });
 
+test('UTC today can have known usage while Los Angeles today is empty and the last seven days retain it', () => {
+  const records = [row('early', '2026-10-11T01:00:00Z'), row('latePreviousLocalDay', '2026-10-11T06:59:59.999Z')];
+  const before = JSON.stringify(records), utc = buildLocalGenerationStats(records, { now, range: 'today', timeZone: 'UTC' });
+  const local = buildLocalGenerationStats(records, { now, range: 'today', timeZone: 'America/Los_Angeles' });
+  const seven = buildLocalGenerationStats(records, { now, range: '7d', timeZone: 'America/Los_Angeles' });
+  assert.equal(utc.summary.recordCount, 2); assert.equal(utc.summary.tokens.input.sum, 20);
+  assert.equal(local.startLocalDate, '2026-10-11'); assert.equal(local.readRecordCount, 2);
+  assert.equal(local.summary.recordCount, 0); assert.equal(local.unknownTimeCount, 0); assert.equal(local.futureTimeCount, 0);
+  assert.equal(local.summary.tokens.input.sum, undefined); assert.equal(local.summary.tokens.input.missingCount, 0);
+  assert.equal(seven.summary.recordCount, 2); assert.equal(seven.summary.tokens.input.knownCount, 2);
+  assert.equal(seven.summary.tokens.input.sum, 20); assert.equal(seven.summary.tokens.outputTotal.sum, 18);
+  assert.equal(seven.trend.find(point => point.day === '2026-10-10').recordCount, 2);
+  assert.equal(JSON.stringify(records), before);
+});
+
+test('the host timezone is used when statistics receive no explicit timezone override', () => {
+  const records = [row('early', '2026-10-11T06:00:00Z')];
+  const script = `const {buildLocalGenerationStats}=require(${JSON.stringify(require.resolve('../out/local-generation-stats'))});const value=buildLocalGenerationStats(${JSON.stringify(records)},{now:${now},range:'today'});console.log(JSON.stringify({zone:value.timeZone,read:value.readRecordCount,selected:value.summary.recordCount,unknown:value.unknownTimeCount}));`;
+  const env = { TZ: 'America/Los_Angeles', ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
+  const result = JSON.parse(require('node:child_process').execFileSync(process.execPath, ['--require', require.resolve('./helpers/offline-only.cjs'), '-e', script], { env, encoding: 'utf8', timeout: 5000, windowsHide: true }));
+  assert.deepEqual(result, { zone: 'America/Los_Angeles', read: 1, selected: 0, unknown: 0 });
+});
+
+test('Los Angeles local midnight changes today membership within the same UTC date', () => {
+  const records = [row('beforeMidnight', '2026-10-11T06:59:59.999Z'), row('atMidnight', '2026-10-11T07:00:00Z')];
+  const previous = buildLocalGenerationStats(records, { now: Date.parse('2026-10-11T06:59:59.999Z'), range: 'today', timeZone: 'America/Los_Angeles' });
+  const next = buildLocalGenerationStats(records, { now: Date.parse('2026-10-11T07:00:00Z'), range: 'today', timeZone: 'America/Los_Angeles' });
+  assert.equal(previous.throughLocalDate, '2026-10-10'); assert.deepEqual(previous.rows.map(record => record.key), [records[0].key]);
+  assert.equal(previous.futureTimeCount, 1); assert.equal(next.throughLocalDate, '2026-10-11');
+  assert.deepEqual(next.rows.map(record => record.key), [records[1].key]); assert.equal(next.futureTimeCount, 0);
+  const seven = buildLocalGenerationStats(records, { now: next.now, range: '7d', timeZone: next.timeZone });
+  assert.equal(seven.summary.recordCount, 2); assert.equal(seven.trend.find(point => point.day === '2026-10-10').recordCount, 1);
+  assert.equal(seven.trend.find(point => point.day === '2026-10-11').recordCount, 1);
+});
+
+test('non-UTC seven-day window starts at local midnight, including a fractional offset timezone', () => {
+  const records = [row('beforeFirstDay', '2026-10-04T18:29:59.999Z'), row('firstDay', '2026-10-04T18:30:00Z')];
+  const result = buildLocalGenerationStats(records, { now, range: '7d', timeZone: 'Asia/Kolkata' });
+  assert.equal(result.startLocalDate, '2026-10-05'); assert.equal(result.throughLocalDate, '2026-10-11');
+  assert.deepEqual(result.rows.map(record => record.key), [records[1].key]); assert.equal(result.trend[0].day, '2026-10-05');
+  assert.equal(result.trend[0].recordCount, 1); assert.equal(result.summary.tokens.input.sum, 10);
+});
+
+test('an empty range is distinct from an included record with missing usage', () => {
+  const dated = row('outsideRange', '2026-10-11T06:00:00Z'), missing = row('missingUsage', '2026-10-11T08:00:00Z');
+  missing.tokens.input = { status: 'missing', fields: [] };
+  const empty = buildLocalGenerationStats([dated], { now, range: 'today', timeZone: 'America/Los_Angeles' });
+  const included = buildLocalGenerationStats([missing], { now, range: 'today', timeZone: 'America/Los_Angeles' });
+  assert.equal(empty.readRecordCount, 1); assert.equal(empty.summary.recordCount, 0); assert.equal(empty.summary.tokens.input.totalCount, 0);
+  assert.equal(empty.summary.tokens.input.missingCount, 0); assert.equal(included.summary.recordCount, 1);
+  assert.equal(included.summary.tokens.input.totalCount, 1); assert.equal(included.summary.tokens.input.missingCount, 1);
+  assert.equal(included.summary.tokens.input.sum, undefined); assert.equal(included.summary.tokens.outputTotal.sum, 9);
+});
+
 test('seven and thirty days are inclusive calendar windows with empty daily points', () => {
   const records = [row('before', '2026-10-04T23:59:59.999Z'), row('first', '2026-10-05T00:00:00Z'), row('today', '2026-10-11T12:00:00Z')];
   const seven = buildLocalGenerationStats(records, { ...options, range: '7d' });

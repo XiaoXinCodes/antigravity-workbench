@@ -12,7 +12,7 @@ import { generationStatsExportContent, prepareGenerationExport, writeGenerationE
 export function registerObservationsUi(context: vscode.ExtensionContext, deps: { pick?: (directory: boolean) => Promise<readonly vscode.Uri[] | undefined>; read?: typeof readLocalGenerationDb; runtime?: DiscoveryRuntime; save?: (format: 'csv' | 'json') => Promise<vscode.Uri | undefined>; confirmOverwrite?: (name: string) => Promise<boolean> } = {}) {
   let panel: vscode.WebviewPanel | undefined, rows: LocalGenerationRecord[] = [], busy = false, notice = '', scope: GenerationScope | undefined;
   let active: AbortController | undefined;
-  let range: GenerationStatsRange = 'today', model = '', project = '', revision = 0, exporting = false;
+  let range: GenerationStatsRange = 'all', model = '', project = '', revision = 0, exporting = false;
   const snapshot = () => buildLocalGenerationStats(rows, {range, ...(model ? {model} : {}), ...(project ? {project} : {})});
   const emit = () => {
     const stats = snapshot();
@@ -68,7 +68,7 @@ export function registerObservationsUi(context: vscode.ExtensionContext, deps: {
         else { const loaded=await (deps.read ?? readLocalGenerationDb)(file,controller.signal);const imported=mergeLocalRecords(loaded.rows.map(row=>({...row,client:'selected' as const})));result={rows:imported,scope:{host:runtime.platform,files:1,rows:imported.length,skipped:0,limited:loaded.limited},found:true}; }
       }
       check();
-      if (panel===owner&&active===controller) { rows=result.rows;scope=result.scope;model='';project='';revision++;const all=buildLocalGenerationStats(rows,{range:'all'});if(rows.length&&all.unknownTimeCount===all.readRecordCount)range='all';notice=scope.limited?'limited':scope.skipped?'someSkipped':!result.found?'noDirectories':!rows.length?'noRecords':''; }
+      if (panel===owner&&active===controller) { rows=result.rows;scope=result.scope;revision++;const all=buildLocalGenerationStats(rows,{range:'all'});if(model&&!all.modelOptions.some(value=>value.key===model))model='';if(project&&!all.projectOptions.some(value=>value.key===project))project='';notice=scope.limited?'limited':scope.skipped?'someSkipped':!result.found?'noDirectories':!rows.length?'noRecords':''; }
     } catch (error) {
       if (panel===owner&&active===controller) { const code=controller.signal.aborted?'LOCAL_DB_CANCELLED':error instanceof Error?error.message:'';notice=({LOCAL_DB_CHANGED:'changed',LOCAL_DB_UNSUPPORTED:'unsupported',LOCAL_DB_UNSAFE:'unsafe',LOCAL_DB_LIMIT:'fileLimit',LOCAL_DB_CANCELLED:'cancelled',LOCAL_DB_HOST_UNSUPPORTED:'hostUnsupported'} as Record<string,string>)[code]??'unavailable'; }
     } finally { if(active===controller){active=undefined;busy=false;void emit();} }
@@ -87,6 +87,7 @@ export function registerObservationsUi(context: vscode.ExtensionContext, deps: {
       if(message.type==='filter'&&(!busy||exporting)){
         const choices=buildLocalGenerationStats(rows,{range:'all'});
         if(!['today','7d','30d','all'].includes(message.range)||typeof message.model!=='string'||message.model.length>300||message.model&&!choices.modelOptions.some(value=>value.key===message.model)||typeof message.project!=='string'||message.project&&!choices.projectOptions.some(value=>value.key===message.project))return;
+        if(message.range===range&&message.model===model&&message.project===project)return;
         range=message.range;model=message.model;project=message.project;revision++;if(exporting)active?.abort();void emit();
       }
       if(message.type==='export'&&(message.format==='csv'||message.format==='json'))void exportRecords(owner,message.format);
