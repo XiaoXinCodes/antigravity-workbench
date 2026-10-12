@@ -1,3 +1,4 @@
+import { responseModels, missingModel, type ModelObservation } from './model-observation';
 import { catalogError, catalogParseError, catalogErrorCode, catalogFailureDetails, type CatalogFailure } from './model-catalog-error';
 import { parseModelCatalog, imageCatalogIssue, assertModelUse } from './model-catalog';
 import { accountDisplayFingerprint } from './quota-presentation';
@@ -214,7 +215,7 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
   };
   const diagnose = (signal: AbortSignal) => check(signal, false);
   const diagnoseProject = (signal: AbortSignal, expectedEndpoint?: ImageEndpoint) => check(signal, true, expectedEndpoint);
-  const run = async (request: DirectImageRequest, signal: AbortSignal, onProgress: (value: { phase: string; message: string }) => void, operationId?: string) => {
+  const run = async (request: DirectImageRequest, signal: AbortSignal, onProgress: (value: { phase: string; message: string; responseModel?: ModelObservation }) => void, operationId?: string) => {
     request = { ...request, references: [...request.references] };
     const record = imageOperationStart(request, operationId);
     const diagnostic = beginDebugOperation('image.generate', record.operationId);
@@ -243,8 +244,13 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
         sentEndpoint = imageEndpoint(target);
         diagnostic.event('generating', { imageEndpoint: sentEndpoint });
         const requestId = object(body) && validImageRequestId(body.requestId) ? { requestId: body.requestId } : {};
-        try { const response = await sendDirectImage(token, body, sendSignal, undefined, target); record.responses.push({ ...requestId, ...imageOperationResponse(response) }); return response; }
-        catch (error) { record.responses.push({ ...requestId, ...imageOperationFailure(error) }); throw error; }
+        let response: unknown;
+        try { response = await sendDirectImage(token, body, sendSignal, undefined, target); }
+        catch (error) { record.responses.push({ ...requestId, ...imageOperationFailure(error) }); onProgress({ phase: 'response', message: '', responseModel: missingModel() }); throw error; }
+        record.responses.push({ ...requestId, ...imageOperationResponse(response) });
+        const excluded = [token, request.prompt];
+        if (object(body) && typeof body.project === 'string') excluded.push(body.project);
+        onProgress({ phase: 'response', message: '', responseModel: responseModels(response, excluded) }); return response;
       }, bind: (accountId, modelId, bindSignal) => savedBinding ? Promise.resolve(savedBinding) : bind(accountId, modelId, bindSignal, request.confirmedModelUse === true, endpoint) });
       });
       record.outcome = result.batch.outcome; record.completed = result.batch.completed;

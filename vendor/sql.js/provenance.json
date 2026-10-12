@@ -1,0 +1,13 @@
+{
+  "package": "sql.js",
+  "version": "1.14.2",
+  "commit": "1d5db4546e5feb944a3415739eb2a54103b54882",
+  "tarball": "https://registry.npmjs.org/sql.js/-/sql.js-1.14.2.tgz",
+  "integrity": "sha512-3ZGPovObMFrdw79zrUHbfdE/DLIsy8jdNdssmMSQuRAymedU6q84asPt0kgiqrdMYlPegDItiIMfmIXzZnYFcw==",
+  "sqliteVersion": "3.49.1",
+  "files": {
+    "vendor/sql.js/sql-wasm.js": "f1c84000dbc856c9d87f4f3aabc4d3654bd436165db4be3da13751db3a9c20d7",
+    "vendor/sql.js/sql-wasm.wasm": "38c14f6e379210bc942bdc4ebca44e7bfdb4318ecc1c72ca666a28fdce96670a",
+    "vendor/sql.js/AUTHORS": "2bb11c65286bd0f2919022e119671036ff8d85c6cd1522b6ebcc1362e67f2ce5"
+  }
+}

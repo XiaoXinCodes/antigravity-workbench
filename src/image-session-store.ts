@@ -1,3 +1,4 @@
+import { readModelObservation, type ModelObservation } from './model-observation';
 import { t as tr } from './i18n';
 import * as fs from 'node:fs/promises';
 import { constants, type Stats } from 'node:fs';
@@ -16,6 +17,7 @@ export type ImageTask = {
   ratio: string; size: string; quality: string; count: number; references: string[];
   phase: 'confirming' | 'preparing' | 'generating' | 'validating' | 'complete' | 'partial' | 'failed' | 'cancelled' | 'interrupted';
   status: string; outputDirectory: string; images: SavedImage[];
+  responseModels?: ModelObservation[];
   origin?: ImageOrigin;
 };
 export type ImageDraft = { prompt: string; accountId: string; modelId: string; ratio: string; count: number; size: string; quality: string; followCurrent: boolean };
@@ -84,6 +86,7 @@ export function readImageSession(value: unknown, restored = false): ImageSession
       ratio: pick(t.ratio, [...ratios, '原始']), size: pick(t.size, ['auto', '1K', '2K', '4K', '原始']), quality: pick(t.quality, ['auto', 'detail', '原始']), count: num(t.count, 0, 4),
       references: refs(t.references), outputDirectory, images,
       phase: pick(t.phase, ['confirming', 'preparing', 'generating', 'validating', 'complete', 'partial', 'failed', 'cancelled', 'interrupted']), status: str(t.status, 4000) };
+    if (t.responseModels !== undefined) task.responseModels = Array.isArray(t.responseModels) && t.responseModels.length <= 4 ? t.responseModels.map(readModelObservation) : [{status:'invalid',values:[],fields:[],invalid:true}];
     if (t.accountId !== undefined) task.accountId = str(t.accountId, 128);
     if (t.accountFingerprint !== undefined) task.accountFingerprint = digest(t.accountFingerprint);
     if (t.accountLabel !== undefined) task.accountLabel = str(t.accountLabel, 512);

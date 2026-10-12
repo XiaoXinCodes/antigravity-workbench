@@ -17,6 +17,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 LICENSE_TEXT_HASHES = {
     'LICENSE': '12da070e58faaca8fa54ebc1f9b099b0c2a3c80fe0b92786776e3c52bd7b8698',
     'LICENSES/TypeScript-Apache-2.0.txt': 'a5e9f9b1575301c7a7a03508fdaa2e05a918cc17fd21c6e898096a96d6a34f61',
+    'LICENSES/sql.js-MIT.txt': '60a3f6e4d7b29b4321359e683b36cf198d24f58e24582070f56e6fa89d5ee2be',
+    'LICENSES/Emscripten-MIT-NCSA.txt': '2fd38dc06e484cdd7a3f1e2f6577f5d53062052a2fd85131b56b89fbd673731c',
+    'LICENSES/musl-COPYRIGHT.txt': 'f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af',
 }
 
 
@@ -29,6 +32,7 @@ def verify_license_notices(package, lock):
     third_party_notices = (ROOT / 'THIRD_PARTY_NOTICES.txt').read_text(encoding='utf-8')
     assert f'TypeScript {compiler_version}' in third_party_notices
     assert 'Copyright (c) Microsoft Corporation. All rights reserved.' in third_party_notices
+    assert 'sql.js 1.14.2' in third_party_notices and 'Copyright (c) 2017 sql.js authors' in third_party_notices
     return third_party_notices
 
 
@@ -36,7 +40,7 @@ def verify(vsix, source=None):
     package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))
     lock = json.loads((ROOT / 'package-lock.json').read_text(encoding='utf-8'))
     version = package['version']
-    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.12'
+    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.13'
     third_party_notices = verify_license_notices(package, lock)
     assert package['icon'] == 'media/icon.png'
     assert package['contributes']['viewsContainers']['activitybar'][0]['icon'] == 'media/workbench.svg'
@@ -74,7 +78,8 @@ def verify(vsix, source=None):
                 for source_name, member in {
                     'LICENSE': 'extension/LICENSE.txt',
                     'THIRD_PARTY_NOTICES.txt': 'extension/THIRD_PARTY_NOTICES.txt',
-                    'LICENSES/TypeScript-Apache-2.0.txt': 'extension/LICENSES/TypeScript-Apache-2.0.txt',
+                    **{name: 'extension/' + name for name in LICENSE_TEXT_HASHES if name != 'LICENSE'},
+                    **{p.relative_to(ROOT).as_posix(): 'extension/' + p.relative_to(ROOT).as_posix() for p in (ROOT / 'vendor/sql.js').iterdir() if p.is_file()},
                 }.items():
                     assert member in archive.namelist(), f'Missing license notice: {member}'
                     assert archive.read(member) == (ROOT / source_name).read_bytes(), f'Changed license notice: {member}'
@@ -91,6 +96,14 @@ def verify(vsix, source=None):
                         source_name = {'extension/readme.md': 'README.md', 'extension/changelog.md': 'CHANGELOG.md'}.get(member, member.removeprefix('extension/'))
                         expected = package_docs.rewrite_document((ROOT / source_name).read_bytes(), member, commit)
                         assert archive.read(member) == expected, f'Documentation differs from source commit: {member}'
+                # README screenshots must be shipped with the exact reviewed bytes.
+                for readme in ['README.md', 'README_EN.md']:
+                    for image in re.findall(r'<img[^>]+src="([^"]+)"', (ROOT / readme).read_text(encoding='utf-8')):
+                        if image.startswith('https://'):
+                            continue
+                        member = 'extension/' + image
+                        assert member in archive.namelist(), f'Missing README screenshot: {image}'
+                        assert archive.read(member) == (ROOT / image).read_bytes(), f'Changed README screenshot: {image}'
                 result['documentation_commit'] = commit
                 activity_icon = archive.read('extension/media/workbench.svg')
                 assert activity_icon == (ROOT / 'media/workbench.svg').read_bytes()

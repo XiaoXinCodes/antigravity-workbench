@@ -97,3 +97,31 @@ test('wake catalog uses exact per-account callable IDs, preserves unfamiliar mod
  const Module=require('node:module'),original=Module._load;let parse;try{Module._load=function(name,...args){return name==='vscode'?{}:original.call(this,name,...args)};parse=require('../out/wake-accounts').wakeModelsFromCatalog}finally{Module._load=original}
  const catalog={imageGenerationModelIds:['synthetic-image'],models:{'text-alpha':{displayName:'Alpha'},'future-family':{displayName:'New family'},'disabled-model':{disabled:true},'synthetic-image':{}}};assert.deepEqual(parse(catalog).map(m=>m.id),['text-alpha','future-family']);assert.deepEqual(parse({imageGenerationModelIds:[],models:{'text-beta':{}}}).map(m=>m.id),['text-beta']);assert.throws(()=>parse({models:[]}));
 });
+
+test('same-attempt late model evidence survives expired lease without resurrecting a terminal wake or sending twice',async()=>{
+ const f=fixture();await enabled(f);let finish;f.handle(async(_task,_signal,before)=>{await before();return new Promise(resolve=>finish=resolve)});const work=f.engine.tick();while(!finish)await tick();const state=await f.store.read(),attempt=state.instances[0];f.setTime(attempt.leaseUntil+1);const other=new WakeEngine(f.store,f.deps,()=>{},()=>attempt.leaseUntil+1);await other.tick();assert.equal((await f.store.read()).instances[0].phase,'unknown');
+ const {responseModels}=require('../out/model-observation');finish({phase:'succeeded',code:'WAKE_COMPLETE',responseModel:responseModels({response:{modelVersion:'synthetic-late-declaration'}})});await work;const row=(await f.store.read()).instances[0];assert.equal(row.phase,'unknown');assert.equal(row.code,'WAKE_OUTCOME_UNKNOWN');assert.equal(row.responseModel.values[0],'synthetic-late-declaration');assert.equal(f.calls,1);other.dispose();f.engine.dispose();
+});
+
+test('known completion survives a blocked terminal write and next poll persists it without another send',async()=>{
+ const inner=memory();let blocked=false;
+ const store={read:()=>inner.read(),transaction(fn){if(blocked)return Promise.reject(new(require('../out/live-storage').LiveError)('LIVE_OPERATION_OR_RECOVERY_LOCKED'));return inner.transaction(fn)}};
+ const f=fixture(store);await enabled(f);f.handle(async(_task,_signal,before)=>{await before();blocked=true;return{phase:'succeeded',code:'WAKE_COMPLETE'}});
+ await assert.rejects(f.engine.tick(),/LIVE_OPERATION_OR_RECOVERY_LOCKED/);assert.equal((await inner.read()).instances[0].phase,'sent');
+ await assert.rejects(f.engine.tick(),/LIVE_OPERATION_OR_RECOVERY_LOCKED/);assert.equal(f.calls,1);
+ blocked=false;await f.engine.tick();assert.equal((await inner.read()).instances[0].phase,'succeeded');assert.equal(f.calls,1);f.engine.dispose();
+});
+
+test('pending completion cannot upgrade an expired or replaced attempt and unknown outcomes never resend',async()=>{
+ for(const change of ['expired','replaced','unknown','reopened']){
+  const inner=memory();let blocked=false;
+  const store={read:()=>inner.read(),transaction(fn){if(blocked)return Promise.reject(new(require('../out/live-storage').LiveError)('LIVE_OPERATION_OR_RECOVERY_LOCKED'));return inner.transaction(fn)}};
+  const f=fixture(store);await enabled(f);f.handle(async(_task,_signal,before)=>{await before();blocked=true;return{phase:change==='unknown'?'unknown':'succeeded',code:change==='unknown'?'WAKE_OUTCOME_UNKNOWN':'WAKE_COMPLETE'}});
+  await assert.rejects(f.engine.tick(),/LIVE_OPERATION_OR_RECOVERY_LOCKED/);const attempt=(await inner.read()).instances[0];
+  if(change==='expired'||change==='reopened')f.setTime(attempt.leaseUntil+1);
+  if(change==='replaced')await inner.transaction(s=>{s.instances[0].nonce=require('node:crypto').randomUUID();s.instances[0].phase='unknown';s.instances[0].code='WAKE_OUTCOME_UNKNOWN';s.tasks[0].enabled=false});
+  blocked=false;
+  if(change==='reopened'){f.engine.dispose();const other=new WakeEngine(store,f.deps,()=>{},()=>attempt.leaseUntil+1);await other.tick();other.dispose()}else await f.engine.tick();
+  assert.equal((await inner.read()).instances[0].phase,'unknown',change);assert.equal(f.calls,1,change);f.engine.dispose();
+ }
+});

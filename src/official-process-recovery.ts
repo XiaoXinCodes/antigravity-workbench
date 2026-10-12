@@ -47,15 +47,17 @@ export interface ProcessRecoveryRuntime {
 export function runProcessHelper(request: HelperRequest, signal?: AbortSignal, authorize?: () => void): Promise<unknown> {
   return runHelper('/usr/bin/python3', ['-I', '-c', LINUX_PROCESS_HELPER], request, signal, authorize);
 }
-export function windowsPowerShell(): string {
-  const system = process.arch === 'ia32' && process.env.PROCESSOR_ARCHITEW6432 ? 'Sysnative' : 'System32';
-  return path.win32.join(process.env.SystemRoot || 'C:\\Windows', system, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+export function windowsPowerShell(environment: NodeJS.ProcessEnv = process.env): string {
+  const system = process.arch === 'ia32' && environment.PROCESSOR_ARCHITEW6432 ? 'Sysnative' : 'System32';
+  return path.win32.join(environment.SystemRoot || 'C:\\Windows', system, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 export function windowsHelperEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  // Windows PowerShell's module analysis cache uses LOCALAPPDATA. Preserve
-  // system profile paths while keeping authentication and service settings out.
-  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA']) if (environment[name]) env[name] = environment[name];
+  // Preserve only system/profile directory variables required by Windows
+  // PowerShell's module discovery and cache; never inherit executable or user
+  // module searches, authentication, or service settings.
+  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData', 'ALLUSERSPROFILE']) if (environment[name]) env[name] = environment[name];
+  env.PSModulePath = path.win32.join(path.win32.dirname(windowsPowerShell(environment)), 'Modules');
   return env;
 }
 export function runWindowsProcessHelper(request: HelperRequest, signal?: AbortSignal, authorize?: () => void): Promise<unknown> {

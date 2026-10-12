@@ -4,6 +4,17 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.13](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.13) — 2026-10-12
+
+模型与 Token 记录、用量概览和记录列表集中在同一页。
+
+- 首次读取显示全部已读记录；刷新保留时间、模型和项目筛选。
+- 查看每日趋势，导出筛选结果为 CSV / JSON；空时段可一键查看全部记录。
+- 保留服务端返回型号与已提供的 Token 用量，缺失值不算零；窄窗口保持列表可读。
+- 改善定时任务结果保存，更新中英文 README 和真实合成数据截图。
+
+[发布说明](docs/RELEASE_0.1.13.md) · [验证范围](docs/VALIDATION_0.1.13.md)
+
 ## [0.1.12](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.12) — 2026-10-11
 
 模型选择跟随账号的服务端目录，新增型号无需更新插件。

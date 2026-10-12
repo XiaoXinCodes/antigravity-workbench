@@ -6,6 +6,11 @@
 export const WINDOWS_PROCESS_BOOTSTRAP = String.raw`
 $ErrorActionPreference='Stop'
 try {
+ # Startup may augment PSModulePath with user/all-user locations. Restore the
+ # system-only search before any cmdlet and load Utility by its exact system
+ # manifest, so Add-Type never discovers a user or incompatible module.
+ $env:PSModulePath=$PSHOME+'\Modules'
+ Import-Module ($PSHOME+'\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
  # Redirected helpers have no console code page. Use one explicit reader for
  # source, request and acknowledgement; never reset its buffered input.
  $encoding=[Text.UTF8Encoding]::new($false,$true)
@@ -20,7 +25,7 @@ try {
 `;
 export const WINDOWS_PROCESS_HELPER = String.raw`
 $ErrorActionPreference='Stop'
-Add-Type -TypeDefinition @'
+Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;

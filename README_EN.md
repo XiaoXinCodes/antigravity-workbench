@@ -4,7 +4,7 @@
 
 <h1 align="center">Antigravity Workbench</h1>
 
-<p align="center">Manage Google Antigravity accounts, check quota and create images in VS Code.</p>
+<p align="center">Manage Google Antigravity accounts, check quota and token usage and create images in VS Code.</p>
 
 <p align="center"><strong>Open source · MIT License</strong></p>
 
@@ -17,7 +17,7 @@
   <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">Report an issue</a>
 </p>
 
-Workbench brings accounts, quotas and image creation into one VS Code workbench: compare model quotas across accounts, choose an image account independently and continue from history. Enable quota alerts and scheduled requests when you need them.
+Workbench brings accounts, quotas and image creation into one VS Code workbench: compare model quotas across accounts, choose an image account independently and continue from history. Read local model and token records, filter usage by time, model and project, and export results. Enable quota alerts and scheduled requests when you need them.
 
 This project is independently developed and is not affiliated with, authorized by or endorsed by Google. Available models, permissions and quota depend on the selected account's server responses.
 
@@ -55,6 +55,7 @@ If Marketplace is unavailable, download the `.vsix` attachment from the [latest 
 | Creation history and reuse | Restore drafts and task cards, reuse historical request parameters, continue editing and compare versions; missing references are flagged and interrupted tasks are not resent automatically |
 | Use in your project | Preview PNG/JPEG, copy paths or Markdown, insert into the editor or copy images into the project; originals are kept, insertion does not save, and copying does not overwrite |
 | Optional alerts and scheduled requests | Disabled by default; low, exhausted and recovered quota alerts, plus text requests on daily/weekly, interval, five-field cron or confirmed full-quota recovery triggers |
+| Model and token records | Read local records on demand; see usage totals and the record list together, filter by time, returned model and project, inspect daily trends and export CSV / JSON |
 | Shared interface language | Manually choose Simplified Chinese or English globally; Chinese is the default and account, image, history and automation pages update immediately |
 
 ## Getting started
@@ -84,6 +85,14 @@ Unknown quota stays unknown, and older readings retain their query time. Family 
 
 Drafts and task cards stay on the current host and return after reload. Existing images can be recovered without generating them again. Normal use needs no endpoint configuration; failed image requests do not automatically retry, switch accounts or change endpoints. See [image generation](docs/IMAGE_GENERATION.md) and [project actions](docs/IMAGE_RESULTS.md) (Chinese).
 
+### View model and token records
+
+1. Select **Model and token records** in the workbench, then **Read local records**. The first read shows all read records, with usage totals and the list on one page.
+2. Filter by time, returned model and project. Expand daily trends or a record for details. **Refresh records** preserves the selected time range and available filters.
+3. Choose CSV or JSON and select **Export**. If a period is empty, **View all records** restores the list.
+
+Dates use your local timezone. Missing tokens or model names remain **Not provided**, rather than zero. Returned models are declarations in server responses or local records and cannot prove the underlying model; image and scheduled-task details also retain returned model names when provided. Reading and exporting send no model requests. See [records and usage](docs/REQUEST_MODEL_OBSERVATIONS.md).
+
 ### Enable alerts and scheduled requests when needed
 
 Open **Manage scheduled requests and alerts** to select low, exhausted or recovered quota alerts. Text requests use a chosen account, model and timezone, with daily/weekly, interval or five-field cron schedules. They can also run when the server reports a transition from partial quota to exactly full quota.
@@ -98,19 +107,23 @@ Screenshots show actual Chromium / VS Code rendering with fictional accounts, mo
 
 Add and save share a toolbar, and the current login is clearly marked. Refresh an account to see remaining fractions, reset times and query time; compare, sort and batch-refresh accounts in the quota overview. Accounts and percentages below are demonstration values.
 
-<img src="docs/images/accounts-en.png" width="410" alt="English account workbench with grouped Add and Saved buttons, current-login badge and mock model quota">
+<img src="docs/images/accounts-en.png" width="440" alt="English account workbench with Add and Save actions, login status and mock model quota">
+
+### Model and token records
+
+Select **Read local records** to see totals and records on one page, with filters and CSV / JSON export at the top. Expand trends and details when needed.
+
+<img src="docs/images/usage-records-en.png" width="960" alt="English model and token records with all records, usage totals, a visible list, time model and project filters and export">
+
+An empty period explains why no records match and offers **View all records** to restore the list.
+
+<img src="docs/images/usage-empty-period-en.png" width="960" alt="English empty period with a clear explanation and View all records action">
 
 ### Image studio
 
 Select an independent image account and a model from its server catalog, then prepare a prompt, references and parameters. Submission requires confirmation. Creation history stays on the right for parameter reuse and continued editing. Image quota percentages are not converted into image counts.
 
-<img src="docs/images/image-studio-en.png" width="960" alt="English image studio with independent account selection, mock model quota, references and saved demonstration result">
-
-### Clear references and continue creating
-
-Remove references individually or clear them all. The screenshot below follows the actual host's clear action: current references are gone, while original files and saved results remain available for continued editing.
-
-<img src="docs/images/image-studio-cleared-en.png" width="960" alt="English image studio after clearing references, with saved results and original images retained">
+<img src="docs/images/image-studio-en.png" width="960" alt="English image studio with independent account selection, mock model quota and synthetic task history">
 
 ## Interface language
 
@@ -120,9 +133,9 @@ Command Palette entries, view titles and setting descriptions follow VS Code's d
 
 ### Model catalogs and upgrades
 
-New models appear when the selected account and endpoint catalog refreshes, without a plugin model-list update. The image picker includes only available members of the explicit server image list. Image members cannot receive scheduled text requests. Unknown conversation roles require explicit confirmation; names, image-input support and subscription labels are not role evidence. The picker shows the source and query time. Failed lookups retain the previous display and selection, while sending requires a fresh catalog check. Missing quota remains unknown.
+Models follow the selected account's server catalog, without waiting for a plugin update. Failed queries keep the selection and previous results; missing entries or quota do not establish lack of permission. The image studio uses models explicitly listed for images by the server.
 
-Upgrades retain accounts, image history, favorites, drafts and scheduled model IDs without switching to the first choice. Existing scheduled tasks continue when the server identifies their conversation role. If their role remains unknown, edit the task and confirm ordinary text use. Confirmation is scoped to that task’s account, endpoint and model; it cannot override an image classification or disabled status. See [the audit and data limits](docs/MODEL_CATALOG_REFACTOR.md) (Chinese).
+Upgrades preserve accounts, image history, favorites, drafts and scheduled tasks without replacing selected models. If an existing scheduled task asks for confirmation of its use, edit it and confirm ordinary text use. See [model catalogs](docs/MODEL_CATALOG_REFACTOR.md).
 
 ## FAQ
 

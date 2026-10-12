@@ -245,7 +245,7 @@ async function inspectLayouts(cases, screenshots) {
         const clickFlow = await send('Runtime.evaluate', { awaitPromise: true, returnByValue: true, expression: `(async () => {
           const messages = window.__fixture.messages, failures = [];
           const complete = (items = messages) => items.forEach(message => window.dispatchEvent(new MessageEvent('message', {data:{type:'complete',command:message.command,requestId:message.requestId}})));
-          const independent = new Set(['quota.quickPick','quota.cancel','quota.unpin','quota.pin','quota.favorite','quota.history','automation.open','privacy.toggle','live.quotaCancel','debug.toggle','debug.preview','debug.exportPreview','debug.copyDirectory','debug.openDirectory','openHelp','openOfficialExtension','openWorkbenchExtension','openHostSettings','locations.copyExtension','locations.copyCredentials','locations.copyImageOutput','locations.openExtension','openSettings']);
+          const independent = new Set(['observations.open','quota.quickPick','quota.cancel','quota.unpin','quota.pin','quota.favorite','quota.history','automation.open','privacy.toggle','live.quotaCancel','debug.toggle','debug.preview','debug.exportPreview','debug.copyDirectory','debug.openDirectory','openHelp','openOfficialExtension','openWorkbenchExtension','openHostSettings','locations.copyExtension','locations.copyCredentials','locations.copyImageOutput','locations.openExtension','openSettings']);
           const requestIds = new Set();
           const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
           const details = [...document.querySelectorAll('details')];

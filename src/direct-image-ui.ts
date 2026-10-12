@@ -606,6 +606,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         if (cancelRequested || panel !== owner) { task.phase = 'cancelled'; task.status = tr("directImageUi.5c3249c289"); return; }
         const result = await direct.run(request, active.signal, value => {
           if (!taskOpen) return;
+          if (value.responseModel && task) { (task.responseModels ??= []).push(value.responseModel); emit(); return; }
           if (attempt && (value.phase === 'generating' || value.phase === 'validating')) attempt.stage = value.phase;
           if (task) { if (value.phase === 'generating' || value.phase === 'validating') task.phase = value.phase; task.status = value.message; }
           status = value.message; emit();

@@ -1,10 +1,11 @@
+import { readModelObservation, type ModelObservation } from './model-observation';
 import { validModelId } from './model-catalog';
 import { quotaFraction } from './quota-presentation';
 import { validateWakeSchedule, type WakeSchedule } from './wake-schedule';
 import type { CloudCodeEndpoint } from './cloudcode-service';
 export interface WakeTask { confirmedModelUse?: boolean; id: string; revision: string; accountId: string; fingerprint: string; modelId: string; endpoint: CloudCodeEndpoint; schedule: WakeSchedule; enabled: boolean; outputBudget: number; nextDue: number; recovery?: { fraction: number | null; observedAt: number; valid?: boolean } }
 export type WakeOutcome = 'preparing' | 'sent' | 'succeeded' | 'failed' | 'unknown' | 'cancelled' | 'skipped';
-export interface WakeInstance { id: string; taskId: string; revision: string; accountId: string; modelId: string; due: number; manual: boolean; nonce: string; leaseUntil: number; phase: WakeOutcome; code: string; outputTokens?: number; totalTokens?: number }
+export interface WakeInstance { id: string; taskId: string; revision: string; accountId: string; modelId: string; due: number; manual: boolean; nonce: string; leaseUntil: number; phase: WakeOutcome; code: string; outputTokens?: number; totalTokens?: number; responseModel?: ModelObservation }
 export interface AlertSettings { low: boolean; exhausted: boolean; recovered: boolean; threshold: number }
 export interface AlertReading { key: string; observedAt: number; state: 'healthy' | 'low' | 'exhausted' }
 export interface WakeState { schema: 1; consent: boolean; enabled: boolean; tasks: WakeTask[]; instances: WakeInstance[]; alerts: AlertSettings; readings: AlertReading[] }
@@ -32,7 +33,7 @@ export function parseWakeState(value: unknown): WakeState {
   const instances = rows(v.instances, 500).map(item => {
     const i = obj(item), phase = text(i.phase); if (!['preparing', 'sent', 'succeeded', 'failed', 'unknown', 'cancelled', 'skipped'].includes(phase)) bad();
     return { id: text(i.id, 300), taskId: uuid(i.taskId), revision: uuid(i.revision), accountId: uuid(i.accountId), modelId: text(i.modelId, 128), due: number(i.due), manual: bool(i.manual), nonce: uuid(i.nonce), leaseUntil: number(i.leaseUntil), phase: phase as WakeOutcome,
-      code: typeof i.code === 'string' && /^[A-Z_0-9]{0,100}$/.test(i.code) ? i.code : bad(), ...(i.outputTokens === undefined ? {} : { outputTokens: number(i.outputTokens) }), ...(i.totalTokens === undefined ? {} : { totalTokens: number(i.totalTokens) }) };
+      ...(i.responseModel === undefined ? {} : { responseModel: readModelObservation(i.responseModel) }), code: typeof i.code === 'string' && /^[A-Z_0-9]{0,100}$/.test(i.code) ? i.code : bad(), ...(i.outputTokens === undefined ? {} : { outputTokens: number(i.outputTokens) }), ...(i.totalTokens === undefined ? {} : { totalTokens: number(i.totalTokens) }) };
   });
   if (new Set(instances.map(i => i.id)).size !== instances.length) bad();
   const readings = rows(v.readings, 10000).map(item => { const r = obj(item); if (!['healthy', 'low', 'exhausted'].includes(String(r.state))) bad(); return { key: text(r.key, 4000), observedAt: number(r.observedAt), state: r.state as AlertReading['state'] }; });
