@@ -15,6 +15,7 @@
 | 手动选择简体中文 / English、查找设置和命令入口 | [设置与命令](COMMANDS.md) · [本地化架构](LOCALIZATION.md) |
 | 保存日志、报告问题、处理常见错误 | [日志说明](DEBUG_LOGS.md) · [故障排查](TROUBLESHOOTING.md) |
 | 私下报告疑似安全漏洞 | [安全报告流程](../SECURITY.md) |
-| 了解能力边界与已验证范围 | [兼容性](COMPATIBILITY.md) · [验证范围](VALIDATION_0.1.12.md) |
+| 查看模型与 Token 记录、用量及筛选导出 | [记录与用量](REQUEST_MODEL_OBSERVATIONS.md) |
+| 了解能力边界与已验证范围 | [兼容性](COMPATIBILITY.md) · [验证范围](VALIDATION_0.1.13.md) |
 
 [最新发行说明](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) · [项目与服务说明](PROJECT_NOTICES.md) · [返回项目首页](https://github.com/XiaoXinCodes/antigravity-workbench)

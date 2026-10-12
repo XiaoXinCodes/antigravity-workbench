@@ -40,7 +40,7 @@ def verify(vsix, source=None):
     package = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))
     lock = json.loads((ROOT / 'package-lock.json').read_text(encoding='utf-8'))
     version = package['version']
-    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.12'
+    assert version == lock['version'] == lock['packages']['']['version'] == '0.1.13'
     third_party_notices = verify_license_notices(package, lock)
     assert package['icon'] == 'media/icon.png'
     assert package['contributes']['viewsContainers']['activitybar'][0]['icon'] == 'media/workbench.svg'
@@ -96,6 +96,14 @@ def verify(vsix, source=None):
                         source_name = {'extension/readme.md': 'README.md', 'extension/changelog.md': 'CHANGELOG.md'}.get(member, member.removeprefix('extension/'))
                         expected = package_docs.rewrite_document((ROOT / source_name).read_bytes(), member, commit)
                         assert archive.read(member) == expected, f'Documentation differs from source commit: {member}'
+                # README screenshots must be shipped with the exact reviewed bytes.
+                for readme in ['README.md', 'README_EN.md']:
+                    for image in re.findall(r'<img[^>]+src="([^"]+)"', (ROOT / readme).read_text(encoding='utf-8')):
+                        if image.startswith('https://'):
+                            continue
+                        member = 'extension/' + image
+                        assert member in archive.namelist(), f'Missing README screenshot: {image}'
+                        assert archive.read(member) == (ROOT / image).read_bytes(), f'Changed README screenshot: {image}'
                 result['documentation_commit'] = commit
                 activity_icon = archive.read('extension/media/workbench.svg')
                 assert activity_icon == (ROOT / 'media/workbench.svg').read_bytes()

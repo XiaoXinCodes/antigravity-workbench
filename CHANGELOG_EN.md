@@ -4,6 +4,17 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.13](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.13) — 2026-10-12
+
+See model and token records, usage totals and the record list together on one page.
+
+- Start with all read records; preserve time, model and project filters on refresh.
+- Inspect daily trends and export CSV / JSON; restore all records from an empty period.
+- Keep server-declared returned models and provided token usage, leaving missing values unknown; keep narrow lists readable.
+- Improve scheduled-result saving and refresh both READMEs with real synthetic-data screenshots.
+
+[Release notes](docs/RELEASE_0.1.13.md) · [Validation scope](docs/VALIDATION_0.1.13.md)
+
 ## [0.1.12](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.12) — 2026-10-11
 
 Model selection follows the account's server catalog, so newly listed models appear without a plugin update.

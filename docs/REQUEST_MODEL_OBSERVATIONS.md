@@ -1,4 +1,4 @@
-# Request model observations (candidate for 0.1.12)
+# Model and token records — 0.1.13
 
 The workbench records raw server model declarations; it cannot verify underlying weights or prove that an advertised backend actually served a request. No model aliases, pricing tables, catalog/display-name joins, cross-row fill, proxy or additional inference request are used.
 
@@ -71,10 +71,8 @@ Synthetic metadata and live synthetic WAL fixtures include native/WASM different
 
 On Windows, the synthetic SHM preservation check uses a read-only mapping to retain the whole-file hash while SQLite holds byte-range locks. The active-writer tests assert that the product opens only the original DB/WAL with read-only flags, never the original SHM. A source name disappearing after copying is classified as a changed source even when the held handle's timestamps do not change; the race test requires the intended mutation to succeed rather than accepting an unrelated I/O failure.
 
-## Reported local WSL acceptance
-
-A local acceptance report for commit `7398405624904d8613159be31c9162ab782c65d3` covered five actual Antigravity WSL databases and 132 metadata records: all had returned-model declarations, all requested-model fields remained missing, and no import was skipped or limited. Native/WASM comparison, repeated reads and cancellation passed; source DB hashes/attributes and extension data remained unchanged, private copies were cleaned up, and no inference requests were made. The installed adapter and 110 runtime files plus vendor/locale files were verified. These actual DBs had no WAL/SHM, so active WAL/SHM evidence is still from synthetic fixtures. This report predates the friendly-label candidate; its post-install UI acceptance remains separate.
-
 Windows race-fixture boundary: after the complete synthetic WAL has been copied, its Windows fixture handle is released and its old descriptor stat is retained while an actual on-disk replace/remove is performed. This models the stale-handle/name race; active-writer source access remains separately tested. It is not acceptance of a real official Windows active-WAL session.
 
-The acceptance owner subsequently reported a metadata-only check of the same five actual databases: 132 generation records, 265 steps, five trajectory rows, no skipped files. All 132 records supplied input/output/text-output; thinking output was present in 127, cache reads in 113, cache writes in none. All values were safe integers. Direct generation timestamps were absent in all 132, but every response ID uniquely matched a same-database step with valid created time. The five trajectory records had valid workspace URIs representing two distinct workspaces. This is independently reported source availability, not a claim that this environment reproduced private-session acceptance or that the new candidate has already passed it. The candidate still needs that owner's read-only real-session recheck after delivery.
+## Validation scope
+
+The actual production webview is checked with synthetic CLI/IDE databases in a separate VS Code profile: initial all-record reading, same-page totals and list, local-time filtering, empty-period recovery, refresh, pagination, export and Chinese/English rendering. Missing data remains explicit. These checks do not establish real backend model weights or every official producer/platform variant. See [0.1.13 validation scope](VALIDATION_0.1.13.md).
