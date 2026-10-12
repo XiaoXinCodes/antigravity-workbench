@@ -10,7 +10,7 @@
 
 发布检查使用 `npm run check`、许可、发布安全及包文档离线测试、`npm run package`、Release 和 Marketplace VSIX 校验。GitHub Actions 在精确 PR 提交及合并后的 main 上分别执行 Linux、Windows、macOS 矩阵与隔离 VS Code 宿主检查；真实服务调用与独立 Antigravity IDE 不属于这套 CI。公开截图沿用已审阅的合成账号和模拟记录，未添加用户截图、邮箱或真实请求。
 
-main CI 成功后，现有发布脚本生成 VSIX、源码 ZIP、release-manifest.json 和 SHA256SUMS，并在下载比对成功后公开 Release。清理脚本仅针对本轮 `codex/discovery-release-0.1.15` 分支，要求已合入当前 main、无独有提交及精确分支 lease；不会清理其他分支。最终运行结果与哈希以对应 GitHub Actions 和 Release 资产为准。
+main CI 成功后，现有发布脚本生成 VSIX、源码 ZIP、release-manifest.json 和 SHA256SUMS，并在下载比对成功后公开 Release。清理脚本仅针对本轮已合并的发布分支，要求已合入当前 main、无独有提交及精确分支 lease；不会清理其他分支。最终运行结果与哈希以对应 GitHub Actions 和 Release 资产为准。
 
 ## 独立 Antigravity IDE：只读发现
 
