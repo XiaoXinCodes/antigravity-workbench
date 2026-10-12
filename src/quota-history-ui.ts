@@ -1,3 +1,4 @@
+import { routeWorkbenchNavigation } from './workbench-navigation';
 import * as vscode from 'vscode';
 import { quotaObservationFingerprint } from './quota-observation';
 import * as path from 'node:path';
@@ -45,6 +46,7 @@ export function registerQuotaHistory(context: vscode.ExtensionContext, live: Liv
   const handle = async (raw: unknown, owner: vscode.WebviewPanel) => {
     if (disposed || panel !== owner || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
     const m = raw as Record<string, unknown>;
+    if (routeWorkbenchNavigation(m)) return;
     if (!['ready', 'retention', 'clear'].includes(String(m.type))) return;
     try {
       if (m.type === 'ready') await owner.webview.postMessage({ type: 'language', language: locale() });

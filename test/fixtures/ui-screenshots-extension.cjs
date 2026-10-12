@@ -11,7 +11,8 @@ exports.activate=context=>{
  fixture.imageDirect.readChoices=async()=>({accounts:fixture.accounts.map((a,i)=>({...a,active:i===0})),models:[{id:'synthetic-image-model',label:'模拟图片模型 · Gemini 图像'},{id:'synthetic-other-image',label:'模拟图片模型二'}]});
  for(const [i,a]of fixture.accounts.entries()){a.label='虚构测试账号 '+(i+1);a.quota.accountFingerprint=accountDisplayFingerprint(a);a.quota.snapshot.buckets[0].label='Gemini Pro · 5 小时';a.quota.snapshot.buckets[1].label='Claude Sonnet · 7 天';a.quota.snapshot.buckets[2].label='未分组新模型（测试）'}
  const automation=load('automation-ui').registerAutomationUi(context,fixture.live,{accounts:{fingerprint:id=>{const a=fixture.accounts.find(a=>a.id===id);return a&&accountDisplayFingerprint(a)},models:async()=>[{id:'synthetic-text-alpha',label:'模拟文本模型 · Gemini 家族'}],run:async()=>{wakeCalls++;throw Error('SCREENSHOT_REAL_REQUESTS_DISABLED')},quota:async()=>{throw Error('SCREENSHOT_REAL_REQUESTS_DISABLED')}}});
+ const support=load('workbench-support-ui').registerWorkbenchSupport(context,{helpUri:vscode.Uri.file(path.join(root,'docs','GETTING_STARTED.md')),debug:()=>({enabled:false,available:true,storageUnavailable:false,canOpen:false,host:'local'})});
  const disclosure=vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left,1000);disclosure.text='$(beaker) 虚构账号 · 模拟额度 · 无真实调用';disclosure.tooltip='实际运行的生产 UI；测试数据来自本地合成适配器。';disclosure.show();context.subscriptions.push(disclosure);
- return{...fixture,automation,imageSession,catalogDisplay:()=>context.globalState.get('model.catalog.display.v1'),reads:()=>reads,wakeCalls:()=>wakeCalls};
+ return{...fixture,automation,support,imageSession,catalogDisplay:()=>context.globalState.get('model.catalog.display.v1'),reads:()=>reads,wakeCalls:()=>wakeCalls};
 };
 

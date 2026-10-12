@@ -1,3 +1,4 @@
+import { routeWorkbenchNavigation } from './workbench-navigation';
 import { catalogErrorCode, catalogFailureDetails } from './model-catalog-error';
 import { ModelCatalogDisplay, catalogDisplayKey } from './model-catalog-display';
 import { displayAccount, hideIdentityText, onIdentityPresentationChange, identityAlias, identityHidden } from './identity-presentation';
@@ -365,6 +366,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     if (quotaSelection() === key && quota.getState().error && fingerprint) void history?.imageGap(id, fingerprint, model, endpoint).catch(() => undefined);
   };
   const handle = async (value: unknown, owner: vscode.WebviewPanel) => {
+    if (panel === owner && routeWorkbenchNavigation(value)) return;
     if (!value || typeof value !== 'object' || Array.isArray(value) || panel !== owner) return;
     const msg = value as Record<string, unknown>;
     if (Number.isSafeInteger(msg.actionRevision) && Number(msg.actionRevision) >= actionRevision) actionRevision = Number(msg.actionRevision);

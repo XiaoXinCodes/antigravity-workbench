@@ -1,3 +1,4 @@
+import { routeWorkbenchNavigation } from './workbench-navigation';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
@@ -79,6 +80,7 @@ export function registerObservationsUi(context: vscode.ExtensionContext, deps: {
     const owner=panel;owner.webview.html=observationsHtml(randomBytes(16).toString('hex'));
     owner.webview.onDidReceiveMessage(message=>{
       if(panel!==owner||!message||typeof message!=='object')return;
+      if(routeWorkbenchNavigation(message))return;
       if(message.type==='ready')void emit();
       if(message.type==='read')void read(owner,'read');
       if(message.type==='choose')void read(owner,'file');

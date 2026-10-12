@@ -1,3 +1,4 @@
+import { routeWorkbenchNavigation } from './workbench-navigation';
 import { responseModelDetails } from './request-observation-view';
 import { ModelCatalogDisplay, catalogDisplayKey } from './model-catalog-display';
 import * as vscode from 'vscode';
@@ -52,6 +53,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
   const consent = (): Promise<boolean> => consentFlight ??= requestConsent().finally(() => { consentFlight = undefined; });
   const handle = async (raw: unknown, owner: vscode.WebviewPanel) => {
     if (disposed || panel !== owner || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+    if (routeWorkbenchNavigation(raw)) return;
     const m = raw as Record<string, unknown>, type = m.type;
     if (typeof type !== 'string' || !['ready', 'models', 'selectModel', 'confirmModelUse', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy'].includes(type)) return;
     if (m.requestId !== undefined && (typeof m.requestId !== 'string' || !/^\d{1,15}$/.test(m.requestId))) return;
@@ -140,10 +142,11 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
     }).catch(() => undefined);
     return alertTail;
   };
-  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.automation.open', () => {
-    if (panel) { panel.reveal(); return; }
+  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.automation.open', (section?: unknown) => {
+    const page = section === 'alerts' ? 'alerts' : 'tasks';
+    if (panel) { panel.reveal(); void panel.webview.postMessage({ type: 'workbench.section', section: page }); return; }
     panel = vscode.window.createWebviewPanel('antigravityAutomation', tr('automation.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
-    const owner = panel; owner.webview.html = automationHtml(owner.webview.cspSource);
+    const owner = panel; owner.webview.html = automationHtml(owner.webview.cspSource, page);
     context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; lastNotice = ''; modelsAbort?.abort(); } }));
   }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('automation.title'); void post({ type: 'language', language: locale() }); if (lastNotice) void post({ type: 'notice', text: localizeMessage(lastNotice) }); void emit(); } }));
   let polling = false;

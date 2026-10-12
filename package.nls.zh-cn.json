@@ -51,5 +51,6 @@
   "command.privacy.toggle": "切换账号身份隐藏",
   "configuration.hideIdentity": "在工作台、图片、任务、快速选择及状态栏显示稳定账号别名。",
   "command.quota.history": "额度观察历史",
-  "command.observations.open": "模型与 Token 记录"
+  "command.observations.open": "模型与 Token 记录",
+  "command.workbench.open": "在编辑器打开工作台"
 }
