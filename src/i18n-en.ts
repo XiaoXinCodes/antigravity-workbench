@@ -1211,6 +1211,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "catalog.cancel": "Cancel loading",
   "catalog.noAccount": "No available account",
   "catalog.directoryIdle": "Model directory has not loaded",
+  "catalog.directoryPreparing": "Preparing account; models will load automatically…",
   "catalog.directoryLoading": "Loading models…",
   "catalog.directoryLoaded": "Loaded {count} models",
   "catalog.directoryCached": "Loaded {count} models from cache",

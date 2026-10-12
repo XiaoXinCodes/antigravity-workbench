@@ -1,3 +1,5 @@
+import { readWhenDirectoryReady } from './model-directory-ready';
+import { catalogFailureDetails } from './model-catalog-error';
 import { sharedAccountModelCatalog } from './account-model-catalog';
 import { createWorkbenchPanel } from './workbench-host';
 import { routeWorkbenchNavigation } from './workbench-navigation';
@@ -42,7 +44,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
       const state = await store.read(); if (owner !== panel || disposed) return;
       const rows = live.getAccounts();
       const label = (id: string) => { const a = rows.find(a => a.id === id); return a ? displayAccount(a) : identityAlias(id); };
-      await owner.webview.postMessage({ type: 'state', state: { enabled: state.enabled, hidden: identityHidden(), alerts: state.alerts, accounts: rows.filter(a => accounts.fingerprint(a.id)).map(a => ({ id: a.id, label: displayAccount(a), catalogRevision: catalogDisplayKey(accounts.fingerprint(a.id)!, 'daily', 'conversation', a) + ':' + (sharedCatalog?.revision(a.id) ?? 0) })),
+      await owner.webview.postMessage({ type: 'state', state: { enabled: state.enabled, directoryPreparing: live.getState().initializing === true || live.getState().identityChecking === true || live.getState().busy, hidden: identityHidden(), alerts: state.alerts, accounts: rows.filter(a => accounts.fingerprint(a.id)).map(a => ({ id: a.id, label: displayAccount(a), catalogRevision: catalogDisplayKey(accounts.fingerprint(a.id)!, 'daily', 'conversation', a) + ':' + (sharedCatalog?.revision(a.id) ?? 0) })),
         tasks: state.tasks.map(t => ({ ...t, fingerprint: undefined, accountLabel: label(t.accountId), nextLabel: format(t.nextDue, t.schedule.timezone), triggerLabel: tr(`advanced.${t.schedule.mode ?? 'calendar'}`), recoveryLabel: t.recovery ? tr('advanced.baseline', { p0: format(t.recovery.observedAt, t.schedule.timezone), p1: t.recovery.fraction === null ? tr('automation.unknownUsage') : quotaPercent(t.recovery.fraction) }) + (t.recovery.valid === false ? ' · ' + tr('advanced.baselineInvalid') : '') : '', running: state.instances.some(i => i.taskId === t.id && ['sent', 'preparing'].includes(i.phase)) })),
         instances: state.instances.slice(-100).reverse().map(i => ({ id: i.id, details: responseModelDetails(i.modelId, i.responseModel ? [i.responseModel] : []), label: `${label(i.accountId)} · ${i.modelId} · ${format(i.due)} · ${tr(i.manual ? 'automation.manual' : 'automation.scheduled')} · ${tr(`automation.phase.${i.phase}`)}${i.code && i.phase !== 'succeeded' ? ` (${['WAKE_QUOTA_WAITING','WAKE_QUOTA_UNAVAILABLE','WAKE_QUOTA_NOT_FULL','WAKE_QUOTA_STALE'].includes(i.code) ? tr(`advanced.${i.code as 'WAKE_QUOTA_WAITING'}`) : i.code})` : ''}\n${tr('automation.usage', { p0: i.outputTokens ?? tr('automation.unknownUsage'), p1: i.totalTokens ?? tr('automation.unknownUsage') })}` })) } });
     } catch (e) { if (owner === panel) await post({ type: 'notice', text: tr('automation.failed', { p0: safeCode(e) }) }); }
@@ -72,14 +74,17 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         modelsAbort?.abort(); const abort = new AbortController(); modelsAbort = abort; const revision = ++sequence;
         modelRequest = { abort, revision }; modelFlight = { owner, accountId: id, endpoint, scope: displayKey, requestId: m.requestId, abort, revision };
         const current = () => panel === owner && !disposed && !abort.signal.aborted && sequence === revision && accounts.fingerprint(id) === fingerprint && catalogDisplayKey(fingerprint, endpoint, 'conversation', live.getAccounts().find(a => a.id === id)) === displayKey;
-        const status = (phase: string, count = 0, cacheHit = false) => post({ type: 'models.status', requestId: m.requestId, accountId: id, endpoint, phase, count, cacheHit });
+        const status = (phase: string, count = 0, cacheHit = false, failure?: ReturnType<typeof catalogFailureDetails> & { code: string }) => post({ type: 'models.status', requestId: m.requestId, accountId: id, endpoint, phase, count, cacheHit, ...(failure ? { failure } : {}) });
         for (const [key, entry] of catalog) if (entry.accountId === id && entry.endpoint === endpoint) catalog.delete(key);
         const previous = displayCatalog.get(displayKey);
         if (previous) await post({ type: 'models', requestId: m.requestId, accountId: id, endpoint, catalogKey: '', ...previous, stale: true });
         await status('loading', previous?.models.length ?? 0);
         await post({ type: 'notice', text: '' });
         try {
-          const directory = accounts.directory ? await accounts.directory(id, endpoint, abort.signal, m.force === true) : { models: await accounts.models(id, endpoint, abort.signal, m.force === true), queriedAt: new Date(now()).toISOString(), cacheHit: false };
+          const directory = await readWhenDirectoryReady(async () => {
+            if (!current()) throw Error('WAKE_ACCOUNT_CHANGED');
+            return accounts.directory ? accounts.directory(id, endpoint, abort.signal, m.force === true) : { models: await accounts.models(id, endpoint, abort.signal, m.force === true), queriedAt: new Date(now()).toISOString(), cacheHit: false };
+          }, () => live.getState().initializing === true || live.getState().identityChecking === true || live.getState().busy, abort.signal, phase => { if (current()) void status(phase, previous?.models.length ?? 0); });
           if (!current()) return;
           const { models, queriedAt, cacheHit } = directory;
           await displayCatalog.save(displayKey, { models, queriedAt, source: 'fetchAvailableModels', ...(previous?.selectedId ? { selectedId: previous.selectedId } : {}) }).catch(() => undefined);
@@ -90,7 +95,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
           await status(models.length ? 'ready' : 'empty', models.length, cacheHit);
           if (models.length && models.every(model => model.classification === 'unclassified')) await post({ type: 'notice', text: tr('automation.modelTypesUnspecified') });
         } catch (error) {
-          if (panel === owner && sequence === revision) await status(abort.signal.aborted ? 'cancelled' : 'failed', previous?.models.length ?? 0);
+          if (panel === owner && sequence === revision && (abort.signal.aborted || current())) await status(abort.signal.aborted ? 'cancelled' : 'failed', previous?.models.length ?? 0, false, abort.signal.aborted ? undefined : { code: safeCode(error), ...catalogFailureDetails(error) });
           if (!abort.signal.aborted && current()) { const code = safeCode(error); await post({ type: 'notice', text: code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) }); }
         } finally { if (modelFlight?.revision === revision) modelFlight = undefined; }
       } else if (type === 'cancelModels') {

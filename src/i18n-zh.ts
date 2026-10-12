@@ -1211,6 +1211,7 @@ export const zhCN = {
   "catalog.cancel": "取消读取",
   "catalog.noAccount": "暂无可用账号",
   "catalog.directoryIdle": "模型目录尚未加载",
+  "catalog.directoryPreparing": "正在准备账号，稍后自动读取模型…",
   "catalog.directoryLoading": "正在读取模型…",
   "catalog.directoryLoaded": "已读取 {count} 个模型",
   "catalog.directoryCached": "已加载 {count} 个模型（缓存）",
