@@ -173,3 +173,10 @@ test('only explicit image members bind; user confirmation cannot override missin
  f.deps.models=async()=>({models:{[id]:{disabled:true}},imageGenerationModelIds:[id]});assert.deepEqual(await f.engine.choices(B,f.signal,'daily',true),[]);
  await assert.rejects(f.engine.bind(B,id,f.signal,'daily',false,true),/MODEL_UNVERIFIED/);
 });
+test('image and conversation adapters share one verified directory without sharing usage selection or credentials',async()=>{
+ const {SharedAccountModelCatalog}=require('../out/account-model-catalog'),{catalogChoices}=require('../out/model-catalog');const f=fixture(),shared=new SharedAccountModelCatalog(undefined,()=>NOW);let modelCalls=0;
+ const deps={...f.deps,catalogService:shared,models:async()=>{modelCalls++;return require('./fixtures/conversation-catalog.cjs').catalog()}};
+ const image=new SavedImageAccounts({...deps,parseModels:imageModelsFromCatalog}),conversation=new SavedImageAccounts({...deps,parseModels:value=>catalogChoices(value,'conversation')});image.selectForWindow(B);conversation.selectForWindow(B);
+ const first=await image.directory(B,f.signal,'daily'),second=await conversation.directory(B,f.signal,'daily');assert.equal(modelCalls,1);assert.deepEqual(first.models.map(m=>m.id),['synthetic-image-model']);assert.equal(second.models[0].id,'synthetic-text-alpha');assert.equal(second.cacheHit,true);assert.deepEqual(f.events.filter(e=>e[0]==='write'),[]);
+ await conversation.directory(B,f.signal,'production');assert.equal(modelCalls,2);await conversation.directory(B,f.signal,'daily',true);assert.equal(modelCalls,3);
+});

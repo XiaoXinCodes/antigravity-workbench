@@ -1,3 +1,4 @@
+import { sharedAccountModelCatalog } from './account-model-catalog';
 import { createWorkbenchPanel } from './workbench-host';
 import { routeWorkbenchNavigation } from './workbench-navigation';
 import { catalogErrorCode, catalogFailureDetails } from './model-catalog-error';
@@ -648,6 +649,9 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       if (panel === owner && completedQuotaSelection) await querySelectedQuota(completedQuotaSelection);
     }
   };
+  if (context.globalState) context.subscriptions.push(sharedAccountModelCatalog(context.globalState, context.secrets, context.subscriptions).onDidInvalidateAccount(id => {
+    if (panel && (selectedSavedId ?? draft.accountId) === id) void refresh();
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.images.open', async () => {
     if (panel) { panel.reveal(); return; }
     await initialize();

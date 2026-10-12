@@ -93,3 +93,14 @@ export function imageCatalogIssue(value: unknown): string | undefined {
 export function assertModelUse(model: ModelChoice | undefined, confirmed: boolean, code: string): asserts model is ModelChoice {
   if (!model || model.classification === 'unclassified' && !confirmed) throw Error(code);
 }
+
+/** Canonical bounded public data for directory persistence; parsing remains centralized. */
+export function modelCatalogPayload(catalog: ModelCatalog): Record<string, unknown> {
+  const groups = Array.from({ length: Math.ceil(catalog.agentIds.length / 500) }, (_, index) => ({ modelIds: catalog.agentIds.slice(index * 500, (index + 1) * 500) }));
+  return { models: Object.fromEntries(catalog.models.map(row => [row.id, { displayName: row.displayName,
+    ...(row.disabled === 'unspecified' ? {} : { disabled: row.disabled === 'invalid' ? null : row.disabled }),
+    ...(row.modelEnum ? { model: row.modelEnum } : {}), ...(row.imageInput === undefined ? {} : { supportsImages: row.imageInput }),
+    quotaInfo: { remainingFraction: row.remainingFraction, resetTime: row.resetAt } }])),
+    ...(catalog.imageListDeclared ? { imageGenerationModelIds: [...catalog.imageIds] } : {}),
+    ...(catalog.agentListDeclared ? { agentModelSorts: [{ groups }] } : {}) };
+}
