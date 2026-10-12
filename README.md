@@ -1,11 +1,13 @@
 <p align="center"><img src="media/brand-logo.png" width="144" height="144" alt="Antigravity Workbench A 标志"></p>
 <h1 align="center">Antigravity Workbench</h1>
-<p align="center">在 VS Code 中管理 Google Antigravity 账号、查看额度与 Token 用量并创作图片。</p>
+<p align="center">Google Antigravity 多账号管理、Gemini 额度查看、加密迁移与图片工作室，集中在一个 VS Code 工作台。</p>
 <p align="center"><strong>开源 · MIT License</strong></p>
 <p align="center">简体中文 · <a href="README_EN.md">English</a></p>
 <p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">下载最新 VSIX</a> · <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">扩展市场</a> · <a href="docs/README.md">使用文档</a> · <a href="CHANGELOG.md">更新日志</a></p>
 
 账号、额度、图片、用量记录和定时功能集中在一个工作台中。点击活动栏 **A 图标**，或执行命令 **Antigravity Workbench: 在编辑器打开工作台**。宽屏保留左侧导航，窄窗口使用“切换功能”；切换页面保留草稿、选择和筛选。默认中文，可在设置中全局切换 English；外观跟随 VS Code 的深浅色与高对比度主题。
+
+账号迁移采用加密 `.agwenc` 文件；图片工作室可独立选择已保存账号、使用参考图并复用历史参数。
 
 本项目独立开发，与 Google 不存在隶属、授权或背书关系。可用模型、权限与额度以所选账号的服务端结果为准。
 
@@ -19,7 +21,7 @@
 
 核对扩展 ID `xiaoxincodes.antigravity-account-manager`。WSL 用户应核对官方扩展的实际运行宿主，将两个扩展安装到同一位置。升级保留已有账号、图片、草稿和设置，无需清空登录文件。GitHub 与 Marketplace 的更新节奏可能不同，正式 VSIX、源码和校验文件以 Release 附件为准。
 
-支持 Windows、macOS、Linux 与匹配的 WSL Linux 宿主；其他远程环境见 [兼容性](docs/COMPATIBILITY.md)。
+支持 Windows、macOS、Linux 与匹配的 WSL Linux 宿主。独立 Antigravity IDE 兼容性尚未验证；其扩展渠道与功能支持范围不能直接等同于上述 VS Code 环境。详见 [兼容性](docs/COMPATIBILITY.md)。
 
 ## 功能与使用
 
