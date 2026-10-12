@@ -1,5 +1,10 @@
 /** Stable message keys; add translations without changing call sites. */
 export const zhCN = {
+  "ui.trendInspect": "移到柱形、触点或用方向键查看精确用量",
+  "ui.switchFeature": "切换功能",
+  "ui.expand": "展开",
+  "ui.collapse": "收起",
+
   "ui.weekdays": "运行日期",
   "ui.weekday0": "日",
   "ui.weekday1": "一",
@@ -65,7 +70,7 @@ export const zhCN = {
   "ui.savedModels": "常用模型",
   "ui.imageDetails": "目录与技术详情",
   "ui.emptyRecords": "尚未读取会话记录",
-  "ui.emptyRecordsHint": "主动读取后，用量概览和记录会显示在这里。",
+  "ui.emptyRecordsHint": "未发现记录时，可选择本机来源。",
   "ui.refreshEmpty": "刷新账号后查看额度观察记录。",
   "ui.accountTools": "账号迁移与显示",
   "ui.moreActions": "更多操作",
@@ -132,7 +137,7 @@ export const zhCN = {
   "observations.gap.unsafe": "不安全的文件或目录：{count}",
   "observations.gap.unavailable": "读取不可用：{count}",
 
-  "observations.read": "读取本机记录",
+  "observations.read": "刷新记录",
   "observations.refresh": "刷新记录",
   "observations.chooseDirectory": "选择会话目录",
   "observations.cancelExport": "取消导出",
@@ -150,7 +155,7 @@ export const zhCN = {
   "observations.localSource": "来源：{client} · 会话 {session}",
   "observations.tokenSummary": "输入 Token {input} · 缓存读取 Token {cache} · 输出 Token {output}",
   "observations.title": "模型与 Token 记录",
-  "observations.localHint": "点击后读取当前扩展宿主的官方 CLI／IDE 会话记录。结果留在此窗口；重新读取会替换列表。找不到时可选择目录或文件。",
+  "observations.localHint": "打开时只读加载当前宿主的 CLI／IDE 记录；返回保留结果，刷新可手动更新。找不到时可选择目录或文件。",
   "observations.choose": "选择会话数据库",
   "observations.clear": "清空",
   "observations.empty": "尚未读取会话",

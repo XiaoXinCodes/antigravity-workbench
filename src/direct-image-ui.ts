@@ -1,3 +1,4 @@
+import { createWorkbenchPanel } from './workbench-host';
 import { routeWorkbenchNavigation } from './workbench-navigation';
 import { catalogErrorCode, catalogFailureDetails } from './model-catalog-error';
 import { ModelCatalogDisplay, catalogDisplayKey } from './model-catalog-display';
@@ -653,7 +654,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     const existing = panel as vscode.WebviewPanel | undefined;
     if (existing) { existing.reveal(); return; }
     const nonce = randomBytes(16).toString('base64');
-    panel = vscode.window.createWebviewPanel('antigravityDirectImage', tr("directImageUi.d5e1e00bbd"), vscode.ViewColumn.Active,
+    panel = createWorkbenchPanel(vscode, 'antigravityDirectImage', tr("directImageUi.d5e1e00bbd"), vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true });
     draftRevision = 0; draftEpoch = 0; actionRevision = 0;
     panel.webview.html = directImageHtml(nonce, panel.webview.cspSource, layout);

@@ -1,3 +1,4 @@
+import { createWorkbenchPanel, workbenchHostEnabled, revealWorkbench } from './workbench-host';
 import { routeWorkbenchNavigation } from './workbench-navigation';
 import { workbenchStyles, accountPageStyles, workbenchStart, workbenchEnd, workbenchNavigationScript } from './workbench-ui';
 import { displayAccount, displayEmail, hideIdentityText, onIdentityPresentationChange } from './identity-presentation';
@@ -161,7 +162,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
   openEditor(): void {
     if (this.disposed) return;
     if (this.editor) { this.editor.panel.reveal(); this.editor.provider.refresh(); return; }
-    const panel = vscode.window.createWebviewPanel('antigravityAccounts.editor', tr('ui.accounts'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
+    const panel = createWorkbenchPanel(vscode, 'antigravityAccounts.editor', tr('ui.accounts'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
     const provider = new WorkbenchView(this.state, this.onResolve, this.editorStorage, true);
     this.editor = { panel, provider };
     const view: vscode.WebviewView = { viewType: 'antigravityAccounts.editor', webview: panel.webview, get visible() { return panel.visible; }, onDidDispose: panel.onDidDispose, onDidChangeVisibility: listener => panel.onDidChangeViewState(() => listener()), show: preserveFocus => panel.reveal(vscode.ViewColumn.Active, preserveFocus) };
@@ -210,6 +211,11 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }), view.onDidDispose(() => { if (this.view === view) { this.view = undefined; this.lastHtml = ''; } }));
     this.refresh();
     this.onResolve?.();
+    if (!this.editorMode && workbenchHostEnabled()) {
+      const showEditor = () => { if (!this.disposed && view.visible) { if (!revealWorkbench()) this.openEditor(); void vscode.commands.executeCommand('workbench.action.closeSidebar'); } };
+      showEditor();
+      if (typeof view.onDidChangeVisibility === 'function') this.subscriptions.push(view.onDidChangeVisibility(showEditor));
+    }
   }
   async revealCatalog(): Promise<void> {
     if (this.disposed) throw new Error('CATALOG_VIEW_UNAVAILABLE');

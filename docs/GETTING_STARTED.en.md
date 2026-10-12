@@ -44,3 +44,9 @@ Use **Advanced troubleshooting…** to inspect extension hosts. Enable diagnosti
 Run **Antigravity Workbench: Open workbench** for the full editor view. The A activity icon remains the compact account sidebar. Expand the navigation in narrow views. Account import, export and recovery are grouped below the accounts. Schedules and quota alerts have separate tabs that preserve unsaved edits.
 
 Open **Settings** in the shared navigation to choose the global language, identity privacy or VS Code color theme. Advanced service settings stay collapsed until needed. The language updates open pages while preserving drafts and filters. **Help** links to the complete guide and advanced diagnostics.
+
+### Workbench and local records
+
+The A activity icon opens the full editor workbench. Wide views keep left navigation visible; narrow views use Switch feature, with Enter/Space, arrows and Escape. Modules reuse one editor while retaining drafts, results and filters.
+
+Model and Token records discover local sources read-only on opening and show loading feedback. Returning reuses the data; Refresh updates it. Source selection appears when discovery finds no source. Hover, tap or use arrow keys in the daily trend to inspect dates and exact input/output Token values; unknown values stay unknown.

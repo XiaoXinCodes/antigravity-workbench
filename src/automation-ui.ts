@@ -1,3 +1,4 @@
+import { createWorkbenchPanel } from './workbench-host';
 import { routeWorkbenchNavigation } from './workbench-navigation';
 import { responseModelDetails } from './request-observation-view';
 import { ModelCatalogDisplay, catalogDisplayKey } from './model-catalog-display';
@@ -145,7 +146,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.automation.open', (section?: unknown) => {
     const page = section === 'alerts' ? 'alerts' : 'tasks';
     if (panel) { panel.reveal(); void panel.webview.postMessage({ type: 'workbench.section', section: page }); return; }
-    panel = vscode.window.createWebviewPanel('antigravityAutomation', tr('automation.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
+    panel = createWorkbenchPanel(vscode, 'antigravityAutomation', tr('automation.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
     const owner = panel; owner.webview.html = automationHtml(owner.webview.cspSource, page);
     context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; lastNotice = ''; modelsAbort?.abort(); } }));
   }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('automation.title'); void post({ type: 'language', language: locale() }); if (lastNotice) void post({ type: 'notice', text: localizeMessage(lastNotice) }); void emit(); } }));

@@ -1,3 +1,4 @@
+import { createWorkbenchPanel } from './workbench-host';
 import { routeWorkbenchNavigation } from './workbench-navigation';
 import * as vscode from 'vscode';
 import { quotaObservationFingerprint } from './quota-observation';
@@ -60,7 +61,7 @@ export function registerQuotaHistory(context: vscode.ExtensionContext, live: Liv
   };
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.quota.history', () => {
     if (panel) { panel.reveal(); return; }
-    panel = vscode.window.createWebviewPanel('antigravityQuotaHistory', tr('history.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] }); const owner = panel; owner.webview.html = quotaHistoryHtml();
+    panel = createWorkbenchPanel(vscode, 'antigravityQuotaHistory', tr('history.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] }); const owner = panel; owner.webview.html = quotaHistoryHtml();
     context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; storageNotice = false; } }));
   }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('history.title'); void panel.webview.postMessage({ type: 'language', language: locale() }); if (storageNotice) void notice(panel); void emit(); } }), { dispose: () => { disposed = true; panel?.dispose(); } });
   return { history, observe, imageObservation, imageGap, refresh: () => { void observe(); void emit(); } };

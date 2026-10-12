@@ -1,6 +1,11 @@
 import type { MessageKey } from './i18n-zh';
 /** English catalog. User data and technical identifiers are never translated. */
 export const en: Readonly<Record<MessageKey, string>> = {
+  "ui.trendInspect": "Hover, tap or use arrow keys to inspect exact usage",
+  "ui.switchFeature": "Switch feature",
+  "ui.expand": "Expand",
+  "ui.collapse": "Collapse",
+
   "ui.weekdays": "Run on",
   "ui.weekday0": "Sun",
   "ui.weekday1": "Mon",
@@ -66,7 +71,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "ui.savedModels": "Favorite models",
   "ui.imageDetails": "Catalog & technical details",
   "ui.emptyRecords": "No sessions read yet",
-  "ui.emptyRecordsHint": "Read sessions on demand to view usage and records here.",
+  "ui.emptyRecordsHint": "Choose a local source if records could not be discovered.",
   "ui.refreshEmpty": "Refresh an account to view quota observations.",
   "ui.accountTools": "Account migration & display",
   "ui.moreActions": "More actions",
@@ -133,7 +138,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "observations.gap.unsafe": "Unsafe files or directories: {count}",
   "observations.gap.unavailable": "Unavailable reads: {count}",
 
-  "observations.read": "Read local records",
+  "observations.read": "Refresh records",
   "observations.refresh": "Refresh records",
   "observations.chooseDirectory": "Choose conversation directory",
   "observations.cancelExport": "Cancel export",
@@ -151,7 +156,7 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "observations.localSource": "Source: {client} · Session {session}",
   "observations.tokenSummary": "Input tokens {input} · Cache read tokens {cache} · Output tokens {output}",
   "observations.title": "Model and token records",
-  "observations.localHint": "Read official CLI / IDE conversations on the current extension host, on demand. Results stay in this window; reading again replaces the list. Choose a directory or file if needed.",
+  "observations.localHint": "Opening loads current-host CLI / IDE records read-only. Returning retains results; Refresh updates them. Choose a local source when discovery finds none.",
   "observations.choose": "Choose conversation database",
   "observations.clear": "Clear",
   "observations.empty": "No conversation loaded",

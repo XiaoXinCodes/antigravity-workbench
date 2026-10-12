@@ -1,3 +1,4 @@
+import { createWorkbenchPanel } from './workbench-host';
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import { clientI18n, ht, locale, onLanguageChange, t } from './i18n';
@@ -39,7 +40,7 @@ export function registerWorkbenchSupport(context: vscode.ExtensionContext, deps:
     if (disposed) return;
     const existing = panels.get(page); if (existing) { existing.reveal(); void emit(existing); return; }
     const title = page === 'settings' ? t('ui.settings') : page === 'help' ? t('ui.help') : t('ui.advanced');
-    const owner = vscode.window.createWebviewPanel('antigravitySupport.' + page, title, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
+    const owner = createWorkbenchPanel(vscode, 'antigravitySupport.' + page, title, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
     panels.set(page, owner); owner.webview.html = supportHtml(page, randomBytes(16).toString('hex'));
     context.subscriptions.push(owner.onDidDispose(() => { if (panels.get(page) === owner) panels.delete(page); flights.delete(owner); }), owner.webview.onDidReceiveMessage(async (m: unknown) => {
       if (disposed || panels.get(page) !== owner || !m || typeof m !== 'object' || Array.isArray(m)) return;
