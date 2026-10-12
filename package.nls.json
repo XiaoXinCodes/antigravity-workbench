@@ -48,8 +48,8 @@
   "command.quota.favorite": "Favorite quota item",
   "command.quota.pin": "Pin quota item",
   "command.automation.open": "Manage Scheduled Requests and Alerts",
-  "command.privacy.toggle": "Toggle Account Identity Privacy",
-  "configuration.hideIdentity": "Show stable account aliases across the workbench, images, tasks, quick picks and status bar.",
+  "command.privacy.toggle": "Toggle Account Name and Email Visibility",
+  "configuration.hideIdentity": "Replace account names and emails with consistent aliases in the interface, notifications, quick picks and status bar for screenshots or screen sharing.",
   "command.quota.history": "Quota observations",
   "command.observations.open": "Model and token records",
   "command.workbench.open": "Open Workbench in Editor"

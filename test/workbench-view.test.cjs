@@ -60,9 +60,9 @@ test('ordinary workbench omits technical failure history while retaining user re
  const html=renderWorkbench(state({lastFailure,pending:true,recoveryPhase:'installed'}),'nonce');
  assert.doesNotMatch(html,/上次账号操作失败|OFFICIAL_COMPONENT_RECONNECT_FAILED|synthetic-secret/);assert.match(html,/data-command="live.verify"/);
 });
-test('empty workbench has visible login and image actions without warning wall', () => {
+test('empty workbench has visible account actions and one product navigation without warning wall', () => {
  const html = renderWorkbench(state(), 'nonce');
- for (const command of ['live.login', 'live.capture', 'images.open']) assert.match(html, new RegExp(`data-command="${command}"`));
+ for (const command of ['live.login', 'live.capture']) assert.match(html, new RegExp(`data-command="${command}"`));
  assert.match(html, /添加你的第一个账号/);
  assert.doesNotMatch(html, /非官方|脱敏|实验性|LOCAL_TRUSTED_DESKTOP_REQUIRED/);
  assert.match(html, /default-src 'none'/);
@@ -86,7 +86,7 @@ test('environment blockers have helpful text and do not hide independent tools',
  const html = renderWorkbench(state({ environment: { available: false, message: '请在本机安装 Antigravity 扩展' } }), 'nonce');
  assert.match(html, /data-command="live.login" disabled/);
  assert.match(html, /请在本机安装 Antigravity 扩展/);
- assert.match(html, /data-command="images.open"/);
+ assert.match(html, /class="wb-nav-button[^"]*" data-wb-nav="images"/);
 });
 function fixture(extra = {}, displayStorage) {
  let message, closed;
@@ -158,7 +158,7 @@ test('missing official extension disables account operations while retaining ind
  assert.match(html, /data-command="live.login" disabled/);
  assert.match(html, new RegExp(`data-command="live.switch" data-id="${account.id}" disabled`));
  assert.match(html, new RegExp(`data-command="live.remove" data-id="${account.id}" class`));
- assert.match(html, /data-command="openSettings"/);
+ assert.match(html, /class="wb-nav-button[^"]*" data-wb-nav="settings"/);
  assert.match(html, /data-command="recheck"/);
  assert.match(html, /请先安装 Google Antigravity/);
 });
@@ -166,7 +166,7 @@ test('pending account recovery blocks new mutations and image tasks but leaves v
  const html = renderWorkbench(state({ pending: true, recoveryPhase: 'installed', accounts: [account], status: '请确认当前登录' }), 'nonce');
  assert.match(html, /data-command="live.login" disabled/);
  assert.match(html, new RegExp(`data-command="live.switch" data-id="${account.id}" disabled`));
- assert.match(html, /data-command="images.open" disabled/);
+ assert.doesNotMatch(html, /data-command="images.open"/);
  assert.match(html, /data-command="live.verify" class/);
  assert.match(html, /data-command="live.restore" class/);
 });
@@ -188,7 +188,7 @@ test('an in-flight command acknowledges a click from a reloaded webview without 
 test('release workbench contains accounts, images and standard settings, no host tool foldout', () => {
  const html=renderWorkbench(state({official:{available:true,message:'synthetic-backend-location'}}),'nonce');
  assert.doesNotMatch(html,/运行环境与文件位置|synthetic-backend-location|id="host-details"|data-command="openHostSettings"|data-command="locations\./);
- assert.match(html,/data-command="openSettings"/);assert.match(html,/<span class="version">版本未知<\/span>/);
+ assert.match(html,/class="wb-nav-button[^"]*" data-wb-nav="settings"/);assert.match(html,/<span class="version">版本未知<\/span>/);
  const blocked=renderWorkbench(state({official:{available:false,message:'请安装官方扩展'}}),'nonce');assert.match(blocked,/请安装官方扩展/);assert.match(blocked,/data-command="recheck"/);
 });
 test('host and account text wrap safely and never become executable markup', () => {
@@ -353,10 +353,13 @@ test('recovery renders and routes only actions supported by the exact journal ph
 });
 test('homepage has coherent sections, account migration, and no snapshot or duplicate quota tools', async () => {
  const html = renderWorkbench(state({ accounts: [account], snapshots: [{ label: 'Legacy snapshot label', identity: 'legacy@example.test' }] }), 'nonce');
- for (const id of ['accounts-heading', 'images-heading']) assert.match(html, new RegExp(`aria-labelledby="${id}"`));
+ for (const id of ['accounts-heading']) assert.match(html, new RegExp(`aria-labelledby="${id}"`));
  assert.match(html, /账号导出与导入/); assert.match(html, /导出账号（加密）/); assert.match(html, /导入账号（加密）/); assert.doesNotMatch(html, /将已保存账号加密为|导入需要导出时设置的密码/);
  for (const text of ['更多工具', '导入快照', '读取快照', '查询当前登录配额', 'Legacy snapshot label', '检查操作锁']) assert.ok(!html.includes(text), text);
- for (const command of ['live.login', 'live.capture', 'live.quota', 'images.open', 'live.import', 'live.export']) assert.equal((html.match(new RegExp(`data-command="${command}"`, 'g')) || []).length, 1, command);
+ for (const command of ['live.login', 'live.capture', 'live.quota', 'live.import', 'live.export']) assert.equal((html.match(new RegExp(`data-command="${command}"`, 'g')) || []).length, 1, command);
+  assert.doesNotMatch(html,/id="work-sections"|id="images-heading"|data-command="(?:images.open|observations.open|automation.open|privacy.toggle|openSettings|openHelp)"/);
+  assert.match(html,/<nav class="wb-tabs"[^>]*>[\s\S]*data-wb-nav="accounts" aria-current="page"[\s\S]*data-wb-nav="history" aria-current="false"/);
+
  calls.length = 0; const f = fixture();
  for (const command of ['refresh', 'importSnapshot', 'reloadSnapshots', 'openBridgeGuide', 'live.unlock']) await f.message({ command });
  assert.deepEqual(calls, []); f.provider.dispose();

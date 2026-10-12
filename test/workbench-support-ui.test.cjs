@@ -14,7 +14,8 @@ test('global settings reject unsafe keys/values, coalesce duplicates, and discar
  const before=p.messages.length;p.dispose();finishWrite();await first;assert.equal(p.messages.length,before);await p.receive({type:'setting',key:'hideIdentity',value:true});assert.equal(writes.length,1);
 });
 test('help and diagnostics keep bounded actions; language controls exist only in settings',async()=>{
- for(const page of ['settings','help','diagnostics']){const html=supportHtml(page,'nonce');assert.match(html,/default-src 'none'/);assert.match(html,/style-src 'nonce-nonce'/);assert.equal(html.includes('id="support-language"'),page==='settings');assert.doesNotMatch(html,/synthetic-preview|@example\.test|demo-/);}
+ for(const page of ['settings','help','diagnostics']){const html=supportHtml(page,'nonce');assert.match(html,/default-src 'none'/);assert.match(html,/style-src 'nonce-nonce'/);assert.equal(html.includes('id="support-language"'),page==='settings');assert.equal(html.includes('id="support-privacy"'),page==='settings');assert.doesNotMatch(html,/synthetic-preview|@example\.test|demo-/);}
+ assert.doesNotMatch(supportHtml('help','nonce'),/<button data-wb-nav="(?:accounts|images|records|automation|alerts|history)"/);
  commands.get('antigravityAccounts.support.diagnostics')();const p=panels.at(-1);await p.receive({type:'action',action:'workbench.action.terminal.new'});await p.receive({type:'action',action:'catalog',path:'/private'});assert.equal(actions.length,0);
  await p.receive({type:'action',action:'previewLogs'});assert.deepEqual(actions,[['antigravityAccounts.debug.preview']]);p.dispose();await p.receive({type:'action',action:'toggleLogs'});assert.equal(actions.length,1);
  for(const sub of subscriptions)sub.dispose();

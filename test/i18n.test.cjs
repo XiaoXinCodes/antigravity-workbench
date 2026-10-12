@@ -52,7 +52,7 @@ test('production rendering sources contain no untranslated presentation literals
 test('all pages use one global locale and omit page-local language controls in both locales',()=>{
  const {automationHtml}=require('../out/automation-view'),{quotaHistoryHtml}=require('../out/quota-history-view'),{renderWorkbench}=load('workbench-view',{});
  for(const lang of ['zh-CN','en']){api.setLanguage(lang);for(const html of [automationHtml('synthetic'),quotaHistoryHtml(),renderWorkbench({accounts:[],snapshots:[],busy:false,status:'',environment:{available:true,message:''}},'synthetic')]){assert.match(html,new RegExp('<html lang="'+lang+'"'));assert.doesNotMatch(html,/id="(?:zh|en)"|data-language=|postMessage\(\{type:["']language["']/);}
- const settings=renderWorkbench({accounts:[],snapshots:[],busy:false,status:'',environment:{available:true,message:''}},'synthetic');assert.equal((settings.match(/data-command="openSettings"/g)||[]).length,1);
+ const settings=renderWorkbench({accounts:[],snapshots:[],busy:false,status:'',environment:{available:true,message:''}},'synthetic');assert.equal((settings.match(/data-command="openSettings"/g)||[]).length,0);assert.match(settings,/data-wb-nav="settings"/);
  }
 });
 
