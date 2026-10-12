@@ -4,6 +4,16 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.15](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.15) — 2026-10-12
+
+Find and understand the multi-account workbench, encrypted migration and Image Studio more easily.
+
+- Add categories and focused Antigravity, Gemini, quota, encrypted migration and Image Studio keywords.
+- Refresh both introductions around multi-account management, encrypted migration and independent image account selection.
+- Clarify standalone Antigravity IDE compatibility and unverified capabilities.
+
+[Release notes](docs/RELEASE_0.1.15.md) · [Validation scope](docs/VALIDATION_0.1.15.md)
+
 ## [0.1.14](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.14) — 2026-10-12
 
 Unify the workbench layout, navigation and feedback across all features.

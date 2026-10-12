@@ -4,6 +4,16 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.15](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.15) — 2026-10-12
+
+更清楚地找到并了解多账号工作台、加密迁移和图片工作室。
+
+- 补充扩展分类及 Antigravity、Gemini、额度、加密迁移与图片工作室关键词。
+- 更新中英文简介，突出多账号管理、加密迁移和独立图片账号选择。
+- 补充独立 Antigravity IDE 兼容性边界与待验证范围。
+
+[发布说明](docs/RELEASE_0.1.15.md) · [验证范围](docs/VALIDATION_0.1.15.md)
+
 ## [0.1.14](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.14) — 2026-10-12
 
 统一整个工作台的布局、导航与操作反馈。

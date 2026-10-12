@@ -1,11 +1,13 @@
 <p align="center"><img src="media/brand-logo.png" width="144" height="144" alt="Antigravity Workbench A logo"></p>
 <h1 align="center">Antigravity Workbench</h1>
-<p align="center">Manage Google Antigravity accounts, check quota and Token usage, and create images in VS Code.</p>
+<p align="center">Google Antigravity multi-account management, Gemini quota, encrypted migration and Image Studio in one VS Code workbench.</p>
 <p align="center"><strong>Open source · MIT License</strong></p>
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 <p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">Download latest VSIX</a> · <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">Marketplace</a> · <a href="docs/GETTING_STARTED.en.md">User guide</a> · <a href="CHANGELOG_EN.md">Changelog</a></p>
 
 Accounts, quotas, images, usage records and scheduled tasks share one workbench. Click the **A activity icon**, or run **Antigravity Workbench: Open Workbench in Editor**. Wide views keep left navigation visible; narrow views use **Switch feature**. Changing pages retains drafts, selections and filters. Simplified Chinese is the default; choose English globally in Settings. Appearance follows VS Code's light, dark and high contrast themes.
+
+Migrate accounts with encrypted `.agwenc` files. Image Studio can use an independently selected saved account, reference images and reusable history parameters.
 
 This independent project is not affiliated with, authorized by or endorsed by Google. Available models, permissions and quota depend on the selected account's server responses.
 
@@ -19,7 +21,7 @@ Requires VS Code 1.95+ and an available Google Antigravity extension and login. 
 
 Verify extension ID `xiaoxincodes.antigravity-account-manager`. In WSL, check the official extension's actual host and install both extensions in that same location. Upgrades retain accounts, images, drafts and settings; no login-file reset is required. GitHub and Marketplace updates may arrive at different times. Release assets provide the official VSIX, source and checksums.
 
-Supports Windows, macOS, Linux and matching WSL Linux hosts. See [compatibility](docs/COMPATIBILITY.md) for other remote environments.
+Supports Windows, macOS, Linux and matching WSL Linux hosts. Standalone Antigravity IDE compatibility is not yet verified; its extension registry does not establish feature compatibility with the VS Code environment above. See [compatibility](docs/COMPATIBILITY.md).
 
 ## Features and use
 
