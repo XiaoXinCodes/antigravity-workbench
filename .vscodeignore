@@ -26,3 +26,5 @@ handoff/**
 docs/QUOTA_DISPLAY_RETENTION.md
 
 .design-*.log
+docs/UNIFIED_DESIGN_IMPLEMENTATION.md
+docs/unified-design-validation.json
