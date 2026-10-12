@@ -54,3 +54,5 @@ Model and Token records discover local sources read-only on opening and show loa
 The Schedules page loads conversation models automatically. The same account and endpoint reuse the shared directory; switching pages preserves the selection. Refresh models shows loading, the loaded count, an empty result or failure beside the model picker. Cancelling keeps the previous list.
 
 Save without enabling stores the task without running it. Automatic runs require both the global switch and that task to be enabled. View run times only computes the next five times; quota-recovery mode shows check times. Run once now sends a real request without enabling scheduled runs.
+
+Initial directory reads wait for account initialization and ordinary operations to finish, then continue automatically. Waiting can be cancelled. Actual failures retain their code; binding, HTTP and parse failures are not automatically retried.

@@ -9,14 +9,17 @@
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `antigravityAccounts.language` | `zh-CN` | 手动选择简体中文或 English；即时更新运行时视图，不重载，不影响草稿与任务。 |
+| `antigravityAccounts.hideIdentity` | `false` | 在界面、提醒、快速选择和状态栏中隐藏账号名称与邮箱；不改变登录。 |
 | `antigravityAccounts.images.endpoint` | `daily` | 高级排障覆盖；可手动选择 `production`，其图片请求稳定性尚未验证。相关 project 与保存账号模型使用同一端点核验，不自动跨端点重试。修改本身不发请求。 |
 
-只读取全局用户值，工作区配置不会覆盖。端点变化后须重新核验相关账号信息，旧端点结果不能直接用于新端点；实际请求主机可在操作记录与已开启的调试日志中查看。见 [高级排障](TROUBLESHOOTING.md#高级排障图片端点)。
+语言与身份显示只读取全局用户值，工作区配置不会覆盖。端点变化后须重新核验相关账号信息，旧端点结果不能直接用于新端点；实际请求主机可在操作记录与已开启的调试日志中查看。见 [高级排障](TROUBLESHOOTING.md#高级排障图片端点)。
 
 ## 命令面板
 
 | 命令名称 | 命令 ID |
 | --- | --- |
+| 在编辑器打开工作台 | `antigravityAccounts.workbench.open` |
+| 模型与 Token 记录 | `antigravityAccounts.observations.open` |
 | 添加账号（OAuth 登录） | `antigravityAccounts.live.login` |
 | 保存当前官方登录 | `antigravityAccounts.live.capture` |
 | 切换已保存登录 | `antigravityAccounts.live.switch` |
@@ -46,7 +49,7 @@
 
 “打开插件设置”（`antigravityAccounts.openSettings`）打开工作台设置页；语言和隐私写入用户级配置，颜色主题使用 VS Code 原生选择器。
 
-“打开工作台”（`antigravityAccounts.workbench.open`）打开完整编辑器页面；活动栏仍提供紧凑账号侧栏。帮助页提供完整指南与高级排障入口。
+“打开工作台”（`antigravityAccounts.workbench.open`）打开完整编辑器页面；活动栏 A 图标打开同一个工作台，宽屏保留左导航，窄窗口使用“切换功能”。帮助页提供完整指南与高级排障入口。
 
 [文档目录](README.md) · [快速开始](GETTING_STARTED.md)
 

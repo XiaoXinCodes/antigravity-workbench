@@ -4,6 +4,18 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.14](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.14) — 2026-10-12
+
+统一整个工作台的布局、导航与操作反馈。
+
+- 活动栏 A 图标打开完整编辑器，切换功能保留草稿和筛选；窄窗口导航支持键盘。
+- 支持统一中文／English、深浅色与高对比度主题，账号迁移和高级操作按需展开。
+- 模型与 Token 记录自动读取本机数据，每日趋势可查看精确用量。
+- 定时模型目录自动读取并复用有效结果；修复已复现的初始化冲突，刷新或取消保留已有列表。
+- 明确保存、预览与执行的区别，更新中英文指南和合成账号截图。
+
+[发布说明](docs/RELEASE_0.1.14.md) · [验证范围](docs/VALIDATION_0.1.14.md)
+
 ## [0.1.13](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.13) — 2026-10-12
 
 模型与 Token 记录、用量概览和记录列表集中在同一页。

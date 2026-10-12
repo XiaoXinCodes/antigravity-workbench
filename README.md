@@ -1,191 +1,97 @@
-<p align="center">
-  <img src="media/brand-logo.png" width="144" height="144" alt="Antigravity Workbench A 标志">
-</p>
-
+<p align="center"><img src="media/brand-logo.png" width="144" height="144" alt="Antigravity Workbench A 标志"></p>
 <h1 align="center">Antigravity Workbench</h1>
-
 <p align="center">在 VS Code 中管理 Google Antigravity 账号、查看额度与 Token 用量并创作图片。</p>
-
 <p align="center"><strong>开源 · MIT License</strong></p>
+<p align="center">简体中文 · <a href="README_EN.md">English</a></p>
+<p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">下载最新 VSIX</a> · <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">扩展市场</a> · <a href="docs/README.md">使用文档</a> · <a href="CHANGELOG.md">更新日志</a></p>
 
-<p align="center">简体中文 · <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README_EN.md">English</a></p>
-
-<p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">从扩展市场安装</a> ·
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/docs/README.md">使用文档</a> ·
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/CHANGELOG.md">更新日志</a> ·
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">提交问题</a>
-</p>
-
-Workbench 把账号、额度、模型与 Token 记录和图片创作放进同一个 VS Code 工作台：比较账号额度，查看和导出本机用量，独立选择生图账号并从历史继续创作；需要时开启额度提醒与定时请求。
+账号、额度、图片、用量记录和定时功能集中在一个工作台中。点击活动栏 **A 图标**，或执行命令 **Antigravity Workbench: 在编辑器打开工作台**。宽屏保留左侧导航，窄窗口使用“切换功能”；切换页面保留草稿、选择和筛选。默认中文，可在设置中全局切换 English；外观跟随 VS Code 的深浅色与高对比度主题。
 
 本项目独立开发，与 Google 不存在隶属、授权或背书关系。可用模型、权限与额度以所选账号的服务端结果为准。
 
-[快速安装](#快速安装) · [使用步骤](#使用步骤) · [功能演示](#功能演示) · [常见问题](#常见问题) · [参与贡献](#参与贡献)
+## 安装与升级
 
+需要 VS Code 1.95+，以及可用的 Google Antigravity 扩展和登录。Workbench 与官方扩展须运行在同一个本机或 WSL 宿主。
 
-## 统一工作台
+1. 从 [最新 GitHub Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) 下载 `.vsix`。
+2. 在目标窗口执行 **Extensions: Install from VSIX…**，选择文件。也可从 [扩展市场](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) 安装市场已上架版本。
+3. 保存当前工作并按提示重载，点击活动栏 A 图标。
 
-点击活动栏 A 图标查看紧凑账号侧栏，或从命令面板执行 **Antigravity Workbench: 打开工作台** 在编辑器中打开完整页面。统一导航连接账号与额度、图片工作室、模型与 Token、定时请求、额度提醒、设置与帮助。语言在“设置”中全局选择，外观跟随 VS Code 深浅色或高对比度主题。账号导入、导出与恢复位于账号页的可展开区域。
+核对扩展 ID `xiaoxincodes.antigravity-account-manager`。WSL 用户应核对官方扩展的实际运行宿主，将两个扩展安装到同一位置。升级保留已有账号、图片、草稿和设置，无需清空登录文件。GitHub 与 Marketplace 的更新节奏可能不同，正式 VSIX、源码和校验文件以 Release 附件为准。
 
+支持 Windows、macOS、Linux 与匹配的 WSL Linux 宿主；其他远程环境见 [兼容性](docs/COMPATIBILITY.md)。
 
-打开活动栏 A 图标会进入同一个编辑器工作台：宽屏常驻左侧导航，窄屏用“切换功能”按钮。模块切换保留当前草稿和筛选。打开“模型与 Token 记录”会只读加载本机记录；刷新用于手动更新，来源未发现时才显示选择入口。每日趋势支持悬停、点按与方向键查看精确用量。
-
-[本分支的生产界面与验收](docs/UNIFIED_DESIGN_IMPLEMENTATION.md)。
-
-## 快速安装
-
-**准备：** VS Code 1.95 或更高版本，以及可用的 Google Antigravity 扩展和登录。两个扩展应运行在同一本机或 WSL 宿主。
-
-1. 在 VS Code 扩展面板搜索 **Antigravity Workbench**，核对发布者 **XiaoXinCodes**、扩展 ID `xiaoxincodes.antigravity-account-manager`。
-2. 点击 **安装**；也可以打开 [VS Code Marketplace 页面](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager)，点击 **Install** 在 VS Code 中安装。
-3. 按提示重载，在活动栏打开 **Antigravity Workbench**。
-
-**WSL 工作区：** 在连接 WSL 的 VS Code 窗口中，核对 Google Antigravity 的实际运行宿主。官方扩展运行于 WSL 时，在扩展页面选择 **安装到 WSL:〈发行版〉**，将 Workbench 安装到同一远程宿主；官方扩展运行于本机时，两者均保留在本机。
-
-安装与升级不要求清空已有账号、官方登录文件、会话或图片。发行说明、源码和校验文件均在 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest)，版本变化见 [更新日志](CHANGELOG.md)。
-
-支持 Windows、macOS、Linux 本机扩展宿主与 WSL Linux 工作区宿主；其他远程宿主的支持范围见 [兼容性](docs/COMPATIBILITY.md)。
-
-<details>
-<summary>离线备用：从 VSIX 安装</summary>
-
-无法使用扩展市场时，可从 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) 下载 `.vsix` 附件，在目标 VS Code 窗口的命令面板执行 **Extensions: Install from VSIX…**，选择文件并按提示重载。WSL 用户仍需核对实际安装宿主。
-
-</details>
-
-## 可以做什么
-
-| 功能 | 用途 |
-| --- | --- |
-| 账号管理与迁移 | 浏览器 OAuth 添加、保存当前登录、切换并核验身份；加密导入导出，同邮箱可选择覆盖或跳过 |
-| 多账号额度总览 | 查询服务端剩余比例与重置时间；搜索账号、比较同一模型，按额度、更新时间或重置时间排序，支持可取消的批量刷新 |
-| 常用模型与历史 | 收藏模型、折叠家族分组；用原生快速选择查看额度，将一个账号／模型置顶到状态栏，筛选和清理额度历史 |
-| 图片工作室 | 跟随当前登录或独立选账号，查询所选账号与模型的额度；支持提示词、参考图、比例、尺寸和请求次数 |
-| 创作记录与复用 | 恢复草稿与任务卡、复用历史请求参数、从结果继续修改和比较版本；缺失参考图会提示，中断任务不自动重发 |
-| 用进项目 | 预览 PNG/JPEG，复制路径或 Markdown，插入编辑器、复制图片到项目；保留原图，插入不自动保存，复制不覆盖文件 |
-| 可选提醒与定时请求 | 默认关闭；低额度、耗尽与恢复提醒，日／周、间隔、五字段 cron 或服务端满额恢复触发的普通模型请求 |
-| 模型与 Token 记录 | 手动读取本机记录，同页查看用量概览与记录列表；按时间、返回模型和项目筛选，查看每日趋势并导出 CSV / JSON |
-| 统一界面语言 | 全局手动选择简体中文或 English，默认中文，工作台、图片、历史与调度页面即时同步 |
-
-## 使用步骤
-
-### 保存或添加账号
-
-1. 已有官方登录时，点击“保存当前账号”。需要添加其他账号时，点击“添加账号”，在浏览器完成 OAuth 授权。添加完成后恢复原登录，使用新账号需另行切换。
-2. 需要切换时，在账号卡片点击“切换”，核对确认框列出的后台与本窗口图片任务范围。确认后插件停止所列后台、完成切换、恢复后台并核验身份；相关窗口中的活动任务可能被中断。无法核验后台或登录范围时，显示异常详情与恢复入口。
-3. 在账号卡片点击“刷新”，查询该账号的服务端额度，无需先切换登录。
-
-需要迁移时，使用“导出账号 / 导入账号”创建或读取加密 `.agwenc` 文件。导入会核验候选身份和额度；同邮箱可选择覆盖或跳过，当前官方登录不变。详见 [账号管理](docs/INDEPENDENT_ACCOUNTS.md) 和 [加密迁移](docs/ACCOUNT_MIGRATION.md)。
-
-### 比较额度与查看历史
-
-1. 在额度总览选择要比较的模型，再按剩余额度高低、更新时间或重置时间排序；“批量刷新”可随时取消。
-2. 用星标收藏常用模型，按家族折叠；从“快速查看额度”查看账号额度，或将一个账号／模型置顶到状态栏。
-3. 打开“额度历史”，按账号、模型和时间筛选观察记录，查看明细或清理历史。
-
-未知额度保留为未知，旧结果保留查询时间；家族分组不代表共享额度池。详见 [额度工作流](docs/QUOTA_WORKFLOWS.md)。
-
-### 生成图片并用进项目
-
-1. 打开图片工作室，跟随当前登录或选择另一个已保存账号。模型来自该账号的服务端目录；可查询所选账号与模型的额度。
-2. 选择模型，填写提示词、比例和请求次数；需要时添加参考图或选择其他输出目录。
-3. 点击“生成图片”，核对确认中的账号、模型、请求次数和保存位置后提交。结果默认保存到当前项目，可直接预览。
-4. 从历史任务复用模型与参数，检查缺失参考图提示后继续创作；也可从结果继续修改、比较版本，或复制路径、Markdown、图片到项目。
-
-草稿与任务卡保存在当前宿主，重载后恢复。已有图片可从恢复入口找回，无需重新生成。正常使用无需配置请求端点；图片请求失败不会自动重试、切号或切换端点。详见 [图片生成](docs/IMAGE_GENERATION.md) 和 [用进项目](docs/IMAGE_RESULTS.md)。
-
-### 查看模型与 Token 记录
-
-1. 在工作台点击“模型与 Token 记录”，再点击“读取本机记录”。首次显示全部已读记录，概览与列表在同一页。
-2. 按时间、返回模型和项目筛选；展开每日趋势或单条记录查看详细用量。“刷新记录”保留所选时间范围和仍可用的筛选项。
-3. 选择 CSV 或 JSON 后点击“导出”。当前时段为空时，可点击“查看全部”恢复记录列表。
-
-日期按本机时区筛选。缺失的 Token 或型号显示“未提供”，不会算成零。返回型号来自服务端响应或本地记录的声明，不能证明底层实际模型；图片和定时任务详情也会保留服务端提供的返回型号。读取与导出不会发送模型请求。详见[记录与用量说明](docs/REQUEST_MODEL_OBSERVATIONS.md)。
-
-### 按需开启提醒与定时请求
-
-打开“管理定时请求与提醒”，选择低额度、耗尽或恢复提醒。普通模型请求可指定账号、模型与时区，按日／周、间隔或五字段 cron 安排；也可在服务端额度从未满恢复到精确满额时触发。
-
-提醒、总开关和新任务默认关闭。先预览计划，再明确启用任务；支持手动测试、暂停、取消和结果查看。任务发送固定短输入 `Hi`，可能消耗额度；VS Code 扩展宿主需保持运行，延误超过 5 分钟的计划会跳过。详见 [提醒与定时请求](docs/QUOTA_WORKFLOWS.md#提醒与定时请求)。
-
-## 功能演示
-
-截图来自实际 Chromium / VS Code 渲染，使用虚构账号、模拟额度和本地演示图；没有登录真实账号或发送生图请求。截图展示源码中的界面，日常安装与更新请使用扩展市场。
+## 功能与使用
 
 ### 账号与额度
 
-添加与保存入口同组显示，当前登录有明确标记。刷新后查看账号的剩余比例、重置时间与查询时间；多账号比较、排序和批量刷新在额度总览中操作。图中账号与百分比均为演示值。
+通过浏览器 OAuth 添加账号，或核验并保存当前官方登录。在账号卡片切换、刷新或移除；切换确认会列出可能被中断的后台与任务范围。移除当前账号时先尝试安全切换可用替代账号，失败则保留原副本。
 
-<img src="docs/images/accounts-zh-CN.png" width="440" alt="中文账号工作台：添加与保存入口、登录状态和模拟模型额度">
+搜索账号，比较同一模型的剩余比例，按额度、更新时间或重置时间排序；批量刷新可取消。收藏模型、折叠家族分组、用 QuickPick 查看额度或置顶状态栏。在“实时额度／额度观察历史”标签中查看和筛选历史。未知额度保持未知，旧结果保留查询时间，百分比不换算图片张数。
 
-### 模型与 Token 记录
+“导入、导出与恢复”按需展开。账号迁移使用加密 `.agwenc`，同邮箱可覆盖或跳过；导入不改变当前官方登录。详见 [账号管理](docs/INDEPENDENT_ACCOUNTS.md)、[加密迁移](docs/ACCOUNT_MIGRATION.md) 和 [额度工作流](docs/QUOTA_WORKFLOWS.md)。
 
-点击“读取本机记录”即可在同一页看到用量与记录，筛选和 CSV / JSON 导出位于顶部。趋势与详细信息按需展开。
-
-<img src="docs/images/usage-records-zh-CN.png" width="960" alt="中文模型与 Token 记录：全部记录、同页用量概览与列表，以及时间模型项目筛选和导出">
-
-时段没有记录时会说明原因，点击“查看全部”即可恢复列表。
-
-<img src="docs/images/usage-empty-period-zh-CN.png" width="960" alt="中文记录页空时段：明确暂无记录，并提供查看全部记录入口">
+<img src="docs/images/unified-accounts-light.png" width="960" alt="统一账号与额度页面，虚构账号和模拟额度">
 
 ### 图片工作室
 
-选择独立生图账号和它的服务端图片模型，准备提示词、参考图和参数；确认后才提交。右侧保留创作历史，可复用请求参数或继续修改。图片额度百分比不换算成可生成张数。
+跟随当前登录或独立选择已保存账号，加载该账号的图片模型并查询所选模型额度；独立选择不会切换官方登录。填写提示词，添加最多 3 张 PNG/JPEG 参考图，选择比例、尺寸、细节与 1–4 次请求。确认账号、模型、次数和保存目录后才发送。
 
-<img src="docs/images/image-studio-zh-CN.png" width="960" alt="中文图片工作室：独立账号、模拟模型额度与虚构历史任务">
+草稿与历史任务自动保存。复用历史参数、从结果继续修改、比较版本，或预览、复制路径／Markdown、插入编辑器和复制图片到项目；保留原图，不覆盖目标文件。缺失参考图有提示，中断任务不会自动重发。详见 [图片生成](docs/IMAGE_GENERATION.md) 和 [用进项目](docs/IMAGE_RESULTS.md)。
 
-## 界面语言
+<img src="docs/images/unified-images-light.png" width="960" alt="统一图片工作室，合成提示词、模型与历史任务">
 
-默认使用简体中文。通过工作台“设置 / Settings”或 VS Code 的 `antigravityAccounts.language`，手动选择 `zh-CN` 或 `en`。这是统一的用户级设置，工作台、图片、调度、历史、QuickPick、状态栏和提示即时同步，保留当前表单、选择与任务。
+### 模型与 Token
 
-命令面板、视图标题和设置描述遵循 VS Code 的显示语言。查看 [英文版演示](README_EN.md#feature-walkthrough)。
+首次打开自动只读加载本机记录，概览和列表在同一页。返回页面复用已有结果；点击刷新更新。未发现来源时才显示选择入口。按时间、返回模型与项目筛选，查看每日趋势或单条详情，导出 CSV／JSON；空时段可“查看全部”。趋势支持悬停、点按和方向键查看精确日期与用量。
 
-### 模型目录与升级
+缺失 Token 或型号显示“未提供”，不算成零；返回型号不证明底层实际模型。读取与导出不会发送模型请求。详见 [记录与用量](docs/REQUEST_MODEL_OBSERVATIONS.md)。
 
-模型列表随所选账号的服务端目录刷新，无需等待插件更新。查询失败保留原选择和上次结果；缺项或未知额度不代表没有权限。图片页使用服务端明确列出的图片模型。
+<img src="docs/images/unified-records-light.png" width="960" alt="统一模型与 Token 页，合成本机记录的概览、趋势和筛选">
 
-升级保留账号、图片历史、收藏、草稿与定时任务，不自动替换所选模型。旧定时任务若提示用途未确认，请编辑并确认用于普通文本请求。详见[模型目录说明](docs/MODEL_CATALOG_REFACTOR.md)。
+### 定时请求与额度提醒
+
+从主导航分别打开“定时请求”和“额度提醒”。提醒和定时总开关默认关闭，新保存的任务也不启用。提醒支持低额度、耗尽和恢复；提醒本身不发送模型请求。
+
+定时请求自动读取所选账号的普通模型目录。初始化或正常操作占用期间显示准备状态，就绪后自动继续；刷新显示数量、空结果或真实失败，取消保留已有列表。账号、端点和用途隔离，类型未标明的普通模型需确认用途。
+
+| 操作 | 结果 |
+| --- | --- |
+| 保存，暂不启用 | 只保存设置，不执行 |
+| 查看执行时间／查看检查时间 | 计算接下来 5 个时间，不保存、不执行 |
+| 启用总开关及该任务 | 按日／周、间隔、五字段 cron 或满额恢复规则运行 |
+| 立即执行一次 | 发送一次真实请求，不开启定时运行 |
+
+任务发送固定短输入 `Hi`，可能消耗额度；宿主须保持运行，延误超过 5 分钟的计划会跳过。支持编辑、暂停、取消和结果查看。详见 [提醒与定时请求](docs/QUOTA_WORKFLOWS.md#提醒与定时请求)。
+
+<img src="docs/images/unified-schedules-light.png" width="960" alt="统一定时请求页，虚构账号的自动模型目录及明确保存和预览按钮">
+
+### 设置与帮助
+
+在“设置”选择全局语言、账号名称与邮箱隐藏选项，以及 VS Code 主题。隐藏身份适合截图或共享屏幕，不改变账号和登录。命令面板及静态标题仍遵循 VS Code 显示语言。
+
+“帮助与排障”连接使用指南与高级排障。技术字段、目录详情和调试日志按需展开；需要日志时先预览再导出，不自动上传。更多入口见 [设置与命令](docs/COMMANDS.md) 和 [故障排查](docs/TROUBLESHOOTING.md)。
+
+以上截图来自实际 VS Code 界面，全部使用虚构账号、example.test 邮箱与合成用量，未使用真实账号或发送生成请求。
 
 ## 常见问题
 
-| 问题 | 回答 |
+| 问题 | 说明 |
 | --- | --- |
-| 为什么“已保存”不能再点？ | 当前已核验身份已有可用本机副本，无需重复保存；这不保证服务端授权有效。 |
-| 为什么模型没有列出或显示类型未标明？ | 列表来自所选账号及端点的目录，保留原始 ID 和服务端名称；缺项不证明无权限。普通任务的类型未知时须明确确认用途；图片选项须有明确图片清单成员证据，禁用项不可发送。见 [模型目录与升级](docs/MODEL_CATALOG_REFACTOR.md)。 |
-| 额度百分比能换算成图片张数吗？ | 不能。它是所选模型的服务端剩余比例，旧结果会标记；请求次数也不保证产出张数。 |
-| 选择另一生图账号会切换官方登录吗？ | 不会。图片页独立选择只影响该图片任务，确认时固定所选账号与模型。 |
-| 切换不可用或 WSL 找不到账号怎么办？ | 先核对两个扩展的宿主和是否有待恢复操作；按界面恢复提示处理。保存位置按宿主独立。见 [故障排查](docs/TROUBLESHOOTING.md)。 |
-| 重载后会自动继续生图吗？ | 不会。草稿与任务卡会恢复，中断任务保留状态，重新提交需你明确操作。 |
-| 不开启定时功能会后台发送普通模型请求吗？ | 不会。提醒与定时请求默认关闭，需手动启用；手动测试也需要明确操作。 |
+| WSL 找不到账号或切换不可用？ | 先核对两个扩展的运行宿主，并按未完成操作的恢复提示处理。 |
+| 首次模型目录正在准备？ | 等待初始化和正常操作完成；可取消。实际失败保留错误码，见折叠的目录详情。 |
+| 模型未列出或类型未标明？ | 目录来自所选账号及端点；缺项不证明无权限，未知用途需明确确认。 |
+| 重载后会自动继续生图？ | 不会。草稿和任务卡恢复，中断任务需明确重新提交。 |
+| 保存或预览定时任务会执行？ | 不会。自动执行需两个开关均开启；“立即执行一次”另行发送真实请求。 |
 
-## 隐私与使用边界
+## 隐私、文档与反馈
 
-账号凭据存放在 VS Code SecretStorage 或当前宿主的受限存储中；账号导出使用 `.agwenc` 加密格式。草稿、参考图路径和任务记录保存在当前宿主，图片写入所选目录。日志与账号导出包不会自动上传。
+账号凭据存放于 VS Code SecretStorage 或宿主受限存储；账号导出采用加密格式。草稿、参考图路径和任务记录保存在当前宿主，图片写入所选目录。生成时，所选账号的授权、提示词和参考图发送至相应 Google 服务；仅提交你有权使用的内容。
 
-生成时，所选账号的授权、提示词和选定参考图会发给相应 Google 服务；请只提交你有权使用的内容。切换账号会写入官方组件的本机凭据并重启组件；遇到未完成事务或身份核验失败，应按恢复提示操作。模型是否可用、能否调用及额度含义以服务端结果为准。
+[快速开始](docs/GETTING_STARTED.md) · [完整文档](docs/README.md) · [更新日志](CHANGELOG.md) · [项目与服务说明](docs/PROJECT_NOTICES.md)
 
-## 文档与反馈
-
-| 你要了解 | 文档 |
-| --- | --- |
-| 完整使用流程 | [快速入门](docs/GETTING_STARTED.md) · [文档目录](docs/README.md) |
-| 账号、切换与迁移 | [账号管理](docs/INDEPENDENT_ACCOUNTS.md) · [切换与恢复](docs/ACCOUNT_SWITCHING.md) · [加密迁移](docs/ACCOUNT_MIGRATION.md) |
-| 额度、历史与定时功能 | [额度工作流](docs/QUOTA_WORKFLOWS.md) · [服务端查询](docs/INDEPENDENT_ACCOUNT_QUOTA.md) |
-| 图片与项目操作 | [图片生成](docs/IMAGE_GENERATION.md) · [额度说明](docs/IMAGE_QUOTA.md) · [继续创作与用进项目](docs/IMAGE_RESULTS.md) |
-| 排障与支持范围 | [故障排查](docs/TROUBLESHOOTING.md) · [日志说明](docs/DEBUG_LOGS.md) · [兼容性](docs/COMPATIBILITY.md) |
-| 版本与使用条件 | [更新日志](CHANGELOG.md) · [项目与服务说明](docs/PROJECT_NOTICES.md) |
-
-反馈问题时，在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 提供扩展版本、系统与宿主、复现步骤和错误码。需要日志时，按 [日志说明](docs/DEBUG_LOGS.md) 预览后导出；不要提交凭据或私人内容。疑似安全漏洞请按 [安全报告流程](SECURITY.md) 私下报告。
-
-## 参与贡献
-
-欢迎文档改进、问题复现、功能建议与 Pull Request。较大改动请先在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 讨论，再按 [贡献指南](CONTRIBUTING.md) 准备提交；只贡献你有权提供的内容，保留第三方许可与来源。
-
-开发使用 Node.js 20+，CI 使用 Node.js 22。构建与验证步骤见 [贡献指南](CONTRIBUTING.md)。
+在 [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) 提供版本、系统、宿主、复现步骤和错误码，不提交凭据或私人内容。疑似安全漏洞按 [安全报告流程](SECURITY.md) 私下报告。贡献和构建步骤见 [贡献指南](CONTRIBUTING.md)。
 
 ## 许可
 
-当前源码的项目自有部分采用 [MIT License](LICENSE)，允许使用、修改、分发与商业使用，请保留版权和许可声明。已发布版本以各自发行包中的许可为准。
-
-随包第三方代码保留独立许可，见 [第三方声明](THIRD_PARTY_NOTICES.txt)。Google 服务访问、第三方素材与商标的权利边界见 [项目与服务说明](docs/PROJECT_NOTICES.md)。
+项目自有源码采用 [MIT License](LICENSE)，允许使用、修改、分发和商业使用，请保留版权和许可声明。第三方代码保留各自许可，见 [第三方声明](THIRD_PARTY_NOTICES.txt)；已发布版本以对应发行包中的许可为准。

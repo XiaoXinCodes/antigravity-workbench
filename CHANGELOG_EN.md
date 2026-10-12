@@ -4,6 +4,18 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.14](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.14) — 2026-10-12
+
+Unify the workbench layout, navigation and feedback across all features.
+
+- The A icon opens one editor; module switches retain drafts and filters, with keyboard navigation in narrow views.
+- Shared Chinese/English, light/dark/high contrast themes, and expandable account migration and advanced controls.
+- Local model and Token records load automatically; inspect exact daily usage.
+- Scheduled model directories load automatically and reuse valid results. Fixed reproduced initialization conflicts; refresh and cancellation retain prior choices.
+- Clarify saving, previewing and execution; update both guides and synthetic-account screenshots.
+
+[Release notes](docs/RELEASE_0.1.14.md) · [Validation scope](docs/VALIDATION_0.1.14.md)
+
 ## [0.1.13](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.13) — 2026-10-12
 
 See model and token records, usage totals and the record list together on one page.

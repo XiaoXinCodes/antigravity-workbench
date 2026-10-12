@@ -93,8 +93,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - run: npm run package
-      - run: python scripts/verify-release.py artifacts/antigravity-workbench-0.1.13.vsix
-      - run: node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.13.vsix
+      - run: python scripts/verify-release.py artifacts/antigravity-workbench-0.1.14.vsix
+      - run: node scripts/verify-marketplace-vsix.cjs artifacts/antigravity-workbench-0.1.14.vsix
       - uses: actions/upload-artifact@v4
         with:
           name: antigravity-workbench-vsix-${{ runner.os }}
@@ -127,7 +127,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AG_ALLOW_PUBLIC_REPOSITORY: 'true'
-      - name: Clean this merged records branch after publication
+      - name: Clean this merged workbench branch after publication
         run: python scripts/cleanup-release-branch.py
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
