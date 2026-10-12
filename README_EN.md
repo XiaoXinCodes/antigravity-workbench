@@ -89,7 +89,7 @@ Drafts and task cards stay on the current host and return after reload. Existing
 
 1. Select **Model and token records** in the workbench, then **Read local records**. The first read shows all read records, with usage totals and the list on one page.
 2. Filter by time, returned model and project. Expand daily trends or a record for details. **Refresh records** preserves the selected time range and available filters.
-3. Choose CSV or JSON and select **Export filtered results**. If a period is empty, **View all records** restores the list.
+3. Choose CSV or JSON and select **Export**. If a period is empty, **View all records** restores the list.
 
 Dates use your local timezone. Missing tokens or model names remain **Not provided**, rather than zero. Returned models are declarations in server responses or local records and cannot prove the underlying model; image and scheduled-task details also retain returned model names when provided. Reading and exporting send no model requests. See [records and usage](docs/REQUEST_MODEL_OBSERVATIONS.md).
 
