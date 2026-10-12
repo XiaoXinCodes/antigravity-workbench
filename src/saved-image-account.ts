@@ -1,3 +1,4 @@
+import { accountCatalogScope, type SharedAccountModelCatalog } from './account-model-catalog';
 import { catalogParseError } from './model-catalog-error';
 import { parseModelCatalog, imageCatalogIssue, assertModelUse } from './model-catalog';
 import { summarizeImageCatalog, type CatalogSummary } from './image-catalog-diagnostic';
@@ -24,6 +25,7 @@ export interface SavedImageDependencies {
   models(token: string, project: string, signal: AbortSignal, endpoint: ImageEndpoint): Promise<unknown>;
   parseModels(value: unknown): ImageModelChoice[];
   normalizeCatalog?(value: unknown): unknown;
+  catalogService?: SharedAccountModelCatalog | undefined;
   client?: SavedAccountQuotaClient;
   refreshAllowed?(account: AccountChoice): boolean;
   now?: () => number;
@@ -98,17 +100,21 @@ export class SavedImageAccounts {
           if (project.endpoint !== endpoint) throw new Error('IMAGE_DIRECT_PROJECT_ENDPOINT_MISMATCH');
           assertPresent(); check(requestSignal);
           await diagnostic?.assertCurrent();
-          const rawResponse = await this.deps.models(access.accessToken, project.projectId, requestSignal, endpoint);
-          access.assertPublicResponse(rawResponse);
-          let response;
-          try { response = parseModelCatalog(this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse); }
-          catch (error) { throw catalogParseError(error); }
+          const fetch = async (catalogSignal: AbortSignal) => {
+            const rawResponse = await this.deps.models(access.accessToken, project.projectId, catalogSignal, endpoint);
+            access.assertPublicResponse(rawResponse);
+            try { return parseModelCatalog(this.deps.normalizeCatalog?.(rawResponse) ?? rawResponse); }
+            catch (error) { throw catalogParseError(error); }
+          };
+          const verifyCatalog = async () => { assertPresent(); await store.verify(id, expectedRevision); };
+          const directory = this.deps.catalogService ? await this.deps.catalogService.read(accountCatalogScope(this.selected(id), endpoint, expectedRevision, access.accessToken, project.projectId), requestSignal, fetch, force || !!diagnostic, verifyCatalog) : { catalog: await fetch(requestSignal), queriedAt: new Date(this.now()).toISOString(), cacheHit: false };
+          const response = directory.catalog;
           await diagnostic?.assertCurrent();
           const catalog = summarizeImageCatalog(response);
           let models: ImageModelChoice[] = [];
           try { models = this.deps.parseModels(response); } catch (error) { if (!diagnostic) throw error; }
           return { token: access.accessToken, tokenExpiry: access.expiry, projectId: project.projectId, models, catalog, imageIssue: imageCatalogIssue(response),
-            quota: models.length ? imageQuotaFromCatalog(response, models) : [], queriedAt: new Date(this.now()).toISOString() };
+            quota: models.length ? imageQuotaFromCatalog(response, models) : [], queriedAt: directory.queriedAt, directoryCacheHit: directory.cacheHit };
         });
         check(signal); assertPresent();
         const committed = await store.load(id); assertPresent();
@@ -121,8 +127,8 @@ export class SavedImageAccounts {
           if (prepared.tokenExpiry <= this.now() + 5_000) throw new Error('IMAGE_SAVED_AUTH_EXPIRED');
           await store.verify(id, revision); check(requestSignal); assertPresent();
         };
-        const result: Prepared = { ...prepared, cacheHit: false, endpoint, accountId: id, revision, key: [expected, endpoint, revision].join(':'),
-          expiresAt: Math.min(this.now() + 5 * 60_000, prepared.tokenExpiry - 30_000), verify };
+        const result: Prepared = { ...prepared, cacheHit: prepared.directoryCacheHit, endpoint, accountId: id, revision, key: [expected, endpoint, revision].join(':'),
+          expiresAt: Math.min(Date.parse(prepared.queriedAt) + 5 * 60_000, prepared.tokenExpiry - 30_000), verify };
         await verify(signal);
         if (diagnostic) return result;
         for (const [oldKey, value] of this.cache) if (value.accountId === id) this.cache.delete(oldKey);

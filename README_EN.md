@@ -1,183 +1,97 @@
-<p align="center">
-  <img src="media/brand-logo.png" width="144" height="144" alt="Antigravity Workbench A logo">
-</p>
-
+<p align="center"><img src="media/brand-logo.png" width="144" height="144" alt="Antigravity Workbench A logo"></p>
 <h1 align="center">Antigravity Workbench</h1>
-
-<p align="center">Manage Google Antigravity accounts, check quota and token usage and create images in VS Code.</p>
-
+<p align="center">Manage Google Antigravity accounts, check quota and Token usage, and create images in VS Code.</p>
 <p align="center"><strong>Open source · MIT License</strong></p>
+<p align="center"><a href="README.md">简体中文</a> · English</p>
+<p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest">Download latest VSIX</a> · <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">Marketplace</a> · <a href="docs/GETTING_STARTED.en.md">User guide</a> · <a href="CHANGELOG_EN.md">Changelog</a></p>
 
-<p align="center"><a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/README.md">简体中文</a> · English</p>
+Accounts, quotas, images, usage records and scheduled tasks share one workbench. Click the **A activity icon**, or run **Antigravity Workbench: Open Workbench in Editor**. Wide views keep left navigation visible; narrow views use **Switch feature**. Changing pages retains drafts, selections and filters. Simplified Chinese is the default; choose English globally in Settings. Appearance follows VS Code's light, dark and high contrast themes.
 
-<p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager">Install from Marketplace</a> ·
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/docs/GETTING_STARTED.en.md">Getting started</a> ·
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/blob/main/CHANGELOG_EN.md">Changelog</a> ·
-  <a href="https://github.com/XiaoXinCodes/antigravity-workbench/issues">Report an issue</a>
-</p>
+This independent project is not affiliated with, authorized by or endorsed by Google. Available models, permissions and quota depend on the selected account's server responses.
 
-Workbench brings accounts, quotas and image creation into one VS Code workbench: compare model quotas across accounts, choose an image account independently and continue from history. Read local model and token records, filter usage by time, model and project, and export results. Enable quota alerts and scheduled requests when you need them.
+## Installation and upgrades
 
-This project is independently developed and is not affiliated with, authorized by or endorsed by Google. Available models, permissions and quota depend on the selected account's server responses.
+Requires VS Code 1.95+ and an available Google Antigravity extension and login. Workbench and the official extension must run on the same local or WSL host.
 
-[Quick installation](#quick-installation) · [Getting started](#getting-started) · [Feature walkthrough](#feature-walkthrough) · [FAQ](#faq) · [Contributing](#contributing)
+1. Download the `.vsix` from the [latest GitHub Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest).
+2. Run **Extensions: Install from VSIX…** in the target window and select the file. You can also install the version currently available on [Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager).
+3. Save your work, reload when prompted, and click the A activity icon.
 
-## Quick installation
+Verify extension ID `xiaoxincodes.antigravity-account-manager`. In WSL, check the official extension's actual host and install both extensions in that same location. Upgrades retain accounts, images, drafts and settings; no login-file reset is required. GitHub and Marketplace updates may arrive at different times. Release assets provide the official VSIX, source and checksums.
 
-**Before installing:** VS Code 1.95 or later, with an available Google Antigravity extension and login. Both extensions must run on the same local or WSL host.
+Supports Windows, macOS, Linux and matching WSL Linux hosts. See [compatibility](docs/COMPATIBILITY.md) for other remote environments.
 
-1. Search for **Antigravity Workbench** in VS Code's Extensions view. Verify publisher **XiaoXinCodes** and extension ID `xiaoxincodes.antigravity-account-manager`.
-2. Select **Install**. You can also open the [VS Code Marketplace listing](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) and select **Install** to install in VS Code.
-3. Reload when prompted and open **Antigravity Workbench** in the activity bar.
-
-**WSL workspaces:** In a VS Code window connected to WSL, check where Google Antigravity actually runs. If the official extension runs in WSL, select **Install in WSL: &lt;distribution&gt;** on the extension page to install Workbench on that same remote host. If the official extension runs locally, keep both extensions on the local host.
-
-Installation and upgrades do not require clearing saved accounts, official login files, sessions or images. Release notes, source and checksum files are in the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest); see the [changelog](CHANGELOG_EN.md) for version changes.
-
-Supports local extension hosts on Windows, macOS and Linux, plus WSL Linux workspace hosts. See [compatibility](docs/COMPATIBILITY.md) for other remote hosts.
-
-<details>
-<summary>Offline alternative: install from VSIX</summary>
-
-If Marketplace is unavailable, download the `.vsix` attachment from the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest). In the target VS Code window, run **Extensions: Install from VSIX…** from the Command Palette, select the file and reload when prompted. With WSL, still check the actual installation host.
-
-</details>
-
-## What you can do
-
-| Feature | What it helps you do |
-| --- | --- |
-| Accounts and migration | Add with browser OAuth, save the current login, switch and verify identity; import and export encrypted accounts, replacing or skipping matching emails |
-| Multi-account quota overview | Read server-reported remaining fractions and reset times; search accounts, compare the same model, sort by quota, update or reset time, and cancel batch refresh |
-| Favorite models and history | Favorite models and collapse families; browse quotas in native QuickPick, pin one account/model to the status bar, and filter or clear quota history |
-| Image studio | Follow the current login or choose an account independently; query quota for the selected account and model, with prompts, references, ratios, sizes and request counts |
-| Creation history and reuse | Restore drafts and task cards, reuse historical request parameters, continue editing and compare versions; missing references are flagged and interrupted tasks are not resent automatically |
-| Use in your project | Preview PNG/JPEG, copy paths or Markdown, insert into the editor or copy images into the project; originals are kept, insertion does not save, and copying does not overwrite |
-| Optional alerts and scheduled requests | Disabled by default; low, exhausted and recovered quota alerts, plus text requests on daily/weekly, interval, five-field cron or confirmed full-quota recovery triggers |
-| Model and token records | Read local records on demand; see usage totals and the record list together, filter by time, returned model and project, inspect daily trends and export CSV / JSON |
-| Shared interface language | Manually choose Simplified Chinese or English globally; Chinese is the default and account, image, history and automation pages update immediately |
-
-## Getting started
-
-### Save or add an account
-
-1. If you already have an official login, select **Save current account**. To add another account, select **Add account** and complete OAuth authorization in your browser. Adding restores the original login afterwards; using the new account requires a separate switch.
-2. Select **Switch** on an account card and confirm the displayed background and task scope. Workbench handles that scope, restarts the official component and verifies the target identity before reporting completion. Active tasks in the confirmed scope, including related windows, may be interrupted. Unverifiable backgrounds or login scope show conflict and recovery details.
-3. Select **Refresh** on an account card to query its server quota without first switching logins.
-
-To migrate accounts, use **Export accounts / Import accounts** with an encrypted `.agwenc` file. Import verifies candidate identity and quota; matching emails can be replaced or skipped, while the current official login stays unchanged. See [account management](docs/INDEPENDENT_ACCOUNTS.md) and [encrypted migration](docs/ACCOUNT_MIGRATION.md) (Chinese).
-
-### Compare quotas and browse history
-
-1. Select a model in the quota overview, then sort by remaining quota, update time or reset time. You can cancel **Refresh all** at any time.
-2. Star favorite models and collapse families. Browse accounts in **Quick quota view**, or pin one account/model to the status bar.
-3. Open **Quota history** to filter observations by account, model and time, inspect details or clear history.
-
-Unknown quota stays unknown, and older readings retain their query time. Family grouping does not establish shared quota pools. See [quota workflows](docs/QUOTA_WORKFLOWS.md) (Chinese).
-
-### Generate images and use them in your project
-
-1. Open the image studio and follow the current login or choose a saved account. Models come from that account's server catalog; query quota for the selected account and model when needed.
-2. Select a model, enter a prompt, ratio and request count, then add references or choose another output directory if needed.
-3. Select **Generate**, check the account, model, request count and destination in the confirmation, then submit. Results default to the current project and can be previewed directly.
-4. Reuse a historical task's model and parameters, checking any missing-reference warning. You can also continue editing a result, compare versions or copy paths, Markdown and images into the project.
-
-Drafts and task cards stay on the current host and return after reload. Existing images can be recovered without generating them again. Normal use needs no endpoint configuration; failed image requests do not automatically retry, switch accounts or change endpoints. See [image generation](docs/IMAGE_GENERATION.md) and [project actions](docs/IMAGE_RESULTS.md) (Chinese).
-
-### View model and token records
-
-1. Select **Model and token records** in the workbench, then **Read local records**. The first read shows all read records, with usage totals and the list on one page.
-2. Filter by time, returned model and project. Expand daily trends or a record for details. **Refresh records** preserves the selected time range and available filters.
-3. Choose CSV or JSON and select **Export**. If a period is empty, **View all records** restores the list.
-
-Dates use your local timezone. Missing tokens or model names remain **Not provided**, rather than zero. Returned models are declarations in server responses or local records and cannot prove the underlying model; image and scheduled-task details also retain returned model names when provided. Reading and exporting send no model requests. See [records and usage](docs/REQUEST_MODEL_OBSERVATIONS.md).
-
-### Enable alerts and scheduled requests when needed
-
-Open **Manage scheduled requests and alerts** to select low, exhausted or recovered quota alerts. Text requests use a chosen account, model and timezone, with daily/weekly, interval or five-field cron schedules. They can also run when the server reports a transition from partial quota to exactly full quota.
-
-Alerts, the master switch and new tasks are disabled by default. Preview the schedule, then explicitly enable the task; manual test, pause, cancel and run results are available. Tasks send the fixed short input `Hi` and may consume quota. The VS Code extension host must remain running; occurrences more than five minutes late are skipped. See [alerts and scheduled requests](docs/QUOTA_WORKFLOWS.md#提醒与定时请求) (Chinese).
-
-## Feature walkthrough
-
-Screenshots show actual Chromium / VS Code rendering with fictional accounts, mock quota and local demonstration images. No real account login or image-generation request was made. They illustrate the source interface; use Marketplace for everyday installation and updates.
+## Features and use
 
 ### Accounts and quota
 
-Add and save share a toolbar, and the current login is clearly marked. Refresh an account to see remaining fractions, reset times and query time; compare, sort and batch-refresh accounts in the quota overview. Accounts and percentages below are demonstration values.
+Add accounts through browser OAuth, or verify and save the current official login. Switch, refresh or remove accounts on their cards. Switch confirmation lists background processes and tasks that may be interrupted. Removing the current account first attempts to switch safely to an available replacement; a failed switch retains the old copy.
 
-<img src="docs/images/accounts-en.png" width="440" alt="English account workbench with Add and Save actions, login status and mock model quota">
+Search accounts, compare the same model's remaining fraction, and sort by quota, update or reset time. Cancel batch refresh, favorite models, collapse model families, use QuickPick or pin a quota to the status bar. Current quota and Quota observations tabs provide current results and filterable history. Unknown quota stays unknown, old results retain their query time, and percentages are not converted to image counts.
 
-### Model and token records
+Expand import, export and recovery when needed. Account migration uses encrypted `.agwenc` files; matching emails can be replaced or skipped. Import keeps the current official login unchanged. See [account management](docs/INDEPENDENT_ACCOUNTS.md), [migration](docs/ACCOUNT_MIGRATION.md) and [quota workflows](docs/QUOTA_WORKFLOWS.md).
 
-Select **Read local records** to see totals and records on one page, with filters and CSV / JSON export at the top. Expand trends and details when needed.
+<img src="docs/images/unified-accounts-en.png" width="960" alt="Unified accounts and quota page with fictional accounts and synthetic quota">
 
-<img src="docs/images/usage-records-en.png" width="960" alt="English model and token records with all records, usage totals, a visible list, time model and project filters and export">
+### Image Studio
 
-An empty period explains why no records match and offers **View all records** to restore the list.
+Follow the current login or select a saved account independently, load that account's image models and query the selected model's quota. Independent selection does not switch the official login. Enter a prompt, add up to 3 PNG/JPEG references, and choose ratio, size, detail and 1–4 requests. Submission requires confirmation of the account, model, count and save folder.
 
-<img src="docs/images/usage-empty-period-en.png" width="960" alt="English empty period with a clear explanation and View all records action">
+Drafts and task history save automatically. Reuse parameters, continue editing a result, compare versions, preview images, copy paths/Markdown, insert into the editor or copy images into a project. Originals remain intact and destination files are not overwritten. Missing references are identified; interrupted tasks are not automatically resent. See [image generation](docs/IMAGE_GENERATION.md) and [project actions](docs/IMAGE_RESULTS.md).
 
-### Image studio
+<img src="docs/images/unified-images-dark.png" width="960" alt="Unified English Image Studio with synthetic prompt, models and task history">
 
-Select an independent image account and a model from its server catalog, then prepare a prompt, references and parameters. Submission requires confirmation. Creation history stays on the right for parameter reuse and continued editing. Image quota percentages are not converted into image counts.
+### Model and Token records
 
-<img src="docs/images/image-studio-en.png" width="960" alt="English image studio with independent account selection, mock model quota and synthetic task history">
+The first opening automatically reads local records without modifying the source. Totals and records share one page. Returning reuses loaded data; Refresh updates it. Source selection appears when discovery finds no source. Filter by time, returned model and project; inspect trends and individual records, export CSV/JSON, or use View all for empty periods. Hover, tap or use arrow keys to inspect exact daily dates and usage.
 
-## Interface language
+Missing tokens or model declarations remain Not provided rather than zero. Returned names do not prove underlying model identity. Reading and export send no model request. See [records and usage](docs/REQUEST_MODEL_OBSERVATIONS.md).
 
-Simplified Chinese is the default. Open **Settings / 设置** in the workbench or use `antigravityAccounts.language` in VS Code to choose `zh-CN` or `en` manually. This shared user setting updates account, image, automation and history pages, QuickPick, the status bar and messages immediately, preserving current forms, selections and tasks.
+<img src="docs/images/unified-records-en.png" width="960" alt="Unified English model and Token page with synthetic local records, totals and filters">
 
-Command Palette entries, view titles and setting descriptions follow VS Code's display language. See the [Chinese walkthrough](README.md#功能演示).
+### Schedules and quota alerts
 
-### Model catalogs and upgrades
+Open Schedules and Quota alerts separately in the main navigation. Alerts, the global schedule switch and new tasks default to off. Alerts cover low quota, exhaustion and recovery; alerts do not send model requests.
 
-Models follow the selected account's server catalog, without waiting for a plugin update. Failed queries keep the selection and previous results; missing entries or quota do not establish lack of permission. The image studio uses models explicitly listed for images by the server.
+Schedules load the selected account's conversation-model directory automatically. Initialization or an ordinary operation in progress shows preparation; loading continues when ready. Refresh reports the count, an empty result or actual failure, and cancellation retains previous choices. Account, endpoint and usage stay isolated; models with unspecified usage require confirmation.
 
-Upgrades preserve accounts, image history, favorites, drafts and scheduled tasks without replacing selected models. If an existing scheduled task asks for confirmation of its use, edit it and confirm ordinary text use. See [model catalogs](docs/MODEL_CATALOG_REFACTOR.md).
+| Action | Result |
+| --- | --- |
+| Save without enabling | Store settings without executing |
+| View run times / View check times | Compute the next 5 times without saving or executing |
+| Enable both the global switch and task | Run on calendar, interval, five-field cron or full-quota recovery rules |
+| Run once now | Send one real request without enabling scheduled runs |
+
+Tasks send a fixed short input, `Hi`, and may consume quota. The host must remain running; occurrences delayed more than 5 minutes are skipped. Edit, pause, cancel and inspect results as needed. See [quota workflows](docs/QUOTA_WORKFLOWS.md).
+
+<img src="docs/images/unified-schedules-en.png" width="960" alt="Unified English Schedules page with a synthetic account and distinct save and preview actions">
+
+### Settings and help
+
+Select the global language, account-name/email hiding option and VS Code theme in Settings. Hiding identities is useful for screenshots or screen sharing and does not change accounts or login. Static Command Palette titles continue to follow VS Code's display language.
+
+Help links to guides and advanced troubleshooting. Technical fields, directory details and diagnostic logs remain expandable. Preview logs before exporting; they are not uploaded automatically. See [settings and commands](docs/COMMANDS.md) and [troubleshooting](docs/TROUBLESHOOTING.md).
+
+Screenshots show the actual VS Code interface with fictional accounts, example.test emails and synthetic usage. No real accounts or generation requests were used.
 
 ## FAQ
 
 | Question | Answer |
 | --- | --- |
-| Why is Saved disabled? | The verified current identity already has a usable local copy, so it does not need saving again. This does not guarantee server authorization. |
-| Why is a model missing or unclassified? | Choices use the selected account and endpoint catalog, preserving original IDs and server names. Absence does not prove lack of permission. Unknown conversation roles require explicit confirmation; image choices require explicit server image membership, and disabled entries cannot be sent. See [catalog evidence and migration](docs/MODEL_CATALOG_REFACTOR.md) (Chinese). |
-| Can quota percentages be converted into image counts? | No. They represent the selected model's server-reported remaining fraction; stale readings are marked. Request counts do not guarantee output counts either. |
-| Does selecting another image account switch the official login? | No. Independent selection affects the image task only; confirmation fixes the selected account and model. |
-| What if switching is unavailable or WSL cannot find my accounts? | Check both extensions' hosts and any pending recovery operation, then follow the recovery prompt. Storage is separate per host. See [troubleshooting](docs/TROUBLESHOOTING.md) (Chinese). |
-| Will generation resume automatically after reload? | No. Drafts and task cards return, but interrupted tasks retain their status. Resubmission requires your explicit action. |
-| Will text requests run if I leave scheduling off? | No. Alerts and scheduled requests are disabled by default and require manual enabling; manual tests also require an explicit action. |
+| Accounts missing in WSL or switching unavailable? | Check both extension hosts and follow recovery guidance for incomplete operations. |
+| The first model directory is preparing? | Wait for initialization and ordinary operations to finish, or cancel. Actual failures retain a code in expandable directory details. |
+| A model is absent or its usage is unspecified? | The directory belongs to the selected account and endpoint; absence does not prove lack of permission. Unspecified usage requires confirmation. |
+| Will images resume automatically after reload? | No. Drafts and task cards restore; interrupted tasks require explicit resubmission. |
+| Will saving or previewing a task execute it? | No. Automatic runs require both switches; Run once now explicitly sends a separate real request. |
 
-## Privacy and usage boundaries
+## Privacy, documentation and feedback
 
-Account credentials are stored in VS Code SecretStorage or restricted storage on the current host. Account exports use encrypted `.agwenc` files. Drafts, reference paths and task records stay on the current host; images go to your selected directory. Logs and account export bundles are never automatically uploaded.
+Credentials use VS Code SecretStorage or restricted host storage. Account exports are encrypted. Drafts, reference paths and task records remain on the current host; images save to the chosen folder. Generation sends the selected authorization, prompt and references to the corresponding Google service. Submit only content you have the right to use.
 
-Generation sends the selected account's authorization, prompt and selected references to the relevant Google service. Submit only content you are entitled to use. Switching writes local credentials for the official component and restarts it; follow recovery prompts if a transaction remains unfinished or identity verification fails. Server responses determine model availability, call permissions and quota semantics.
+[Getting started](docs/GETTING_STARTED.en.md) · [Documentation](docs/README.md) · [Changelog](CHANGELOG_EN.md) · [Project and service notices](docs/PROJECT_NOTICES.md)
 
-## Documentation and feedback
-
-The English quick start and this README cover the user workflow. Detailed technical guides linked below are currently in Chinese.
-
-| What you need | Documentation |
-| --- | --- |
-| Complete user workflow | [Quick start](docs/GETTING_STARTED.en.md) · [Documentation index](docs/README.md) |
-| Accounts, switching and migration | [Account management](docs/INDEPENDENT_ACCOUNTS.md) · [Switching and recovery](docs/ACCOUNT_SWITCHING.md) · [Encrypted migration](docs/ACCOUNT_MIGRATION.md) |
-| Quotas, history and scheduling | [Quota workflows](docs/QUOTA_WORKFLOWS.md) · [Server queries](docs/INDEPENDENT_ACCOUNT_QUOTA.md) |
-| Images and project actions | [Image generation](docs/IMAGE_GENERATION.md) · [Quota](docs/IMAGE_QUOTA.md) · [Continued editing and project actions](docs/IMAGE_RESULTS.md) |
-| Troubleshooting and support scope | [Troubleshooting](docs/TROUBLESHOOTING.md) · [Debug logs](docs/DEBUG_LOGS.md) · [Compatibility](docs/COMPATIBILITY.md) |
-| Versions and usage conditions | [Changelog](CHANGELOG_EN.md) · [Project and service notices](docs/PROJECT_NOTICES.md) |
-
-In [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues), include the extension version, operating system and host, reproduction steps and error codes. Follow [debug log guidance](docs/DEBUG_LOGS.md) to preview logs before exporting; omit credentials and private content. Report suspected vulnerabilities privately through the [security reporting process](SECURITY.md).
-
-## Contributing
-
-Documentation improvements, reproducible bug reports, feature suggestions and pull requests are welcome. Discuss larger changes in [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues) first, then follow the [contribution guide](CONTRIBUTING.md) (Chinese). Contribute only material you are entitled to provide and retain third-party licenses and provenance.
-
-Development uses Node.js 20+; CI uses Node.js 22. See the [contribution guide](CONTRIBUTING.md) for build and validation steps.
+Report version, OS, host, reproduction steps and error code in [Issues](https://github.com/XiaoXinCodes/antigravity-workbench/issues); do not include credentials or private content. Follow [Security](SECURITY.md) for private vulnerability reports. See [Contributing](CONTRIBUTING.md) for build and contribution steps.
 
 ## License
 
-Project-owned material in the current source uses the [MIT License](LICENSE), permitting use, modification, distribution and commercial use with the copyright and license notices retained. Published versions retain the license shipped in their own packages.
-
-Bundled third-party code keeps its own licenses; see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). See [project and service notices](docs/PROJECT_NOTICES.md) for Google service access, third-party assets and trademarks.
+Project-owned source uses the [MIT License](LICENSE), allowing use, modification, distribution and commercial use while retaining copyright and license notices. Third-party code retains its own licenses; see [third-party notices](THIRD_PARTY_NOTICES.txt). Published versions use the licenses shipped in their own packages.

@@ -1,4 +1,4 @@
-"""Remove only this release's merged records branch, with an atomic Git lease."""
+"""Remove only this release's merged workbench branch, with an atomic Git lease."""
 import importlib.util
 import json
 import os
@@ -11,7 +11,7 @@ publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
 api = publish.api
 run = publish.run
-BRANCH = 'feat/request-model-evidence'
+BRANCH = 'codex/unified-workbench-design'
 REF = 'refs/heads/' + BRANCH
 
 

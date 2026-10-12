@@ -43,7 +43,7 @@ exports.run = async () => {
   const config = vscode.workspace.getConfiguration('antigravityAccounts');
   assert.equal(config.get('language'), 'zh-CN', 'A clean host starts in Simplified Chinese');
   await vscode.commands.executeCommand('antigravityAccounts.openHelp');
-  const help = vscode.workspace.textDocuments.find(document => document.uri.scheme === 'antigravity-workbench-help');
+  const help = await vscode.workspace.openTextDocument(vscode.Uri.parse('antigravity-workbench-help:/GETTING_STARTED.md')); 
   assert.ok(help);
   const until = async condition => { for (let count = 0; count < 100; count++) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 20)); } assert.fail('Host locale event did not update the open view/document'); };
   await config.update('language', 'en', vscode.ConfigurationTarget.Global);

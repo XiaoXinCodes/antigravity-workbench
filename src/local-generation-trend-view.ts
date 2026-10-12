@@ -1,0 +1,25 @@
+/** Interactive inspection uses only filtered backend aggregates; missing usage stays unknown. */
+export const localGenerationTrendScript = `
+function renderTokenTrend(container,points){
+ if(typeof document.createElementNS!=='function')return;
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 700 220');svg.setAttribute('role','group');svg.setAttribute('aria-label',tr('observations.trend'));svg.classList.add('wb-token-trend');
+ const wrap=document.createElement('div');wrap.className='wb-trend-chart';const detail=document.createElement('div');detail.className='wb-trend-detail';detail.id='token-trend-detail';detail.setAttribute('role','status');detail.setAttribute('aria-live','polite');detail.hidden=true;wrap.append(svg,detail);
+ const add=(tag,attrs,text,parent=svg)=>{const el=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const[k,v]of Object.entries(attrs))el.setAttribute(k,String(v));if(text!==undefined)el.textContent=text;parent.append(el);return el};
+ const value=aggregate=>aggregate&&['complete','partial'].includes(aggregate.status)&&Number.isFinite(aggregate.sum)&&aggregate.sum>=0?aggregate.sum:null;
+ const precise=aggregate=>{const v=value(aggregate);return v===null?'—':new Intl.NumberFormat(language).format(v)+(aggregate.status==='partial'?' · '+tr('observations.knownSubtotal'):'')};
+ const known=points.flatMap(p=>[value(p.tokens.input),value(p.tokens.outputTotal)]).filter(v=>v!==null),max=Math.max(1,...known),width=620/Math.max(1,points.length),bar=Math.min(20,width*.28),shownEvery=Math.max(1,Math.ceil(points.length/7)),groups=[];let pinned=false;
+ for(let i=0;i<4;i++){const y=180-i*48;add('line',{x1:55,x2:680,y1:y,y2:y,class:'wb-trend-gridline'});add('text',{x:4,y:y+4},new Intl.NumberFormat(language,{notation:'compact',maximumFractionDigits:1}).format(max*i/3));}
+ const inspect=(point,group)=>{for(const item of groups){item.classList.toggle('is-active',item===group);item.setAttribute('aria-pressed',String(item===group))}container.dataset.selectedDay=point.day;detail.replaceChildren();const date=document.createElement('strong');date.textContent=point.day;detail.append(date);for(const key of ['input','outputTotal']){const row=document.createElement('span'),number=document.createElement('b');row.textContent=tr('observations.token.'+key)+': ';number.textContent=precise(point.tokens[key]);row.append(number);detail.append(row)}detail.hidden=false};
+ points.forEach((point,index)=>{const x=55+(index+.5)*width,group=add('g',{class:'wb-trend-day',tabindex:0,role:'button','aria-pressed':'false','aria-describedby':'token-trend-detail','aria-label':point.day+' · '+tr('observations.token.input')+': '+precise(point.tokens.input)+' · '+tr('observations.token.outputTotal')+': '+precise(point.tokens.outputTotal),'data-day':point.day});groups.push(group);
+ add('rect',{x:x-width/2,y:25,width,height:160,fill:'transparent',class:'wb-trend-hit'},undefined,group);
+ for(const[metric,offset,style]of [['input',-bar-1,'wb-trend-input'],['outputTotal',1,'wb-trend-output']]){const v=value(point.tokens[metric]),height=v===null?0:v/max*144;if(v===null){add('text',{x:x+offset+bar/2,y:176,'text-anchor':'middle',class:'wb-trend-unknown'},'—',group);continue;}add('rect',{x:x+offset,y:180-Math.max(2,height),width:bar,height:Math.max(2,height),rx:2,class:style},undefined,group);}
+ group.addEventListener('pointerenter',()=>inspect(point,group));group.addEventListener('focus',()=>inspect(point,group));group.addEventListener('pointerdown',event=>{if(event.pointerType==='touch'){pinned=true;inspect(point,group)}});group.addEventListener('click',()=>{pinned=true;group.focus();inspect(point,group)});
+ group.addEventListener('pointerleave',()=>{if(!pinned&&document.activeElement!==group)detail.hidden=true});group.addEventListener('blur',()=>{if(!pinned)detail.hidden=true});
+ group.addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();pinned=true;groups[event.key==='Home'?0:event.key==='End'?groups.length-1:Math.max(0,Math.min(groups.length-1,index+(event.key==='ArrowLeft'?-1:1)))]?.focus()}if(event.key==='Enter'||event.key===' '){event.preventDefault();pinned=true;inspect(point,group)}if(event.key==='Escape'){event.preventDefault();pinned=false;detail.hidden=true}});
+ if(index%shownEvery===0||index===points.length-1)add('text',{x,y:205,'text-anchor':'middle'},point.day.slice(5));
+ });
+ const legend=document.createElement('p');legend.className='wb-trend-legend';for(const[key,style]of [['input','wb-trend-input'],['outputTotal','wb-trend-output']]){const span=document.createElement('span'),dot=document.createElement('i');dot.className=style;span.append(dot,document.createTextNode(tr('observations.token.'+key)));legend.append(span);}
+ const hint=document.createElement('p');hint.className='wb-trend-hint';hint.textContent=tr('ui.trendInspect');container.append(legend,wrap,hint);
+ const selected=points.findIndex(point=>point.day===container.dataset.selectedDay);if(selected>=0)inspect(points[selected],groups[selected]);
+}
+`;

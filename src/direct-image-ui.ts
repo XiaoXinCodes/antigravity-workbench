@@ -1,3 +1,6 @@
+import { sharedAccountModelCatalog } from './account-model-catalog';
+import { createWorkbenchPanel } from './workbench-host';
+import { routeWorkbenchNavigation } from './workbench-navigation';
 import { catalogErrorCode, catalogFailureDetails } from './model-catalog-error';
 import { ModelCatalogDisplay, catalogDisplayKey } from './model-catalog-display';
 import { displayAccount, hideIdentityText, onIdentityPresentationChange, identityAlias, identityHidden } from './identity-presentation';
@@ -365,6 +368,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
     if (quotaSelection() === key && quota.getState().error && fingerprint) void history?.imageGap(id, fingerprint, model, endpoint).catch(() => undefined);
   };
   const handle = async (value: unknown, owner: vscode.WebviewPanel) => {
+    if (panel === owner && routeWorkbenchNavigation(value)) return;
     if (!value || typeof value !== 'object' || Array.isArray(value) || panel !== owner) return;
     const msg = value as Record<string, unknown>;
     if (Number.isSafeInteger(msg.actionRevision) && Number(msg.actionRevision) >= actionRevision) actionRevision = Number(msg.actionRevision);
@@ -645,13 +649,16 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
       if (panel === owner && completedQuotaSelection) await querySelectedQuota(completedQuotaSelection);
     }
   };
+  if (context.globalState) context.subscriptions.push(sharedAccountModelCatalog(context.globalState, context.secrets, context.subscriptions).onDidInvalidateAccount(id => {
+    if (panel && (selectedSavedId ?? draft.accountId) === id) void refresh();
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.images.open', async () => {
     if (panel) { panel.reveal(); return; }
     await initialize();
     const existing = panel as vscode.WebviewPanel | undefined;
     if (existing) { existing.reveal(); return; }
     const nonce = randomBytes(16).toString('base64');
-    panel = vscode.window.createWebviewPanel('antigravityDirectImage', tr("directImageUi.d5e1e00bbd"), vscode.ViewColumn.Active,
+    panel = createWorkbenchPanel(vscode, 'antigravityDirectImage', tr("directImageUi.d5e1e00bbd"), vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true });
     draftRevision = 0; draftEpoch = 0; actionRevision = 0;
     panel.webview.html = directImageHtml(nonce, panel.webview.cspSource, layout);

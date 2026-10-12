@@ -1,3 +1,8 @@
+import { readWhenDirectoryReady } from './model-directory-ready';
+import { catalogFailureDetails } from './model-catalog-error';
+import { sharedAccountModelCatalog } from './account-model-catalog';
+import { createWorkbenchPanel } from './workbench-host';
+import { routeWorkbenchNavigation } from './workbench-navigation';
 import { responseModelDetails } from './request-observation-view';
 import { ModelCatalogDisplay, catalogDisplayKey } from './model-catalog-display';
 import * as vscode from 'vscode';
@@ -25,6 +30,8 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
   let panel: vscode.WebviewPanel | undefined, disposed = false, sequence = 0, modelsAbort: AbortController | undefined, alertTail = Promise.resolve();
   const catalog = new Map<string, { accountId: string; fingerprint: string; endpoint: 'daily' | 'production'; models: string[]; unclassified: string[]; queriedAt: number }>();
   const displayCatalog = new ModelCatalogDisplay(context.globalState);
+  const sharedCatalog = context.globalState ? sharedAccountModelCatalog(context.globalState, context.secrets, context.subscriptions) : undefined;
+  let modelFlight: { owner: vscode.WebviewPanel; accountId: string; endpoint: 'daily' | 'production'; scope: string; requestId: unknown; abort: AbortController; revision: number } | undefined;
   let lastNotice = '';
   const post = (message: Record<string, unknown>) => {
     if (message.type === 'notice' && typeof message.text === 'string') lastNotice = message.text;
@@ -37,7 +44,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
       const state = await store.read(); if (owner !== panel || disposed) return;
       const rows = live.getAccounts();
       const label = (id: string) => { const a = rows.find(a => a.id === id); return a ? displayAccount(a) : identityAlias(id); };
-      await owner.webview.postMessage({ type: 'state', state: { enabled: state.enabled, hidden: identityHidden(), alerts: state.alerts, accounts: rows.filter(a => accounts.fingerprint(a.id)).map(a => ({ id: a.id, label: displayAccount(a) })),
+      await owner.webview.postMessage({ type: 'state', state: { enabled: state.enabled, directoryPreparing: live.getState().initializing === true || live.getState().identityChecking === true || live.getState().busy, hidden: identityHidden(), alerts: state.alerts, accounts: rows.filter(a => accounts.fingerprint(a.id)).map(a => ({ id: a.id, label: displayAccount(a), catalogRevision: catalogDisplayKey(accounts.fingerprint(a.id)!, 'daily', 'conversation', a) + ':' + (sharedCatalog?.revision(a.id) ?? 0) })),
         tasks: state.tasks.map(t => ({ ...t, fingerprint: undefined, accountLabel: label(t.accountId), nextLabel: format(t.nextDue, t.schedule.timezone), triggerLabel: tr(`advanced.${t.schedule.mode ?? 'calendar'}`), recoveryLabel: t.recovery ? tr('advanced.baseline', { p0: format(t.recovery.observedAt, t.schedule.timezone), p1: t.recovery.fraction === null ? tr('automation.unknownUsage') : quotaPercent(t.recovery.fraction) }) + (t.recovery.valid === false ? ' · ' + tr('advanced.baselineInvalid') : '') : '', running: state.instances.some(i => i.taskId === t.id && ['sent', 'preparing'].includes(i.phase)) })),
         instances: state.instances.slice(-100).reverse().map(i => ({ id: i.id, details: responseModelDetails(i.modelId, i.responseModel ? [i.responseModel] : []), label: `${label(i.accountId)} · ${i.modelId} · ${format(i.due)} · ${tr(i.manual ? 'automation.manual' : 'automation.scheduled')} · ${tr(`automation.phase.${i.phase}`)}${i.code && i.phase !== 'succeeded' ? ` (${['WAKE_QUOTA_WAITING','WAKE_QUOTA_UNAVAILABLE','WAKE_QUOTA_NOT_FULL','WAKE_QUOTA_STALE'].includes(i.code) ? tr(`advanced.${i.code as 'WAKE_QUOTA_WAITING'}`) : i.code})` : ''}\n${tr('automation.usage', { p0: i.outputTokens ?? tr('automation.unknownUsage'), p1: i.totalTokens ?? tr('automation.unknownUsage') })}` })) } });
     } catch (e) { if (owner === panel) await post({ type: 'notice', text: tr('automation.failed', { p0: safeCode(e) }) }); }
@@ -52,29 +59,52 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
   const consent = (): Promise<boolean> => consentFlight ??= requestConsent().finally(() => { consentFlight = undefined; });
   const handle = async (raw: unknown, owner: vscode.WebviewPanel) => {
     if (disposed || panel !== owner || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+    if (routeWorkbenchNavigation(raw)) return;
     const m = raw as Record<string, unknown>, type = m.type;
-    if (typeof type !== 'string' || !['ready', 'models', 'selectModel', 'confirmModelUse', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy'].includes(type)) return;
+    if (typeof type !== 'string' || !['ready', 'models', 'cancelModels', 'selectModel', 'confirmModelUse', 'save', 'preview', 'enable', 'pause', 'resume', 'test', 'cancel', 'remove', 'alerts', 'privacy'].includes(type)) return;
     if (m.requestId !== undefined && (typeof m.requestId !== 'string' || !/^\d{1,15}$/.test(m.requestId))) return;
     let modelRequest: { abort: AbortController; revision: number } | undefined;
     try {
       if (type === 'ready') await post({ type: 'language', language: locale() });
       if (type === 'models') {
-        if (typeof m.accountId !== 'string' || !['daily', 'production'].includes(String(m.endpoint))) throw Error('WAKE_ACCOUNT_CHANGED');
+        if (typeof m.accountId !== 'string' || !['daily', 'production'].includes(String(m.endpoint)) || m.force !== undefined && typeof m.force !== 'boolean') throw Error('WAKE_ACCOUNT_CHANGED');
         const id = m.accountId, endpoint = m.endpoint as 'daily' | 'production', fingerprint = accounts.fingerprint(id); if (!fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');
+        const displayKey = catalogDisplayKey(fingerprint, endpoint, 'conversation', live.getAccounts().find(a => a.id === id));
+        if (modelFlight?.owner === owner && modelFlight.scope === displayKey && !modelFlight.abort.signal.aborted) return;
         modelsAbort?.abort(); const abort = new AbortController(); modelsAbort = abort; const revision = ++sequence;
-        modelRequest = { abort, revision };
+        modelRequest = { abort, revision }; modelFlight = { owner, accountId: id, endpoint, scope: displayKey, requestId: m.requestId, abort, revision };
+        const current = () => panel === owner && !disposed && !abort.signal.aborted && sequence === revision && accounts.fingerprint(id) === fingerprint && catalogDisplayKey(fingerprint, endpoint, 'conversation', live.getAccounts().find(a => a.id === id)) === displayKey;
+        const status = (phase: string, count = 0, cacheHit = false, failure?: ReturnType<typeof catalogFailureDetails> & { code: string }) => post({ type: 'models.status', requestId: m.requestId, accountId: id, endpoint, phase, count, cacheHit, ...(failure ? { failure } : {}) });
         for (const [key, entry] of catalog) if (entry.accountId === id && entry.endpoint === endpoint) catalog.delete(key);
-        const displayKey = catalogDisplayKey(fingerprint, endpoint, 'conversation', live.getAccounts().find(a => a.id === id)), previous = displayCatalog.get(displayKey);
-        if (previous) await post({ type: 'models', accountId: id, endpoint, catalogKey: '', ...previous, stale: true });
-        void post({ type: 'notice', text: tr('automation.loading') });
-        const models = await accounts.models(id, endpoint, abort.signal);
-        if (abort.signal.aborted || revision !== sequence || panel !== owner || accounts.fingerprint(id) !== fingerprint) return;
-        const queriedAt = new Date(now()).toISOString();
-        await displayCatalog.save(displayKey, { models, queriedAt, source: 'fetchAvailableModels', ...(previous?.selectedId ? { selectedId: previous.selectedId } : {}) }).catch(() => undefined);
-        if (abort.signal.aborted || revision !== sequence || panel !== owner || accounts.fingerprint(id) !== fingerprint) return;
-        const key = randomUUID(); catalog.set(key, { accountId: id, fingerprint, endpoint, models: models.map(x => x.id), unclassified: models.filter(x => x.classification === 'unclassified').map(x => x.id), queriedAt: now() });
-        if (catalog.size > 50) catalog.delete(catalog.keys().next().value!);
-        await post({ type: 'models', accountId: id, endpoint, catalogKey: key, models, confirmedIds: displayCatalog.get(displayKey)?.confirmedIds ?? [], queriedAt, source: 'fetchAvailableModels' }); await post({ type: 'notice', text: models.length ? models.every(model => model.classification === 'unclassified') ? tr('automation.modelTypesUnspecified') : '' : tr('automation.noChatModels') });
+        const previous = displayCatalog.get(displayKey);
+        if (previous) await post({ type: 'models', requestId: m.requestId, accountId: id, endpoint, catalogKey: '', ...previous, stale: true });
+        await status('loading', previous?.models.length ?? 0);
+        await post({ type: 'notice', text: '' });
+        try {
+          const directory = await readWhenDirectoryReady(async () => {
+            if (!current()) throw Error('WAKE_ACCOUNT_CHANGED');
+            return accounts.directory ? accounts.directory(id, endpoint, abort.signal, m.force === true) : { models: await accounts.models(id, endpoint, abort.signal, m.force === true), queriedAt: new Date(now()).toISOString(), cacheHit: false };
+          }, () => live.getState().initializing === true || live.getState().identityChecking === true || live.getState().busy, abort.signal, phase => { if (current()) void status(phase, previous?.models.length ?? 0); });
+          if (!current()) return;
+          const { models, queriedAt, cacheHit } = directory;
+          await displayCatalog.save(displayKey, { models, queriedAt, source: 'fetchAvailableModels', ...(previous?.selectedId ? { selectedId: previous.selectedId } : {}) }).catch(() => undefined);
+          if (!current()) return;
+          const key = randomUUID(); catalog.set(key, { accountId: id, fingerprint, endpoint, models: models.map(x => x.id), unclassified: models.filter(x => x.classification === 'unclassified').map(x => x.id), queriedAt: Date.parse(queriedAt) });
+          if (catalog.size > 50) catalog.delete(catalog.keys().next().value!);
+          await post({ type: 'models', requestId: m.requestId, accountId: id, endpoint, catalogKey: key, models, confirmedIds: displayCatalog.get(displayKey)?.confirmedIds ?? [], queriedAt, source: 'fetchAvailableModels', cacheHit });
+          await status(models.length ? 'ready' : 'empty', models.length, cacheHit);
+          if (models.length && models.every(model => model.classification === 'unclassified')) await post({ type: 'notice', text: tr('automation.modelTypesUnspecified') });
+        } catch (error) {
+          if (panel === owner && sequence === revision && (abort.signal.aborted || current())) await status(abort.signal.aborted ? 'cancelled' : 'failed', previous?.models.length ?? 0, false, abort.signal.aborted ? undefined : { code: safeCode(error), ...catalogFailureDetails(error) });
+          if (!abort.signal.aborted && current()) { const code = safeCode(error); await post({ type: 'notice', text: code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) }); }
+        } finally { if (modelFlight?.revision === revision) modelFlight = undefined; }
+      } else if (type === 'cancelModels') {
+        const flight = modelFlight;
+        if (flight?.owner !== owner || m.modelRequestId !== flight.requestId) return;
+        flight.abort.abort(); sequence++; modelFlight = undefined;
+        const previous = displayCatalog.get(flight.scope);
+        await post({ type: 'models.status', requestId: flight.requestId, accountId: flight.accountId, endpoint: flight.endpoint, phase: 'cancelled', count: previous?.models.length ?? 0 });
+        await post({ type: 'complete', requestType: 'models', requestId: flight.requestId });
       } else if (type === 'save' || type === 'confirmModelUse' || type === 'selectModel') {
         const entry = typeof m.catalogKey === 'string' ? catalog.get(m.catalogKey) : undefined;
         if (!entry || entry.accountId !== m.accountId || entry.endpoint !== m.endpoint || entry.fingerprint !== accounts.fingerprint(entry.accountId) || now() - entry.queriedAt >= 300_000 || typeof m.modelId !== 'string' || !entry.models.includes(m.modelId)) throw Error('WAKE_MODEL_SELECTION_STALE');
@@ -93,7 +123,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, ...(m.confirmedModelUse === true ? { confirmedModelUse: true } : {}), endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 }, existing?.revision);
         const displayKey = catalogDisplayKey(entry.fingerprint, entry.endpoint, 'conversation', live.getAccounts().find(a => a.id === entry.accountId)), previous = displayCatalog.get(displayKey);
         if (previous) await displayCatalog.select(displayKey, m.modelId).catch(() => undefined);
-        await post({ type: 'notice', text: tr('automation.paused') });
+        await post({ type: 'notice', text: tr('automation.saved') });
       } else if (type === 'preview') { await post({ type: 'preview', times: wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5), timezone: (m.schedule as { timezone: string }).timezone, recovery: (m.schedule as { mode?: string }).mode === 'quota-recovery' }); }
       else if (type === 'enable') { if (typeof m.enabled !== 'boolean') return; if (!m.enabled || await consent()) { if (panel === owner && !disposed) await engine.enable(m.enabled); } }
       else if (['pause', 'resume', 'test', 'cancel', 'remove'].includes(type)) {
@@ -120,7 +150,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         await post({ type: 'notice', text: code === 'WAKE_MODEL_USAGE_REQUIRED' ? tr('catalog.usageRequired') : code === 'WAKE_MODELS_UNAVAILABLE' ? tr('automation.noChatModels') : tr('automation.failed', { p0: code }) });
       }
     }
-    finally { if (panel === owner) { await emit(); await post({ type: 'complete', requestType: type, requestId: m.requestId }); } }
+    finally { if (panel === owner && (type !== 'models' || modelRequest?.revision === sequence)) { await emit(); await post({ type: 'complete', requestType: type, requestId: m.requestId }); } }
   };
   const observe = (extra: AlertSample[] = []) => {
     alertTail = alertTail.then(async () => {
@@ -140,11 +170,17 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
     }).catch(() => undefined);
     return alertTail;
   };
-  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.automation.open', () => {
-    if (panel) { panel.reveal(); return; }
-    panel = vscode.window.createWebviewPanel('antigravityAutomation', tr('automation.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
-    const owner = panel; owner.webview.html = automationHtml(owner.webview.cspSource);
-    context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; lastNotice = ''; modelsAbort?.abort(); } }));
+  if (sharedCatalog) context.subscriptions.push(sharedCatalog.onDidInvalidateAccount(id => {
+    for (const [key, entry] of catalog) if (entry.accountId === id) catalog.delete(key);
+    if (modelFlight?.accountId === id) { modelsAbort?.abort(); sequence++; modelFlight = undefined; }
+    void emit();
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.automation.open', (section?: unknown) => {
+    const page = section === 'alerts' ? 'alerts' : 'tasks';
+    if (panel) { panel.reveal(); void panel.webview.postMessage({ type: 'workbench.section', section: page }); return; }
+    panel = createWorkbenchPanel(vscode, 'antigravityAutomation', tr('automation.title'), vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
+    const owner = panel; owner.webview.html = automationHtml(owner.webview.cspSource, page);
+    context.subscriptions.push(owner.webview.onDidReceiveMessage(m => handle(m, owner)), owner.onDidDispose(() => { if (panel === owner) { panel = undefined; lastNotice = ''; modelsAbort?.abort(); sequence++; modelFlight = undefined; } }));
   }), onIdentityPresentationChange(() => { void emit(); }), onLanguageChange(() => { if (panel) { panel.title = tr('automation.title'); void post({ type: 'language', language: locale() }); if (lastNotice) void post({ type: 'notice', text: localizeMessage(lastNotice) }); void emit(); } }));
   let polling = false;
   const timer = setInterval(() => {

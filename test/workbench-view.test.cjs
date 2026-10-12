@@ -60,9 +60,9 @@ test('ordinary workbench omits technical failure history while retaining user re
  const html=renderWorkbench(state({lastFailure,pending:true,recoveryPhase:'installed'}),'nonce');
  assert.doesNotMatch(html,/上次账号操作失败|OFFICIAL_COMPONENT_RECONNECT_FAILED|synthetic-secret/);assert.match(html,/data-command="live.verify"/);
 });
-test('empty workbench has visible login and image actions without warning wall', () => {
+test('empty workbench has visible account actions and one product navigation without warning wall', () => {
  const html = renderWorkbench(state(), 'nonce');
- for (const command of ['live.login', 'live.capture', 'images.open']) assert.match(html, new RegExp(`data-command="${command}"`));
+ for (const command of ['live.login', 'live.capture']) assert.match(html, new RegExp(`data-command="${command}"`));
  assert.match(html, /添加你的第一个账号/);
  assert.doesNotMatch(html, /非官方|脱敏|实验性|LOCAL_TRUSTED_DESKTOP_REQUIRED/);
  assert.match(html, /default-src 'none'/);
@@ -86,7 +86,7 @@ test('environment blockers have helpful text and do not hide independent tools',
  const html = renderWorkbench(state({ environment: { available: false, message: '请在本机安装 Antigravity 扩展' } }), 'nonce');
  assert.match(html, /data-command="live.login" disabled/);
  assert.match(html, /请在本机安装 Antigravity 扩展/);
- assert.match(html, /data-command="images.open"/);
+ assert.match(html, /class="wb-nav-button[^"]*" data-wb-nav="images"/);
 });
 function fixture(extra = {}, displayStorage) {
  let message, closed;
@@ -158,7 +158,7 @@ test('missing official extension disables account operations while retaining ind
  assert.match(html, /data-command="live.login" disabled/);
  assert.match(html, new RegExp(`data-command="live.switch" data-id="${account.id}" disabled`));
  assert.match(html, new RegExp(`data-command="live.remove" data-id="${account.id}" class`));
- assert.match(html, /data-command="openSettings"/);
+ assert.match(html, /class="wb-nav-button[^"]*" data-wb-nav="settings"/);
  assert.match(html, /data-command="recheck"/);
  assert.match(html, /请先安装 Google Antigravity/);
 });
@@ -166,7 +166,7 @@ test('pending account recovery blocks new mutations and image tasks but leaves v
  const html = renderWorkbench(state({ pending: true, recoveryPhase: 'installed', accounts: [account], status: '请确认当前登录' }), 'nonce');
  assert.match(html, /data-command="live.login" disabled/);
  assert.match(html, new RegExp(`data-command="live.switch" data-id="${account.id}" disabled`));
- assert.match(html, /data-command="images.open" disabled/);
+ assert.doesNotMatch(html, /data-command="images.open"/);
  assert.match(html, /data-command="live.verify" class/);
  assert.match(html, /data-command="live.restore" class/);
 });
@@ -188,7 +188,7 @@ test('an in-flight command acknowledges a click from a reloaded webview without 
 test('release workbench contains accounts, images and standard settings, no host tool foldout', () => {
  const html=renderWorkbench(state({official:{available:true,message:'synthetic-backend-location'}}),'nonce');
  assert.doesNotMatch(html,/运行环境与文件位置|synthetic-backend-location|id="host-details"|data-command="openHostSettings"|data-command="locations\./);
- assert.match(html,/data-command="openSettings"/);assert.match(html,/<span class="version">版本未知<\/span>/);
+ assert.match(html,/class="wb-nav-button[^"]*" data-wb-nav="settings"/);assert.match(html,/<span class="version">版本未知<\/span>/);
  const blocked=renderWorkbench(state({official:{available:false,message:'请安装官方扩展'}}),'nonce');assert.match(blocked,/请安装官方扩展/);assert.match(blocked,/data-command="recheck"/);
 });
 test('host and account text wrap safely and never become executable markup', () => {
@@ -202,7 +202,7 @@ test('host and account text wrap safely and never become executable markup', () 
  assert.match(html, /@media\(max-width:190px\)/);
  assert.match(html, /@media\(max-width:270px\)/);
  assert.match(html, /@media\(max-width:190px\)/);
- assert.doesNotMatch(html, /overflow(?:-y)?:hidden|height:100vh|min-width:120px/);
+ assert.doesNotMatch(html, /body\{[^}]*(?:overflow(?:-y)?:hidden|height:100vh|min-width:120px)/);
 });
 test('legacy and foreign-host cards explain unavailable switching while retaining removal', () => {
  for (const extra of [{ hostCurrent: false }, { hostCurrent: false, hostId: 'other-host-fixture' }]) {
@@ -284,14 +284,14 @@ test('every saved account has its own quota action and renders values only below
 test('quota missing data, loading, failure and mismatched identity remain explicit inline',()=>{
  for(const [phase,message]of [['loading',''],['error','后台超时，请重试'],['mismatch','此账号不是后台返回邮箱，请先切换']]){
   const html=renderWorkbench(state({accounts:[{...account,quota:{phase,message,snapshot:{source:'server',email:account.expectedEmail,observedAt:'2026-10-01T00:00:00.000Z',buckets:[]}}}]}),'nonce');
-  assert.match(html,/旧数据/);assert.match(html,/服务端未返回可用额度/);assert.doesNotMatch(html.slice(html.indexOf('<body>')),/100%/);
+  assert.match(html,/旧数据/);assert.match(html,/服务端未返回可用额度/);assert.doesNotMatch(html.slice(html.search(/<body[^>]*>/)),/100%/);
   if(phase==='loading')assert.match(html,/取消查询/);else assert.ok(html.includes(message));
  }
 });
 test('OAuth add has one exact visible label in empty, populated, native, WSL and capture-only cases',()=>{
  for(const accounts of [[],[account]])for(const storageMode of ['native-keyring','wsl-file'])for(const captureOnly of [false,true]){
   const html=renderWorkbench(state({accounts,storageMode,...(captureOnly?{loginMutationAvailable:false}: {})}),'nonce');
-  const section=html.slice(html.indexOf('<body>'));
+  const section=html.slice(html.search(/<body[^>]*>/));
   assert.match(section,/data-command="live.login"[^>]*>添加账号<\/button>/);assert.match(section,/title="添加账号（OAuth 登录）"/);
   if(captureOnly){assert.match(section,/data-command="live.login" disabled/);assert.match(section,/配置并解锁系统密钥库/);assert.match(section,/data-command="recheck"/)}
  }
@@ -308,7 +308,7 @@ test('an unsaved current identity gets a save hint, never a duplicate quota acti
  assert.match(html, /&lt;unknown&gt;@example.test/); assert.match(html, /尚未保存在这里/);
  assert.equal((html.match(/data-command="live.quota"/g) || []).length, 1);
  assert.equal((html.match(/<article class="account"[^>]*>/g) || []).length, 1);
- assert.doesNotMatch(html.slice(html.indexOf('<body>')), /unrelated model|100%|<unknown>|<script>/);
+ assert.doesNotMatch(html.slice(html.search(/<body[^>]*>/)), /unrelated model|100%|<unknown>|<script>/);
  const saved = renderWorkbench(state({ accounts: [account], currentQuota: { phase: 'ready', snapshot: { source: 'server', email: account.expectedEmail, observedAt: 'bad', buckets: [] } } }), 'nonce');
  assert.doesNotMatch(saved, /尚未保存在这里/);
 });
@@ -320,7 +320,7 @@ test('quota model and message strings are escaped and invalid timestamps stay un
 
 test('server quota units and disabled buckets are rendered without inventing percentages',()=>{
  const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:account.expectedEmail,observedAt:'2026-10-01T00:00:00.000Z',buckets:[{label:'Credits',remaining:null,remainingAmount:'200',resetAt:null},{label:'Unavailable',remaining:1,disabled:true,resetAt:null}]}}}]}),'nonce');
- assert.match(html,/服务端查询/);assert.match(html,/<b>200<\/b>/);assert.match(html,/不可用/);assert.doesNotMatch(html.slice(html.indexOf('<body>')),/200%|100%|<progress/);
+ assert.match(html,/服务端查询/);assert.match(html,/<b>200<\/b>/);assert.match(html,/不可用/);assert.doesNotMatch(html.slice(html.search(/<body[^>]*>/)),/200%|100%|<progress/);
 });
 
 test('cancel quota remains reachable while the query command is running',async()=>{
@@ -353,10 +353,13 @@ test('recovery renders and routes only actions supported by the exact journal ph
 });
 test('homepage has coherent sections, account migration, and no snapshot or duplicate quota tools', async () => {
  const html = renderWorkbench(state({ accounts: [account], snapshots: [{ label: 'Legacy snapshot label', identity: 'legacy@example.test' }] }), 'nonce');
- for (const id of ['accounts-heading', 'images-heading']) assert.match(html, new RegExp(`aria-labelledby="${id}"`));
+ for (const id of ['accounts-heading']) assert.match(html, new RegExp(`aria-labelledby="${id}"`));
  assert.match(html, /账号导出与导入/); assert.match(html, /导出账号（加密）/); assert.match(html, /导入账号（加密）/); assert.doesNotMatch(html, /将已保存账号加密为|导入需要导出时设置的密码/);
  for (const text of ['更多工具', '导入快照', '读取快照', '查询当前登录配额', 'Legacy snapshot label', '检查操作锁']) assert.ok(!html.includes(text), text);
- for (const command of ['live.login', 'live.capture', 'live.quota', 'images.open', 'live.import', 'live.export']) assert.equal((html.match(new RegExp(`data-command="${command}"`, 'g')) || []).length, 1, command);
+ for (const command of ['live.login', 'live.capture', 'live.quota', 'live.import', 'live.export']) assert.equal((html.match(new RegExp(`data-command="${command}"`, 'g')) || []).length, 1, command);
+  assert.doesNotMatch(html,/id="work-sections"|id="images-heading"|data-command="(?:images.open|observations.open|automation.open|privacy.toggle|openSettings|openHelp)"/);
+  assert.match(html,/<nav class="wb-tabs"[^>]*>[\s\S]*data-wb-nav="accounts" aria-current="page"[\s\S]*data-wb-nav="history" aria-current="false"/);
+
  calls.length = 0; const f = fixture();
  for (const command of ['refresh', 'importSnapshot', 'reloadSnapshots', 'openBridgeGuide', 'live.unlock']) await f.message({ command });
  assert.deepEqual(calls, []); f.provider.dispose();
@@ -400,7 +403,7 @@ test('independent saved-account quota remains enabled with official extension mi
 });
 
 test('current badge comes only from verified active identity on the same host',()=>{
- const saved={...account,hostCurrent:true};const body=extra=>renderWorkbench(state({accounts:[saved],...extra}),'nonce').split('<body>')[1];
+ const saved={...account,hostCurrent:true};const body=extra=>renderWorkbench(state({accounts:[saved],...extra}),'nonce').split(/<body[^>]*>/)[1];
  assert.doesNotMatch(body({}),/current-badge/);assert.match(body({}),/当前登录待核验/);
  const verified=body({activeEmail:account.expectedEmail.toUpperCase()});assert.match(verified,/<article class="account active"[^>]*>/);assert.match(verified,/<span class="current-badge">（当前登录）<\/span>/);assert.match(verified,/data-command="live.switch"[^>]*disabled/);
  for(const extra of [{activeEmail:'other@example.test'},{activeEmail:account.expectedEmail,pending:true},{activeEmail:account.expectedEmail,accounts:[{...saved,hostCurrent:false}]},{activeEmail:account.expectedEmail,accounts:[{...account}]}])assert.doesNotMatch(body(extra),/current-badge/);
@@ -417,34 +420,34 @@ test('compact card has exactly one direct switch, refresh and removal with accou
  assert.ok(card.indexOf('account-quota')<card.indexOf('account-actions'));assert.match(html,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 });
 test('quota bars show low, medium and healthy states with explicit values and reset times',()=>{
- const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:account.expectedEmail,observedAt:'2026-10-01T03:00:00Z',buckets:[{label:'Low',remaining:0.08,resetAt:'2026-10-01T05:00:00Z'},{label:'Medium',remaining:0.3,resetAt:null},{label:'Healthy',remaining:0.88,resetAt:null}]}}}]}),'nonce').split('<body>')[1];
+ const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:account.expectedEmail,observedAt:'2026-10-01T03:00:00Z',buckets:[{label:'Low',remaining:0.08,resetAt:'2026-10-01T05:00:00Z'},{label:'Medium',remaining:0.3,resetAt:null},{label:'Healthy',remaining:0.88,resetAt:null}]}}}]}),'nonce').split(/<body[^>]*>/)[1];
  for(const tone of ['low','medium','healthy'])assert.match(html,new RegExp(`class="quota-row ${tone}"`));
  assert.match(html,/>8\.00%<\/b>/);assert.match(html,/aria-label="Low 8\.00%"/);assert.match(html,/重置 /);assert.match(html,/最后同步时间/);assert.match(html,/服务端查询/);
 });
 test('cross-account quota snapshots cannot leak into another account card',()=>{
- const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:'other@example.test',observedAt:'2026-10-01',buckets:[{label:'Wrong account model',remaining:0.77,resetAt:null}]}}}]}),'nonce').split('<body>')[1];
+ const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:'other@example.test',observedAt:'2026-10-01',buckets:[{label:'Wrong account model',remaining:0.77,resetAt:null}]}}}]}),'nonce').split(/<body[^>]*>/)[1];
  assert.doesNotMatch(html,/Wrong account model|77%|<progress/);assert.match(html,/结果邮箱不匹配/);assert.match(html,/data-command="live.quota"/);
 });
-test('backup and import stay directly available under a clear title without long explanation',()=>{
- const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}]}),'nonce').split('<body>')[1];
- const tools=html.slice(html.indexOf('class="account-tools"'),html.indexOf('class="current-status'));
+test('backup and import remain available in the labeled migration disclosure without long explanation',()=>{
+ const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}]}),'nonce').split(/<body[^>]*>/)[1];
+ const tools=html.match(/<div id="account-tools"[\s\S]*?<\/div>/)[0];assert.match(html,/id="account-transfer-tools" data-persist/);
  for(const command of ['live.export','live.import'])assert.match(tools,new RegExp(`data-command="${command}"`));
  assert.match(tools,/>导出账号<\/button>/);assert.match(tools,/>导入账号<\/button>/);assert.match(html,/账号导出与导入/);assert.doesNotMatch(html,/<details class="account-transfer"/);
 });
 test('verified current identity outside saved accounts is visible without marking any card active',()=>{
- const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}],activeEmail:'unsaved@example.test'}),'nonce').split('<body>')[1];
+ const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}],activeEmail:'unsaved@example.test'}),'nonce').split(/<body[^>]*>/)[1];
  assert.match(html,/当前登录：unsaved@example.test（未保存）/);assert.doesNotMatch(html,/current-badge/);assert.match(html,/data-command="live.capture"/);
 });
 test('refresh and identity verification stages use exactly one inline loading line',()=>{
  for(const message of ['正在安全刷新此账号登录…','正在核验并保存刷新结果…','正在查询此账号配额…']){
-  const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'loading',message}}]}),'nonce').split('<body>')[1];
+  const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'loading',message}}]}),'nonce').split(/<body[^>]*>/)[1];
   assert.equal((html.match(/class="quota-message loading-label"/g)||[]).length,1);assert.equal(html.split(message).length-1,1);assert.doesNotMatch(html,/正在查询此账号…/);assert.match(html,/data-command="live.quotaCancel"/);
  }
 });
 test('current identity verification time is optional and never borrowed from quota sync',()=>{
  const base={accounts:[{...account,hostCurrent:true}],activeEmail:account.expectedEmail};
- assert.doesNotMatch(renderWorkbench(state(base),'nonce').split('<body>')[1],/最近核验/);
- assert.match(renderWorkbench(state({...base,activeVerifiedAt:'2026-10-01T03:00:00Z'}),'nonce').split('<body>')[1],/title="最近核验：/);
+ assert.doesNotMatch(renderWorkbench(state(base),'nonce').split(/<body[^>]*>/)[1],/最近核验/);
+ assert.match(renderWorkbench(state({...base,activeVerifiedAt:'2026-10-01T03:00:00Z'}),'nonce').split(/<body[^>]*>/)[1],/title="最近核验：/);
 });
 
 test('ordinary workbench never renders technical paths or path tools',()=>{
@@ -504,7 +507,7 @@ test('only an explicitly requested diagnostic renders the standalone result surf
 
 test('current suffix follows the verified account name once, with safe duplicate matching',()=>{
  const A={...account,hostCurrent:true,label:'同名'},B={...A,id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',expectedEmail:'b@example.test'};
- const body=extra=>renderWorkbench(state({accounts:[A,B],activeEmail:A.expectedEmail,...extra}),'nonce').split('<body>')[1];
+ const body=extra=>renderWorkbench(state({accounts:[A,B],activeEmail:A.expectedEmail,...extra}),'nonce').split(/<body[^>]*>/)[1];
  assert.equal((body().match(/（当前登录）/g)||[]).length,1);assert.match(body(),/同名<span class="current-badge">（当前登录）<\/span>/);
  for(const extra of [{activeEmail:undefined},{pending:true},{accounts:[A,{...B,expectedEmail:A.expectedEmail}]},{accounts:[A,{...B,id:A.id}]},{accounts:[{...A,migrationState:'pending'},B]}])assert.doesNotMatch(body(extra),/current-badge/);
  const html=body({activeEmail:B.expectedEmail});const cards=html.match(/<article class="account(?: active)?"[^>]*>[\s\S]*?<\/article>/g);assert.doesNotMatch(cards[0],/current-badge/);assert.match(cards[1],/（当前登录）/);

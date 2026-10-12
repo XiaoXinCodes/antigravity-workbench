@@ -1,3 +1,5 @@
+import { registerWorkbenchHost } from './workbench-host';
+import { registerWorkbenchSupport } from './workbench-support-ui';
 import { registerObservationsUi } from './request-observation-ui';
 import { registerQuotaHistory } from './quota-history-ui';
 import { registerAutomationUi, registerIdentityPrivacy } from './automation-ui';
@@ -24,6 +26,7 @@ let flushImageSession: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionDiagnosticsApi> {
   registerI18n(context);
+  registerWorkbenchHost(context);
   registerObservationsUi(context);
   registerIdentityPrivacy(context);
   const helpUri = registerLocalizedHelp(context);
@@ -67,7 +70,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const state = live.getState();
     return { version: context.extension.packageJSON.version, accounts: live.getAccounts(), snapshots: tree.accounts, warning: null, ...state, locations: locations.getState(), debug: debug.getState(), quotaPresentation: quotaTools.getState() }; // Legacy snapshot diagnostics never block the account workbench.
   }, () => { void live.ensureIdentity?.(); }, context.globalState);
-  refreshDebug = () => dashboard.refresh();
+  const support = registerWorkbenchSupport(context, { helpUri, debug: debug.getState });
+  refreshDebug = () => { dashboard.refresh(); support.refresh(); };
+  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.workbench.open', () => dashboard.openEditor()));
   context.subscriptions.push(dashboard, vscode.window.registerWebviewViewProvider('antigravityAccounts.accounts', dashboard));
   const stateDirectory = path.join(context.globalStorageUri.fsPath, 'metadata');
   const directory = path.join(context.globalStorageUri.fsPath, 'snapshots');
@@ -148,11 +153,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       { label: tr("extension.3720942223"), command: 'workbench.action.openSettings', argument: '@id:remote.extensionKind' },
     ], { title: tr("extension.cd4c2be251"), placeHolder: tr("extension.26afa871dd") });
     if (choice) await vscode.commands.executeCommand(choice.command, ...(choice.argument ? [choice.argument] : []));
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.openSettings', async () => { await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:xiaoxincodes.antigravity-account-manager'); }));
-  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.openHelp', async () => {
-    const document = await vscode.workspace.openTextDocument(helpUri);
-    await vscode.window.showTextDocument(document, { preview: true });
   }));
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.showCapabilities', async () => {
     await vscode.window.showInformationMessage(tr("extension.8b4fb011e0", { p0: localizeMessage(SWITCH_BLOCKED) }));

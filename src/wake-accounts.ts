@@ -7,7 +7,7 @@ import { LiveLocks } from './live-lock';
 import { SavedImageAccounts } from './saved-image-account';
 import { savedAccountStore } from './saved-account-store';
 import { nativeHostStatus } from './native-host';
-import { readAccountModelCatalog } from './account-model-catalog';
+import { readAccountModelCatalog, sharedAccountModelCatalog } from './account-model-catalog';
 import { wakeCatalogPayload, wakeModelsFromCatalog, type WakeModelChoice } from './wake-model-catalog';
 export { wakeModelsFromCatalog } from './wake-model-catalog';
 import { resolveEndpointImageProject } from './direct-image-project-transport';
@@ -17,9 +17,9 @@ import type { CloudCodeEndpoint } from './cloudcode-service';
 import type { WakeExecution } from './wake-engine';
 import { sendWake } from './wake-transport';
 import { passiveCurrentEmail } from './passive-current-identity';
-export interface WakeAccounts extends WakeExecution { models(accountId: string, endpoint: CloudCodeEndpoint, signal: AbortSignal): Promise<WakeModelChoice[]> }
+export interface WakeAccounts extends WakeExecution { models(accountId: string, endpoint: CloudCodeEndpoint, signal: AbortSignal, force?: boolean): Promise<WakeModelChoice[]>; directory?(accountId: string, endpoint: CloudCodeEndpoint, signal: AbortSignal, force?: boolean): Promise<{models: WakeModelChoice[]; queriedAt: string; cacheHit: boolean}> }
 // Reuse verified credential transactions and locks, with a distinct ordinary
-// model parser and per-instance cache. Never use the image generation routine.
+// model filtering and one shared public directory. Never use the image generation routine.
 export function createWakeAccounts(context: vscode.ExtensionContext, live: LiveUiController): WakeAccounts {
   const locks = new LiveLocks(path.join(os.homedir(), '.gemini'), createHash('sha256').update(context.globalStorageUri.toString()).digest('hex'), { purpose: 'image' });
   const available = () => live.getState().accountStorageReady && !live.getState().pending && nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName).available;
@@ -31,14 +31,17 @@ export function createWakeAccounts(context: vscode.ExtensionContext, live: LiveU
     currentEmail = await passiveCurrentEmail();
     return work();
   }), store: () => savedAccountStore(context, locks, available), project: resolveEndpointImageProject,
-    models: readAccountModelCatalog, normalizeCatalog: wakeCatalogPayload, parseModels: wakeModelsFromCatalog, refreshAllowed: a => !a.active && !!currentEmail && currentEmail !== a.expectedEmail.toLowerCase() });
+    catalogService: context.globalState ? sharedAccountModelCatalog(context.globalState, context.secrets, context.subscriptions) : undefined, models: readAccountModelCatalog, normalizeCatalog: wakeCatalogPayload, parseModels: wakeModelsFromCatalog, refreshAllowed: a => !a.active && !!currentEmail && currentEmail !== a.expectedEmail.toLowerCase() });
   const fingerprint = (id: string) => { const a = live.getAccounts().find(a => a.id === id); return a && a.hostCurrent === true && a.migrationState !== 'pending' ? accountDisplayFingerprint(a) : undefined; };
   return {
     fingerprint,
-    async models(id, endpoint, signal) {
+    async models(id, endpoint, signal, force = true) {
       if (!available()) throw Error('WAKE_ACCOUNT_UNAVAILABLE'); saved.selectForWindow(id);
-      try { return await saved.choices(id, signal, endpoint, true); }
-      catch (error) { if (error instanceof Error && error.message === 'IMAGE_SAVED_MODELS_UNAVAILABLE') throw Error('WAKE_MODELS_UNAVAILABLE'); throw error; }
+      return saved.choices(id, signal, endpoint, force);
+    },
+    async directory(id, endpoint, signal, force = false) {
+      if (!available()) throw Error('WAKE_ACCOUNT_UNAVAILABLE'); saved.selectForWindow(id);
+      return saved.directory(id, signal, endpoint, force);
     },
     async quota(task, signal) {
       if (!available() || fingerprint(task.accountId) !== task.fingerprint) throw Error('WAKE_ACCOUNT_CHANGED');

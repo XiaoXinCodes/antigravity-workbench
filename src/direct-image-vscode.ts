@@ -1,3 +1,4 @@
+import { accountCatalogScope, sharedAccountModelCatalog } from './account-model-catalog';
 import { responseModels, missingModel, type ModelObservation } from './model-observation';
 import { catalogError, catalogParseError, catalogErrorCode, catalogFailureDetails, type CatalogFailure } from './model-catalog-error';
 import { parseModelCatalog, imageCatalogIssue, assertModelUse } from './model-catalog';
@@ -48,7 +49,8 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
   const getEndpoint = () => imageEndpoint(vscode.workspace.getConfiguration('antigravityAccounts.images').inspect<string>('endpoint')?.globalValue);
   const status = () => nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName);
   const summaries = (): AccountChoice[] => getAccounts().map(x => ({ ...x, active: x.active === true, hostCurrent: x.hostCurrent === true }));
-  const saved = new SavedImageAccounts({ accounts: summaries, withOperation: work => locks().withOperation(work),
+  const sharedCatalog = context.globalState ? sharedAccountModelCatalog(context.globalState, context.secrets, context.subscriptions) : undefined;
+  const saved = new SavedImageAccounts({ catalogService: sharedCatalog, accounts: summaries, withOperation: work => locks().withOperation(work),
     project: resolveEndpointImageProject, models: readSavedImageModels, parseModels: imageModelsFromCatalog,
     store: () => savedAccountStore(context, locks(), () => status().available),
   });
@@ -115,26 +117,24 @@ export function createDirectImageIntegration(context: vscode.ExtensionContext, g
   };
   // Public directory data only. Rebind identity/project and verify the exact secret
   // revision before reuse; display persistence is never authorization evidence.
-  let currentCatalog: { key: string; catalog: ReturnType<typeof parseModelCatalog>; models: ImageModelChoice[]; queriedAt: string; expiresAt: number } | undefined;
+  let directoryIncarnation: { scope: string; generation: ReturnType<typeof generation> } | undefined;
   const currentDirectory = async (signal: AbortSignal, endpoint = getEndpoint(), force = true) => {
-    if (force) currentCatalog = undefined;
     const binding = await currentAccess(signal, true, endpoint);
-    const key = createHash('sha256').update(JSON.stringify([endpoint, accountDisplayFingerprint(binding.selected), binding.selected.verifiedSubject,
-      binding.selected.quotaDisplayId, binding.hubGeneration, binding.access.credentialRevision, binding.access.token, binding.access.projectId])).digest('hex');
-    if (force || currentCatalog?.key !== key || currentCatalog.expiresAt <= Date.now()) currentCatalog = undefined;
-    if (currentCatalog) {
-      await binding.access.verify(signal); await binding.assertCurrent();
-      return { ...binding, ...currentCatalog, models: currentCatalog.models.map(row => ({ ...row })), cacheHit: true };
-    }
-    const raw = await readSavedImageModels(binding.access.token, binding.access.projectId, signal, endpoint);
-    if (JSON.stringify(raw).includes(binding.access.token)) throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200);
-    let catalog;
-    try { catalog = parseModelCatalog(raw); } catch (error) { throw catalogParseError(error); }
-    await binding.access.verify(signal); await binding.assertCurrent();
-    const entry = { key, catalog, models: imageModelsFromCatalog(catalog), queriedAt: new Date().toISOString(),
-      expiresAt: Math.min(Date.now() + 5 * 60_000, binding.access.credentialExpiresAt - 30_000) };
-    currentCatalog = entry;
-    return { ...binding, ...entry, models: entry.models.map(row => ({ ...row })), cacheHit: false };
+    const scope = accountCatalogScope(binding.selected, endpoint, binding.access.credentialRevision, binding.access.token, binding.access.projectId);
+    if (directoryIncarnation?.scope === scope && directoryIncarnation.generation !== binding.hubGeneration) sharedCatalog?.invalidate(scope);
+    directoryIncarnation = { scope, generation: binding.hubGeneration };
+    const fetch = async (catalogSignal: AbortSignal) => {
+      const raw = await readSavedImageModels(binding.access.token, binding.access.projectId, catalogSignal, endpoint);
+      if (JSON.stringify(raw).includes(binding.access.token)) throw catalogError('IMAGE_SAVED_MODELS_INVALID', 'parse', 'parse', 200);
+      try { return parseModelCatalog(raw); } catch (error) { throw catalogParseError(error); }
+    };
+    const verify = async () => { await binding.access.verify(signal); await binding.assertCurrent(); };
+    const directory = sharedCatalog ? await sharedCatalog.read(scope, signal, fetch, force, verify) : { catalog: await fetch(signal), queriedAt: new Date().toISOString(), cacheHit: false };
+    if (!sharedCatalog) await verify();
+    const catalog = directory.catalog;
+    const entry = { catalog, models: imageModelsFromCatalog(catalog), queriedAt: directory.queriedAt,
+      expiresAt: Math.min(Date.parse(directory.queriedAt) + 5 * 60_000, binding.access.credentialExpiresAt - 30_000) };
+    return { ...binding, ...entry, models: entry.models.map(row => ({ ...row })), cacheHit: directory.cacheHit };
   };
   const diagnoseCatalog = async (signal: AbortSignal) => {
     const release = enterImageOperation('catalog-diagnostic');

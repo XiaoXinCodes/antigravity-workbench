@@ -33,8 +33,26 @@ Report errors using error codes and operation records instead of repeatedly subm
 
 ## Language and settings
 
-Click **Settings** at the bottom of Workbench and search for `antigravityAccounts.language`. Select **English** or **简体中文** manually; Simplified Chinese is the default. Open account, image and diagnostic views update without reloading. Drafts, references, account selection and tasks are retained; language changes make no login or image requests.
+Open **Settings** in the shared workbench navigation and select the language. Choose **English** or **简体中文** manually; Simplified Chinese is the default. Open account, image and diagnostic views update without reloading. Drafts, references, account selection and tasks are retained; language changes make no login or image requests.
 
-Runtime interface text follows this setting. Static Command Palette titles and contributed view names follow VS Code's display language and its native localization mechanism; they do not change instantly with this extension setting. The settings command and language setting retain bilingual labels for discovery. Unknown language values fall back to Simplified Chinese. Workspace settings do not override the user-level selection.
+Runtime interface text follows this setting. Static Command Palette titles and contributed view names follow VS Code's display language and its native localization mechanism; they do not change instantly with this extension setting. The native settings command and language setting retain bilingual labels for discovery. Unknown language values fall back to Simplified Chinese. Workspace settings do not override the user-level selection.
 
 Use **Advanced troubleshooting…** to inspect extension hosts. Enable diagnostic logging, reproduce once, disable it, then preview and export the logs. For an [Issue](https://github.com/XiaoXinCodes/antigravity-workbench/issues), include version, OS, host, reproduction steps and error code; never attach credential files or account export packages. Logs are not uploaded automatically. Technical references linked from this guide may currently be in Chinese.
+
+## Unified navigation and settings
+
+Run **Antigravity Workbench: Open workbench** for the full editor view. The A activity icon opens this same workbench. Use Switch feature in narrow views. Account import, export and recovery are grouped below the accounts. Current quota and Quota observations are tabs within Accounts & quota. Open Schedules and Quota alerts through the main navigation; switching preserves unsaved edits.
+
+Open **Settings** in the shared navigation to choose the global language, Hide account names and emails or VS Code color theme. Advanced service settings stay collapsed until needed. The language updates open pages while preserving drafts and filters. **Help** links to the complete guide and advanced diagnostics.
+
+### Workbench and local records
+
+The A activity icon opens the full editor workbench. Wide views keep left navigation visible; narrow views use Switch feature, with Enter/Space, arrows and Escape. Modules reuse one editor while retaining drafts, results and filters.
+
+Model and Token records discover local sources read-only on opening and show loading feedback. Returning reuses the data; Refresh updates it. Source selection appears when discovery finds no source. Hover, tap or use arrow keys in the daily trend to inspect dates and exact input/output Token values; unknown values stay unknown.
+
+The Schedules page loads conversation models automatically. The same account and endpoint reuse the shared directory; switching pages preserves the selection. Refresh models shows loading, the loaded count, an empty result or failure beside the model picker. Cancelling keeps the previous list.
+
+Save without enabling stores the task without running it. Automatic runs require both the global switch and that task to be enabled. View run times only computes the next five times; quota-recovery mode shows check times. Run once now sends a real request without enabling scheduled runs.
+
+Initial directory reads wait for account initialization and ordinary operations to finish, then continue automatically. Waiting can be cancelled. Actual failures retain their code; binding, HTTP and parse failures are not automatically retried.

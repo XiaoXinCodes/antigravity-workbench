@@ -1,3 +1,5 @@
+import { createWorkbenchPanel } from './workbench-host';
+import { routeWorkbenchNavigation } from './workbench-navigation';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
@@ -8,8 +10,8 @@ import { mergeLocalRecords, type LocalGenerationRecord } from './local-generatio
 import { observationsHtml } from './request-observation-view';
 import { buildLocalGenerationStats, type GenerationStatsRange } from './local-generation-stats';
 import { generationStatsExportContent, prepareGenerationExport, writeGenerationExport } from './local-generation-export';
-/** No directory discovery or DB access during activation or panel opening. */
-export function registerObservationsUi(context: vscode.ExtensionContext, deps: { pick?: (directory: boolean) => Promise<readonly vscode.Uri[] | undefined>; read?: typeof readLocalGenerationDb; runtime?: DiscoveryRuntime; save?: (format: 'csv' | 'json') => Promise<vscode.Uri | undefined>; confirmOverwrite?: (name: string) => Promise<boolean> } = {}) {
+/** Activation is idle; opening reads only existing local records, never model requests. */
+export function registerObservationsUi(context: vscode.ExtensionContext, deps: { discover?: typeof readNativeGenerations; pick?: (directory: boolean) => Promise<readonly vscode.Uri[] | undefined>; read?: typeof readLocalGenerationDb; runtime?: DiscoveryRuntime; save?: (format: 'csv' | 'json') => Promise<vscode.Uri | undefined>; confirmOverwrite?: (name: string) => Promise<boolean> } = {}) {
   let panel: vscode.WebviewPanel | undefined, rows: LocalGenerationRecord[] = [], busy = false, notice = '', scope: GenerationScope | undefined;
   let active: AbortController | undefined;
   let range: GenerationStatsRange = 'all', model = '', project = '', revision = 0, exporting = false;
@@ -19,7 +21,7 @@ export function registerObservationsUi(context: vscode.ExtensionContext, deps: {
     // Keys and response identities stay in the host. Raw field provenance is
     // available only in the explicitly expanded technical details.
     const safeRows = stats.rows.map(row => ({ client:row.client,session:row.session,index:row.index,requested:row.requested,returned:row.returned,tokens:row.tokens,usageInterpretation:row.usageInterpretation,timestamp:row.timestamp,project:row.project,...(row.issue?{issue:row.issue}:{}) }));
-    return panel?.webview.postMessage({type:'state',rows:safeRows,stats:{...stats,rows:undefined,undatedRows:undefined},filter:{range,model,project},busy,exporting,notice,scope});
+    return panel?.webview.postMessage({type:'state',rows:safeRows,stats:{...stats,rows:undefined,undatedRows:undefined},filter:{range,model,project},busy,exporting,notice,scope,canSelectSource:!busy&&(!scope||scope.files===0)});
   };
   const localPath = (uri: vscode.Uri): string | undefined => uri.scheme==='file'&&!uri.authority?uri.fsPath:process.platform==='linux'&&vscode.env.remoteName==='wsl'&&process.env.WSL_DISTRO_NAME&&uri.scheme==='vscode-remote'&&uri.authority===`wsl+${process.env.WSL_DISTRO_NAME}`&&path.posix.isAbsolute(uri.path)?uri.path:undefined;
   const exportRecords = async (owner: vscode.WebviewPanel, format: 'csv' | 'json') => {
@@ -55,7 +57,7 @@ export function registerObservationsUi(context: vscode.ExtensionContext, deps: {
       const runtime=deps.runtime ?? {...nativeDiscoveryRuntime(),...(vscode.env.remoteName ? {remoteName:vscode.env.remoteName} : {})};
       const options={runtime,...(deps.read ? {read:deps.read} : {})};
       let result: Awaited<ReturnType<typeof readNativeGenerations>>;
-      if (kind==='read') result=await readNativeGenerations(controller.signal,options);
+      if (kind==='read') result=await (deps.discover ?? readNativeGenerations)(controller.signal,options);
       else {
         const directory=kind==='directory';
         const files=await (deps.pick ? deps.pick(directory) : vscode.window.showOpenDialog({canSelectMany:false,canSelectFiles:!directory,canSelectFolders:directory,...(directory?{}:{filters:{SQLite:['db']}}),title:tr(directory?'observations.chooseDirectory':'observations.choose')}));
@@ -75,10 +77,11 @@ export function registerObservationsUi(context: vscode.ExtensionContext, deps: {
   };
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.observations.open', () => {
     if (panel) { panel.reveal(); return; }
-    panel=vscode.window.createWebviewPanel('antigravityRequestObservations',tr('observations.title'),vscode.ViewColumn.Active,{enableScripts:true,retainContextWhenHidden:true,localResourceRoots:[]});
+    panel=createWorkbenchPanel(vscode, 'antigravityRequestObservations',tr('observations.title'),vscode.ViewColumn.Active,{enableScripts:true,retainContextWhenHidden:true,localResourceRoots:[]});
     const owner=panel;owner.webview.html=observationsHtml(randomBytes(16).toString('hex'));
     owner.webview.onDidReceiveMessage(message=>{
       if(panel!==owner||!message||typeof message!=='object')return;
+      if(routeWorkbenchNavigation(message))return;
       if(message.type==='ready')void emit();
       if(message.type==='read')void read(owner,'read');
       if(message.type==='choose')void read(owner,'file');
@@ -93,6 +96,7 @@ export function registerObservationsUi(context: vscode.ExtensionContext, deps: {
       if(message.type==='export'&&(message.format==='csv'||message.format==='json'))void exportRecords(owner,message.format);
       if(message.type==='clear'&&(!busy||exporting)){revision++;if(exporting)active?.abort();rows=[];scope=undefined;model='';project='';notice='';void emit();}
     },undefined,context.subscriptions);
+    void read(owner,'read');
     owner.onDidDispose(()=>{if(panel===owner){revision++;panel=undefined;rows=[];scope=undefined;notice='';model='';project='';active?.abort();active=undefined;busy=false;exporting=false;}},undefined,context.subscriptions);
   }),onLanguageChange(()=>{if(panel){panel.title=tr('observations.title');void panel.webview.postMessage({type:'language',language:locale()});void emit();}}),{dispose:()=>{active?.abort();panel?.dispose();}});
 }
