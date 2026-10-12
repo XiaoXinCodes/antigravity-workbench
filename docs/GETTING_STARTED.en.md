@@ -33,8 +33,14 @@ Report errors using error codes and operation records instead of repeatedly subm
 
 ## Language and settings
 
-Click **Settings** at the bottom of Workbench and search for `antigravityAccounts.language`. Select **English** or **简体中文** manually; Simplified Chinese is the default. Open account, image and diagnostic views update without reloading. Drafts, references, account selection and tasks are retained; language changes make no login or image requests.
+Open **Settings** in the shared workbench navigation and select the language. Choose **English** or **简体中文** manually; Simplified Chinese is the default. Open account, image and diagnostic views update without reloading. Drafts, references, account selection and tasks are retained; language changes make no login or image requests.
 
-Runtime interface text follows this setting. Static Command Palette titles and contributed view names follow VS Code's display language and its native localization mechanism; they do not change instantly with this extension setting. The settings command and language setting retain bilingual labels for discovery. Unknown language values fall back to Simplified Chinese. Workspace settings do not override the user-level selection.
+Runtime interface text follows this setting. Static Command Palette titles and contributed view names follow VS Code's display language and its native localization mechanism; they do not change instantly with this extension setting. The native settings command and language setting retain bilingual labels for discovery. Unknown language values fall back to Simplified Chinese. Workspace settings do not override the user-level selection.
 
 Use **Advanced troubleshooting…** to inspect extension hosts. Enable diagnostic logging, reproduce once, disable it, then preview and export the logs. For an [Issue](https://github.com/XiaoXinCodes/antigravity-workbench/issues), include version, OS, host, reproduction steps and error code; never attach credential files or account export packages. Logs are not uploaded automatically. Technical references linked from this guide may currently be in Chinese.
+
+## Unified navigation and settings
+
+Run **Antigravity Workbench: Open workbench** for the full editor view. The A activity icon remains the compact account sidebar. Expand the navigation in narrow views. Account import, export and recovery are grouped below the accounts. Schedules and quota alerts have separate tabs that preserve unsaved edits.
+
+Open **Settings** in the shared navigation to choose the global language, identity privacy or VS Code color theme. Advanced service settings stay collapsed until needed. The language updates open pages while preserving drafts and filters. **Help** links to the complete guide and advanced diagnostics.

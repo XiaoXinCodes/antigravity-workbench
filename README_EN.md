@@ -23,6 +23,13 @@ This project is independently developed and is not affiliated with, authorized b
 
 [Quick installation](#quick-installation) · [Getting started](#getting-started) · [Feature walkthrough](#feature-walkthrough) · [FAQ](#faq) · [Contributing](#contributing)
 
+
+## Unified workbench
+
+Use the A activity icon for the compact account sidebar, or run **Antigravity Workbench: Open workbench** to open the full editor view. Shared navigation connects accounts and quota, Image Studio, model and Token records, schedules, alerts, settings and help. Select the global language in Settings; appearance follows the VS Code light, dark or high contrast theme. Account import, export and recovery are grouped in an expandable section.
+
+[Production UI and validation for this branch](docs/UNIFIED_DESIGN_IMPLEMENTATION.md).
+
 ## Quick installation
 
 **Before installing:** VS Code 1.95 or later, with an available Google Antigravity extension and login. Both extensions must run on the same local or WSL host.

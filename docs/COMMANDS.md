@@ -44,7 +44,9 @@
 
 命令面板的“高级排障…”（`antigravityAccounts.debug.tools`）集中提供图片目录诊断、调试日志开启与关闭、预览和导出日志、运行位置检查与技术路径复制。普通主界面不显示这些工具。图片目录诊断仅在显式运行后显示进度与结果，可关闭；关闭不会让迟到响应再次打开区域。
 
-“打开插件设置”（`antigravityAccounts.openSettings`）打开标准 VS Code 设置。
+“打开插件设置”（`antigravityAccounts.openSettings`）打开工作台设置页；语言和隐私写入用户级配置，颜色主题使用 VS Code 原生选择器。
+
+“打开工作台”（`antigravityAccounts.workbench.open`）打开完整编辑器页面；活动栏仍提供紧凑账号侧栏。帮助页提供完整指南与高级排障入口。
 
 [文档目录](README.md) · [快速开始](GETTING_STARTED.md)
 

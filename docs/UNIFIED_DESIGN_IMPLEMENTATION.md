@@ -26,4 +26,49 @@
 
 ## 实现阶段记录
 
-共享主题与导航、账号编辑器、图片/额度历史/记录/调度展示、全局设置/帮助/排障均已接入生产控制器。完整 check：1654 项，1650 通过、4 个平台用例跳过；类型检查、lint、模型硬编码检查通过。记录宿主专项回归通过；新的全产品宿主回归验证深浅/高对比、窄屏、重复打开、刷新取消、四种模式、全局语言与草稿保留。所有宿主测试使用隔离配置和合成适配器，真实模型发送为 0。后续补齐宽屏截图与原有宿主专项回归；本提交不是正式发布。
+共享主题与导航、账号编辑器、图片/额度历史/记录/调度展示、全局设置/帮助/排障均已接入生产控制器。完整 check：1654 项，1650 通过、4 个平台用例跳过；类型检查、lint、模型硬编码检查通过。记录宿主专项回归通过；新的全产品宿主回归验证深浅/高对比、窄屏、重复打开、刷新取消、四种模式、全局语言与草稿保留。所有宿主测试使用隔离配置和合成适配器，真实模型发送为 0。原有额度、历史、自动化、高级触发、全局语言、扩展启动专项回归均已通过。本分支是候选审核版本，未安装、合并或发布。
+
+## 生产界面
+
+以下为真实 VS Code 1.141.0 宿主中的生产 UI，数据为合成适配器，真实请求为 0。全产品截图收据及专项回归结果摘要见 [验收记录](unified-design-validation.json)。
+
+### 账号与额度
+
+![生产 UI · 账号与额度](images/unified-accounts-light.png)
+
+### 图片工作室
+
+![生产 UI · 图片工作室](images/unified-images-light.png)
+
+### 计划
+
+![生产 UI · 计划](images/unified-schedules-light.png)
+
+### 额度提醒
+
+![生产 UI · 额度提醒](images/unified-alerts-light.png)
+
+### 设置
+
+![生产 UI · 设置](images/unified-settings-light.png)
+
+### 帮助
+
+![生产 UI · 帮助](images/unified-help-light.png)
+
+### 排障
+
+![生产 UI · 排障](images/unified-diagnostics-light.png)
+
+### 深色主题
+
+![生产 UI · 深色主题](images/unified-accounts-dark.png)
+
+### 窄窗口
+
+![生产 UI · 窄窗口](images/unified-accounts-narrow.png)
+
+### 高对比度
+
+![生产 UI · 高对比度](images/unified-schedules-contrast.png)
+

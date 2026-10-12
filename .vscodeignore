@@ -24,3 +24,5 @@ docs/INDEPENDENT_REVIEW.md
 .agents/**
 handoff/**
 docs/QUOTA_DISPLAY_RETENTION.md
+
+.design-*.log
