@@ -118,7 +118,7 @@ export function registerAutomationUi(context: vscode.ExtensionContext, live: Liv
         await engine.save({ id: existing?.id ?? randomUUID(), revision: randomUUID(), accountId: entry.accountId, fingerprint: entry.fingerprint, modelId: m.modelId, ...(m.confirmedModelUse === true ? { confirmedModelUse: true } : {}), endpoint: entry.endpoint, schedule: m.schedule as Parameters<typeof wakeOccurrences>[0], enabled: false, outputBudget: m.outputBudget as number, nextDue: 0 }, existing?.revision);
         const displayKey = catalogDisplayKey(entry.fingerprint, entry.endpoint, 'conversation', live.getAccounts().find(a => a.id === entry.accountId)), previous = displayCatalog.get(displayKey);
         if (previous) await displayCatalog.select(displayKey, m.modelId).catch(() => undefined);
-        await post({ type: 'notice', text: tr('automation.paused') });
+        await post({ type: 'notice', text: tr('automation.saved') });
       } else if (type === 'preview') { await post({ type: 'preview', times: wakeOccurrences(m.schedule as Parameters<typeof wakeOccurrences>[0], now(), 5), timezone: (m.schedule as { timezone: string }).timezone, recovery: (m.schedule as { mode?: string }).mode === 'quota-recovery' }); }
       else if (type === 'enable') { if (typeof m.enabled !== 'boolean') return; if (!m.enabled || await consent()) { if (panel === owner && !disposed) await engine.enable(m.enabled); } }
       else if (['pause', 'resume', 'test', 'cancel', 'remove'].includes(type)) {

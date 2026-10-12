@@ -52,3 +52,5 @@ The A activity icon opens the full editor workbench. Wide views keep left naviga
 Model and Token records discover local sources read-only on opening and show loading feedback. Returning reuses the data; Refresh updates it. Source selection appears when discovery finds no source. Hover, tap or use arrow keys in the daily trend to inspect dates and exact input/output Token values; unknown values stay unknown.
 
 The Schedules page loads conversation models automatically. The same account and endpoint reuse the shared directory; switching pages preserves the selection. Refresh models shows loading, the loaded count, an empty result or failure beside the model picker. Cancelling keeps the previous list.
+
+Save without enabling stores the task without running it. Automatic runs require both the global switch and that task to be enabled. View run times only computes the next five times; quota-recovery mode shows check times. Run once now sends a real request without enabling scheduled runs.
