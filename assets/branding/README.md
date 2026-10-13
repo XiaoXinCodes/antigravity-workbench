@@ -21,6 +21,6 @@ python3 scripts/build-activity-icon.py
 
 PNG 脚本使用 Windows 自带 GDI+，SVG 脚本只用 Python 标准库；无需额外图像依赖。编码器差异可能影响压缩字节，更新素材后需核验像素、尺寸和摘要。
 
-README 顶部使用 GitHub 支持的居中 HTML。活动栏清单引用 `media/workbench.svg`，与扩展清单的 PNG 图标是不同资源。SVG 遵循 [VS Code 活动栏图标规范](https://code.visualstudio.com/api/references/contribution-points#contributes.viewsContainers)：24×24、居中、单色。
+README 顶部使用 GitHub 支持的 HTML 展示小尺寸品牌图。活动栏清单引用 `media/workbench.svg`，与扩展清单的 PNG 图标是不同资源。SVG 遵循 [VS Code 活动栏图标规范](https://code.visualstudio.com/api/references/contribution-points#contributes.viewsContainers)：24×24、居中、单色。
 
 原图和生成脚本进入源码交付，不进入 VSIX。派生图进入安装包，项目自有素材适用根目录 [LICENSE](../../LICENSE)；商标使用仍受适用法律约束，本说明不授予额外商标授权。原图与派生链已核对，完整生成提示词和可能的参考素材清单未在源码内归档；这不是对所有潜在第三方权利的保证。
