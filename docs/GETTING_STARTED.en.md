@@ -1,8 +1,8 @@
 # Antigravity Workbench guide
 
-Download the `.vsix` from the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest), run **Extensions: Install from VSIX…** in the target VS Code window and select the file. Reload when prompted and open Workbench from the Activity Bar.
+Click **Install** on [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager), or search for **Antigravity Workbench** in the Extensions view. Verify publisher **XiaoXinCodes** and extension ID `xiaoxincodes.antigravity-account-manager`. Reload when prompted, then click **A** in the Activity Bar. You need VS Code 1.95+ and a working Google Antigravity extension and login.
 
-Workbench and Google Antigravity must run on the same host. In WSL, install the VSIX in the matching distribution and use that host's extensions, CLI and file paths.
+Workbench and Google Antigravity must run on the same host. In WSL, check where the official extension actually runs and install Workbench in that same local host or WSL distribution, using its extensions, CLI and file paths. For offline installation, download the `.vsix` from the [latest Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) and run **Extensions: Install from VSIX…** in the target window.
 
 ## Accounts
 
