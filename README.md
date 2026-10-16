@@ -6,7 +6,7 @@
 
 少来回切换：比较各账号的模型额度，单独选择生图账号，从历史继续创作，查看本机的模型与 Token 记录。
 
-**[从 VS Code Marketplace 安装](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager)** · [快速开始](#快速开始) · [使用文档](docs/README.md) · [English](README_EN.md)
+**[从 VS Code Marketplace 安装](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager)** · **[从 Open VSX 安装](https://open-vsx.org/extension/xiaoxincodes/antigravity-account-manager)** · [快速开始](#快速开始) · [使用文档](docs/README.md) · [English](README_EN.md)
 
 <img src="docs/images/workbench-demo-zh.gif" width="960" alt="实际 VS Code 工作台演示：搜索账号、比较与刷新额度、选择图片账号、复用示例图片任务、查看 Token 记录">
 
@@ -38,7 +38,7 @@
 
 准备 **VS Code 1.95+** 和可用的 **Google Antigravity 扩展及登录**，让两个扩展运行在同一宿主。
 
-1. 打开 [Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) 点击 **Install**，或在 VS Code 扩展面板搜索 **Antigravity Workbench**。核对发布者 **XiaoXinCodes**、扩展 ID `xiaoxincodes.antigravity-account-manager`。
+1. 从 [Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) 或 [Open VSX](https://open-vsx.org/extension/xiaoxincodes/antigravity-account-manager) 安装，或在 VS Code 扩展面板搜索 **Antigravity Workbench** 并安装。核对发布者 **XiaoXinCodes**、扩展 ID `xiaoxincodes.antigravity-account-manager`。
 2. 按提示重载，在活动栏点击 **A**，打开工作台。英文界面可在“设置”中选择 **English**。
 3. 在“账号与额度”查看已核验的当前身份；需要时点击“保存当前账号”或“添加账号”，再刷新额度。
 4. 打开“图片工作室”选择账号与模型开始创作，或打开“模型与 Token 记录”查看本机用量。

@@ -1,6 +1,6 @@
 # Antigravity Workbench 使用指南
 
-在 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) 点击 **Install**，或在扩展面板搜索 **Antigravity Workbench**，核对发布者 **XiaoXinCodes** 和扩展 ID `xiaoxincodes.antigravity-account-manager`。按提示重载后，在活动栏点击 **A** 打开 Workbench。需要 VS Code 1.95+ 及可用的 Google Antigravity 扩展和登录。
+从 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) 或 [Open VSX](https://open-vsx.org/extension/xiaoxincodes/antigravity-account-manager) 安装，或在 VS Code 扩展面板搜索 **Antigravity Workbench** 并安装，核对发布者 **XiaoXinCodes** 和扩展 ID `xiaoxincodes.antigravity-account-manager`。按提示重载后，在活动栏点击 **A** 打开 Workbench。需要 VS Code 1.95+ 及可用的 Google Antigravity 扩展和登录。
 
 Workbench 与 Google Antigravity 应运行在同一宿主；WSL 窗口需核对官方扩展的实际运行位置，并将 Workbench 安装到同一本机或 WSL 发行版，使用该宿主中的扩展、CLI 和文件路径。离线时可从 [最新 Release](https://github.com/XiaoXinCodes/antigravity-workbench/releases/latest) 下载 `.vsix`，在目标窗口执行 **Extensions: Install from VSIX…**。
 
