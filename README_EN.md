@@ -6,7 +6,7 @@
 
 Spend less time moving between views: compare model quotas across accounts, choose an image account independently, pick up past image tasks and inspect local model and Token records.
 
-**[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager)** · [Quick start](#quick-start) · [Documentation](docs/README.md) · [简体中文](README.md)
+**[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager)** · **[Install from Open VSX](https://open-vsx.org/extension/xiaoxincodes/antigravity-account-manager)** · [Quick start](#quick-start) · [Documentation](docs/README.md) · [简体中文](README.md)
 
 <img src="docs/images/workbench-demo-en.gif" width="960" alt="Actual VS Code workbench demo: search accounts, compare and refresh quota, select an image account, reuse a sample image task and inspect Token records">
 
@@ -38,7 +38,7 @@ Read local records without changing the source. Filter by time, returned model a
 
 You need **VS Code 1.95+**, a working **Google Antigravity extension and login**, and both extensions running on the same host.
 
-1. Open [Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) and click **Install**, or search for **Antigravity Workbench** in VS Code's Extensions view. Verify publisher **XiaoXinCodes** and extension ID `xiaoxincodes.antigravity-account-manager`.
+1. Install from [Marketplace](https://marketplace.visualstudio.com/items?itemName=xiaoxincodes.antigravity-account-manager) or [Open VSX](https://open-vsx.org/extension/xiaoxincodes/antigravity-account-manager), or search for **Antigravity Workbench** in VS Code's Extensions view and install it. Verify publisher **XiaoXinCodes** and extension ID `xiaoxincodes.antigravity-account-manager`.
 2. Reload when prompted, then click **A** in the Activity Bar to open the workbench. Select **English** in Settings if needed; Simplified Chinese is the default.
 3. In **Accounts & quota**, check the verified current identity. Use **Save current account** or **Add account** when needed, then refresh quota.
 4. Open **Image Studio** to choose an account and model for creation, or **Model and Token records** to inspect local usage.
