@@ -97,6 +97,8 @@ export function formatRecentImageFailure(value: RecentImageFailure | undefined):
     if (summary) parts.push(summary);
     else if (e.message === 'present') parts.push(tr("recentImageFailure.3c129393f1"));
     if (e.messageSignals?.length) parts.push(tr("recentImageFailure.9c0cb56a67", { p0: e.messageSignals.join(', ') }));
+    if (e.headerDelaySeconds !== undefined) parts.push(`Retry-After ${e.headerDelaySeconds}s`);
+    if (e.detailDelaySeconds !== undefined) parts.push(`RetryInfo ${e.detailDelaySeconds}s`);
     if (e.quotaResetDelaySeconds !== undefined) parts.push(tr("recentImageFailure.b30cfa93ac", { p0: e.quotaResetDelaySeconds }));
     if (e.quotaResetTime) parts.push(tr("recentImageFailure.2351f2274d", { p0: e.quotaResetTime }));
   }

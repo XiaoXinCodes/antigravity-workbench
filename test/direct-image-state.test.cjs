@@ -74,7 +74,7 @@ test('account changes invalidate late choices while preserving user prompt, dire
  const f=await fixture(t);await f.send({...f.generate,type:'draft'});const before=f.states.at(-1).outputDirectory;
  const resolve=f.deferChoices();await f.send({type:'ready'});f.controller.accountStateChanged({pending:true,email:'',accountIds:[]});resolve(choices);await tick();
  assert.deepEqual(f.states.at(-1).choices.accounts,[]);assert.equal(f.states.at(-1).draft.prompt,f.generate.prompt);assert.equal(f.states.at(-1).outputDirectory,before);
- await f.send(f.generate);assert.equal(f.runs.length,0);assert.match(f.states.at(-1).status,/IMAGE_ACCOUNT_RECOVERY_PENDING/);
+ await f.send(f.generate);assert.equal(f.runs.length,0);assert.match(f.states.at(-1).status,/账号切换或恢复尚未完成/);
  f.controller.accountStateChanged({pending:false,email:'a@example.test',accountIds:[accountId]});await tick();assert.equal(f.states.at(-1).draft.accountId,accountId);assert.equal(f.states.at(-1).draft.size,'1K');
 });
 
@@ -153,15 +153,15 @@ test('sent request cancellation explains unknown server outcome and already load
  assert.match(f.states.at(-1).status,/服务端结果未知/);assert.match(f.states.at(-1).status,/消耗额度/);assert.equal(f.states.at(-1).busy,false);
  try{setLanguage('en');const translated=f.states.at(-1);assert.match(translated.status,/server outcome/i);assert.doesNotMatch(translated.status,/[\u3400-\u9fff]/u);assert.doesNotMatch(translated.tasks[0].status,/[\u3400-\u9fff]/u);
   f.setChoices({accounts:choices.accounts,models:[],readiness:'error',accountMessage:'IMAGE_SAVED_MODELS_FORBIDDEN'});setLanguage('zh-CN');await f.send({type:'checkAccount'});
-  assert.match(f.states.at(-1).accountStatus,/Google 拒绝/);setLanguage('en');assert.match(f.states.at(-1).accountStatus,/Google denied/);assert.doesNotMatch(f.states.at(-1).accountStatus,/[\u3400-\u9fff]/u);
+  assert.match(f.states.at(-1).accountStatus,/访问被拒绝.*原因尚不明确/);setLanguage('en');assert.match(f.states.at(-1).accountStatus,/Access was denied; the reason is unclear/);assert.doesNotMatch(f.states.at(-1).accountStatus,/[\u3400-\u9fff]/u);
  }finally{setLanguage('zh-CN');f.panels.at(-1).close();await f.controller.flush()}
 });
 
 test('existing composite account errors switch to English without translating account labels or IDs',async t=>{
  const {setLanguage}=require('../out/i18n');const f=await fixture(t);
  f.setChoices({accounts:choices.accounts,models:[],readiness:'error',accountMessage:'IMAGE_SAVED_MODELS_FORBIDDEN'});await f.send({type:'checkAccount'});
- assert.match(f.states.at(-1).accountStatus,/Google 拒绝/);
- try{setLanguage('en');assert.doesNotMatch(f.states.at(-1).accountStatus,/[\u3400-\u9fff]/u);assert.match(f.states.at(-1).accountStatus,/Google denied/);assert.equal(f.states.at(-1).choices.accounts[0].id,accountId);
+ assert.match(f.states.at(-1).accountStatus,/访问被拒绝.*原因尚不明确/);
+ try{setLanguage('en');assert.doesNotMatch(f.states.at(-1).accountStatus,/[\u3400-\u9fff]/u);assert.match(f.states.at(-1).accountStatus,/Access was denied; the reason is unclear/);assert.equal(f.states.at(-1).choices.accounts[0].id,accountId);
  }finally{setLanguage('zh-CN');f.panels.at(-1).close();await f.controller.flush()}
 });
 
@@ -188,7 +188,7 @@ test('production webview guides missing save location and labels a stopped sent 
  const f=require('./helpers/image-webview.cjs').imageWebview();
  const state={type:'state',busy:false,status:'ready',references:[],choices,outputDirectory:'',tasks:[],draft:{prompt:'synthetic',accountId,modelId,ratio:'1:1',count:1,size:'auto',quality:'auto',followCurrent:true}};
  f.message(state);assert.equal(f.el('generate').disabled,true);assert.match(f.el('formHint').textContent,/选择保存位置/);
- f.message({...state,outputDirectory:'/synthetic/output',tasks:[{id:'synthetic-task',createdAt:'2026-10-09T00:00:00Z',phase:'cancelled',status:'IMAGE_DIRECT_OUTCOME_UNKNOWN',promptSummary:'synthetic',modelId,ratio:'1:1',count:1,size:'auto',quality:'auto',images:[]}]});
+ f.message({...state,outputDirectory:'/synthetic/output',tasks:[{id:'synthetic-task',createdAt:'2026-10-09T00:00:00Z',phase:'cancelled',outcomeUnknown:true,status:'请求结果尚未确认',promptSummary:'synthetic',modelId,ratio:'1:1',count:1,size:'auto',quality:'auto',images:[]}]});
  const heading=f.el('tasks').children[0].children[0];assert.equal(heading.children[1].textContent,'结果未确认');assert.equal(f.el('generate').disabled,false);
 });
 
@@ -204,4 +204,39 @@ test('model favorites persist exact available IDs without generating or querying
  await f.send({type:'favoriteModel',modelId:'unknown-or-quota-label'});assert.deepEqual(f.states.at(-1).imageFavorites,[modelId]);
  f.panels.at(-1).close();await f.open();assert.deepEqual(f.states.at(-1).imageFavorites,[modelId]);
  await f.send({type:'favoriteModel',modelId});assert.deepEqual(f.states.at(-1).imageFavorites,[]);assert.equal(f.runs.length,0);
+});
+
+for (const [reason, guidance] of [['VALIDATION_REQUIRED',/需要完成验证/],['PERMISSION_DENIED',/没有本次操作所需的权限/],[undefined,/原因尚不明确/]]) test('diagnostic failure keeps prior images, draft and account, with one request: '+reason,async t=>{
+ const {imageHttpFailure}=require('../out/direct-image-http-error');
+ const stored=new Map([['synthetic-accounts',{unchanged:true}],['synthetic-preferences',{unchanged:true}]]),f=await fixture(t,stored);
+ await f.send(f.generate);f.decide();await tick();
+ const file=path.join(f.states.at(-1).outputDirectory,'prior-result.png');
+ f.finish({images:[{file,width:1,height:1}],batch:{outcome:'complete'}});await tick();await tick();
+ const first=f.states.at(-1).tasks[0];
+ await f.send({...f.generate,prompt:'keep diagnostic draft'});f.decide();await tick();await f.send(f.generate);
+ assert.equal(f.runs.length,2);
+ const e=imageHttpFailure(403,{error:{message:'PRIVATE_SENTINEL https://evil.test/?token=SECRET',details:reason?[{reason}]:[]}},undefined);
+ f.finish(e);await tick();await tick();
+ const state=f.states.at(-1);assert.match(state.status,guidance);assert.doesNotMatch(state.status,/IMAGE_|HTTP|PRIVATE_|SECRET|https:/);
+ assert.deepEqual(state.tasks[0],first);assert.equal(state.tasks[1].phase,'failed');assert.equal(state.draft.prompt,'keep diagnostic draft');assert.equal(state.draft.accountId,accountId);
+ assert.equal(state.images.length,1);assert.equal(state.images[0].name,'prior-result.png');assert.match(state.recentDiagnostic,new RegExp(e.message));
+ assert.deepEqual(stored.get('synthetic-accounts'),{unchanged:true});assert.deepEqual(stored.get('synthetic-preferences'),{unchanged:true});
+ assert.equal(f.runs.length,2);f.panels.at(-1).close();await f.open();assert.match(f.states.at(-1).tasks[1].status,guidance);assert.equal(f.runs.length,2);
+ f.panels.at(-1).close();await f.controller.flush();
+});
+
+test('partial generation displays separate waiting hints and keeps the completed image',async t=>{
+ const {imageHttpFailure}=require('../out/direct-image-http-error'),f=await fixture(t);
+ await f.send({...f.generate,count:2});f.decide();await tick();
+ const failure=imageHttpFailure(429,{error:{details:[{reason:'QUOTA_EXHAUSTED',metadata:{quotaResetDelay:'7200s'}},{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'90s'}]}},'3');
+ f.finish({images:[{file:path.join(f.states.at(-1).outputDirectory,'partial.png'),width:1,height:1}],batch:{outcome:'partial',error:failure.message,failure}});await tick();await tick();
+ const state=f.states.at(-1);assert.equal(state.tasks[0].phase,'partial');assert.equal(state.tasks[0].images.length,1);assert.match(state.status,/3 秒和 90 秒/);assert.match(state.status,/额度恢复等待.*7200 秒/);assert.doesNotMatch(state.status,/Retry-After|RetryInfo|IMAGE_/);assert.equal(f.runs.length,1);
+ f.panels.at(-1).close();await f.controller.flush();
+});
+
+test('uncertain outcome keeps its distinct phase after hiding internal codes and reopening',async t=>{
+ const f=await fixture(t);await f.send(f.generate);f.decide();await tick();f.finish(Error('IMAGE_DIRECT_OUTCOME_UNKNOWN'));await tick();await tick();
+ assert.equal(f.states.at(-1).tasks[0].outcomeUnknown,true);assert.doesNotMatch(f.states.at(-1).tasks[0].status,/IMAGE_/);
+ f.panels.at(-1).close();await f.open();assert.equal(f.states.at(-1).tasks[0].outcomeUnknown,true);assert.equal(f.runs.length,1);
+ f.panels.at(-1).close();await f.controller.flush();
 });

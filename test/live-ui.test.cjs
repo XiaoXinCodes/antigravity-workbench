@@ -555,6 +555,10 @@ for(const language of ['zh-CN','en']) test(`${language} manual quota refresh sta
  assert.equal(f.diag.getAccounts()[1].quota.phase,'error');assert.match(f.diag.getAccounts()[1].quota.message,language==='en'?/Authorize and save again/:/重新授权/);
  const retry=f.call('quota',other.id);await settle();assert.equal(calls,2);release();await retry;
  assert.equal(f.diag.getAccounts()[1].quota.phase,'ready');assert.equal(f.diag.getAccounts()[1].quota.snapshot.observedAt,'2026-10-01T00:00:00.000Z');assert.equal(f.diag.getAccounts()[0].quota,undefined);
+ const previous=structuredClone(f.diag.getAccounts()[1].quota.snapshot);
+ f.ui.savedQuota=async()=>{calls++;throw new (require('../out/live-storage').LiveError)('ACCOUNT_QUOTA_FORBIDDEN');};
+ await f.call('quota',other.id);assert.equal(calls,3);const denied=f.diag.getAccounts()[1].quota;
+ assert.match(denied.message,language==='en'?/reason is unclear/:/原因尚不明确/);assert.doesNotMatch(denied.message,/ACCOUNT_QUOTA_|需要完成验证|lacks permission/);assert.deepEqual(denied.snapshot,previous);
  f.service.account=async()=>assert.fail('current quota must not read saved credentials');await f.call('quota');assert.equal(f.diag.getAccounts()[0].quota.phase,'ready');
  assert.deepEqual(f.notifications,[]);assert.deepEqual(f.warnings,[]);assert.ok(!f.events.includes('stop')&&!f.events.includes('install'));
  for(const sub of f.context.subscriptions)sub.dispose();

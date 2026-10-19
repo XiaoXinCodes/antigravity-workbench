@@ -1,10 +1,10 @@
 import { localizeMessage, t as tr } from './i18n';
 import { validImageRequestId } from './direct-image-protocol';
-import { inspectImageError, safeImageReason, MAX_DIAGNOSTIC_DELAY_SECONDS, type ImageErrorEvidence } from './image-error-evidence';
+import { inspectImageError, safeImageReason, validDiagnosticTimestamp, MAX_DIAGNOSTIC_DELAY_SECONDS, type ImageErrorEvidence } from './image-error-evidence';
 import { formatImageMessageSummary } from './image-error-message';
 /** A bounded, fixed-field account of an image HTTP failure. Never retain a server message or raw body. */
 export type ImageHttpCode =
-  'IMAGE_DIRECT_AUTH_REQUIRED' | 'IMAGE_DIRECT_FORBIDDEN' | 'IMAGE_DIRECT_MODEL_OR_PROJECT_UNAVAILABLE' |
+  'IMAGE_DIRECT_VALIDATION_REQUIRED' | 'IMAGE_DIRECT_PERMISSION_DENIED' | 'IMAGE_DIRECT_AUTH_REQUIRED' | 'IMAGE_DIRECT_FORBIDDEN' | 'IMAGE_DIRECT_MODEL_OR_PROJECT_UNAVAILABLE' |
   'IMAGE_DIRECT_PROJECT_ACCESS_DENIED' | 'IMAGE_DIRECT_QUOTA_EXHAUSTED' | 'IMAGE_DIRECT_QUOTA_LIMITED' |
   'IMAGE_DIRECT_RATE_LIMITED' | 'IMAGE_DIRECT_CONCURRENCY_LIMITED' | 'IMAGE_DIRECT_CAPACITY_UNAVAILABLE' |
   'IMAGE_DIRECT_RESOURCE_EXHAUSTED' | 'IMAGE_DIRECT_SERVICE_UNAVAILABLE' | 'IMAGE_DIRECT_REQUEST_FAILED';
@@ -21,6 +21,11 @@ const PROJECT = new Set(['PROJECT_NOT_FOUND', 'PROJECT_NOT_ALLOWED', 'ACCESS_DEN
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeStatus = (value: unknown): string | undefined => typeof value === 'string' && STATUSES.has(value) ? value : undefined;
 const safeReason = safeImageReason;
+function own(value: unknown, key: string): unknown {
+  if (!object(value)) return undefined;
+  try { const descriptor = Object.getOwnPropertyDescriptor(value, key); return descriptor && 'value' in descriptor ? descriptor.value : undefined; }
+  catch { return undefined; }
+}
 export function retryAfterSeconds(header: unknown, now = Date.now()): number | undefined {
   if (Array.isArray(header)) header = header.length === 1 ? header[0] : undefined;
   if (typeof header !== 'string' || header.length > 96) return undefined;
@@ -41,8 +46,13 @@ export interface ImageHttpFailureFields {
 }
 export type ImageHttpFailure = Error & ImageHttpFailureFields;
 
-function classify(status: number, reason?: string, quotaFailure = false): ImageHttpCode {
+function classify(status: number, reason?: string, quotaFailure = false, serviceStatus?: string, evidence?: ImageErrorEvidence): ImageHttpCode {
   if (status === 401) return 'IMAGE_DIRECT_AUTH_REQUIRED';
+  if (status === 403) {
+    if (reason === 'VALIDATION_REQUIRED') return 'IMAGE_DIRECT_VALIDATION_REQUIRED';
+    if (reason === 'PERMISSION_DENIED' || reason === 'ACCESS_DENIED' ||
+        serviceStatus === 'PERMISSION_DENIED' && evidence?.reasons === 'absent' && (evidence.details === 'absent' || evidence.details === 'array')) return 'IMAGE_DIRECT_PERMISSION_DENIED';
+  }
   if (reason && HARD_QUOTA.has(reason)) return 'IMAGE_DIRECT_QUOTA_EXHAUSTED';
   if (reason && QUOTA.has(reason)) return 'IMAGE_DIRECT_QUOTA_LIMITED';
   if (reason && RATE.has(reason)) return 'IMAGE_DIRECT_RATE_LIMITED';
@@ -59,12 +69,12 @@ function classify(status: number, reason?: string, quotaFailure = false): ImageH
 
 /** Keep explicit reasons and fixed diagnostic facts. Message hints never decide the failure code. */
 export function imageHttpFailure(status: number, body: unknown, retryHeader: unknown, requestId?: string, shape: ImageResponseShape = 'unstructured', now = Date.now(), excludedText: readonly string[] = []): ImageHttpFailure {
-  const root = object(body) && object(body.error) ? body.error : undefined;
-  const serviceStatus = safeStatus(root?.status);
+  const candidate = own(body, 'error'), root = object(candidate) ? candidate : undefined;
+  const serviceStatus = safeStatus(own(root, 'status'));
   const headerDelay = retryAfterSeconds(retryHeader, now);
   const { serviceReason, quotaFailure, detailDelay, evidence } = inspectImageError(root, retryHeader, headerDelay, excludedText);
   const retryAfter = headerDelay ?? detailDelay;
-  const code = classify(status, serviceReason, quotaFailure);
+  const code = classify(status, serviceReason, quotaFailure, serviceStatus, evidence);
   const error = new Error(code) as ImageHttpFailure;
   error.httpStatus = Number.isSafeInteger(status) && status >= 100 && status <= 599 ? status : 0;
   if (serviceStatus) error.serviceStatus = serviceStatus;
@@ -78,10 +88,16 @@ export function imageHttpFailure(status: number, body: unknown, retryHeader: unk
 }
 
 /** Fixed guidance, with only validated metadata from our own failure object. No raw response text. */
-export function formatImageFailure(error: unknown): string {
-  if (!(error instanceof Error) || !/^IMAGE_[A-Z_]+$/u.test(error.message)) return 'IMAGE_DIRECT_REQUEST_FAILED';
+export function formatImageFailure(error: unknown, diagnostics = true): string {
+  if (!(error instanceof Error) || !/^IMAGE_[A-Z_]+$/u.test(error.message)) return diagnostics ? 'IMAGE_DIRECT_REQUEST_FAILED' : tr('diagnostic.requestFailed');
   const fields = error as Partial<ImageHttpFailure>;
   const hint: Record<string, string> = {
+    IMAGE_DIRECT_ENDPOINT_CHANGED: tr('diagnostic.endpointChanged'),
+    IMAGE_DIRECT_ACCOUNT_CHANGED: tr('diagnostic.accountChanged'),
+    IMAGE_DIRECT_VALIDATION_REQUIRED: tr('diagnostic.validationRequired'),
+    IMAGE_DIRECT_PERMISSION_DENIED: tr('diagnostic.permissionDenied'),
+    IMAGE_DIRECT_FORBIDDEN: tr('diagnostic.accessUnknown'),
+    IMAGE_DIRECT_AUTH_REQUIRED: tr('diagnostic.authRequired'),
     IMAGE_PROMPT_REQUIRED: tr("directImageHttpError.promptRequired"),
     IMAGE_LOCAL_DIRECTORY_REQUIRED: tr("directImageHttpError.outputRequired"),
     IMAGE_DIRECT_SCOPE_INVALID: tr("directImageHttpError.scopeInvalid"),
@@ -95,7 +111,7 @@ export function formatImageFailure(error: unknown): string {
     IMAGE_SAVED_AUTH_REQUIRED: tr("directImageHttpError.34e429bd30"),
     IMAGE_SAVED_AUTH_EXPIRED: tr("directImageHttpError.565c58243c"),
     IMAGE_SAVED_AUTH_PENDING: tr("directImageHttpError.69e6f04f3a"),
-    IMAGE_SAVED_MODELS_FORBIDDEN: tr("directImageHttpError.bc9973af3d"),
+    IMAGE_SAVED_MODELS_FORBIDDEN: tr('diagnostic.accessUnknown'),
     IMAGE_CATALOG_LIST_MISSING: tr('catalog.imageListMissing'),
     IMAGE_CATALOG_LIST_INVALID: tr('catalog.imageListInvalid'),
     IMAGE_CATALOG_LIST_EMPTY: tr('catalog.imageListEmpty'),
@@ -115,9 +131,9 @@ export function formatImageFailure(error: unknown): string {
     IMAGE_DIRECT_RATE_LIMITED: tr("directImageHttpError.7d8a2f46e6"),
     IMAGE_DIRECT_CONCURRENCY_LIMITED: tr("directImageHttpError.4b9f543908"),
     IMAGE_DIRECT_CAPACITY_UNAVAILABLE: tr("directImageHttpError.9ebed4e9fd"),
-    IMAGE_DIRECT_RESOURCE_EXHAUSTED: tr("directImageHttpError.b84e0a6a29"),
-    IMAGE_DIRECT_PROJECT_ACCESS_DENIED: tr("directImageHttpError.3979048a0d"),
-    IMAGE_DIRECT_MODEL_OR_PROJECT_UNAVAILABLE: tr("directImageHttpError.293d760e63"),
+    IMAGE_DIRECT_RESOURCE_EXHAUSTED: diagnostics ? tr("directImageHttpError.b84e0a6a29") : tr("diagnostic.resourceUnknown"),
+    IMAGE_DIRECT_PROJECT_ACCESS_DENIED: diagnostics ? tr('directImageHttpError.3979048a0d') : tr('diagnostic.resourceUnavailable'),
+    IMAGE_DIRECT_MODEL_OR_PROJECT_UNAVAILABLE: diagnostics ? tr("directImageHttpError.293d760e63") : tr("diagnostic.resourceUnavailable"),
     IMAGE_DIRECT_SERVICE_UNAVAILABLE: tr("directImageHttpError.436695e441"),
     IMAGE_DIRECT_NO_IMAGE_RETURNED: tr("directImageHttpError.3a4e22016b"),
     IMAGE_DIRECT_NO_CANDIDATE: tr("directImageHttpError.065159b552"),
@@ -127,6 +143,11 @@ export function formatImageFailure(error: unknown): string {
     IMAGE_DIRECT_MODEL_STOPPED: tr("directImageHttpError.07472df397"),
     IMAGE_DIRECT_SERVICE_ERROR: tr("directImageHttpError.b28b6a1eb8"),
   };
+  if (!diagnostics) {
+    const parts = [hint[error.message] ?? tr('diagnostic.requestFailed')];
+    parts.push(...imageFailureWaitHints(fields));
+    return parts.join(' · ');
+  }
   const parts = [error.message];
   const guidance = hint[error.message]; if (guidance) parts.push(guidance);
   if (Number.isSafeInteger(fields.httpStatus) && fields.httpStatus! >= 100 && fields.httpStatus! <= 599) parts.push(`HTTP ${fields.httpStatus}`);
@@ -144,6 +165,28 @@ export function formatImageFailure(error: unknown): string {
   return parts.join(' · ');
 }
 
+/** Ordinary UI contains only fixed guidance. Debug fields remain in formatImageFailure and the advanced record. */
+export function formatImageUserFailure(error: unknown): string { return formatImageFailure(error, false); }
+
+/** Independent server hints, never a timer, recovery promise, automatic retry or account switch. */
+export function imageFailureWaitHints(fields: Partial<ImageHttpFailure>): string[] {
+  const parts: string[] = [];
+  const valid = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= MAX_DIAGNOSTIC_DELAY_SECONDS;
+  const e = fields.evidence;
+  const header = e?.headerDelaySeconds, detail = e?.detailDelaySeconds;
+  if (valid(header) && valid(detail) && header !== detail) parts.push(tr('diagnostic.waitConflict', { p0: header, p1: detail }));
+  else {
+    const wait = valid(header) ? header : valid(detail) ? detail : fields.retryAfterSeconds;
+    if (valid(wait)) parts.push(tr('diagnostic.wait', { p0: wait }));
+  }
+  if (valid(e?.quotaResetDelaySeconds)) parts.push(tr('diagnostic.quotaResetDelay', { p0: e.quotaResetDelaySeconds }));
+  if (validDiagnosticTimestamp(e?.quotaResetTime))
+    parts.push(tr('diagnostic.quotaResetTime', { p0: e.quotaResetTime }));
+  else if (!valid(e?.quotaResetDelaySeconds) && (parts.length || ['IMAGE_DIRECT_QUOTA_EXHAUSTED', 'IMAGE_DIRECT_QUOTA_LIMITED', 'IMAGE_DIRECT_RESOURCE_EXHAUSTED', 'IMAGE_DIRECT_RATE_LIMITED'].includes(fields.message ?? '')))
+    parts.push(tr('diagnostic.quotaResetUnknown'));
+  return parts;
+}
+
 /** Failure strings contain a stable code plus separately generated fixed fields.
  * Relocalize only that representation; prompts, account labels and paths never
  * pass through this helper. It also accepts an enclosing generated batch status. */
@@ -154,6 +197,17 @@ export function localizeImageFailure(value: string): string {
   const components = value.split(' · ');
   if (components.length > 1 && /^IMAGE_[A-Z_]+$/.test(components[1]!)) return components.map(localizeMessage).join(' · ');
   const translated = localizeMessage(value);
-  if (!/\bIMAGE_[A-Z_]+\b/u.test(value)) return translated;
   return translated.split(' · ').map(localizeMessage).join(' · ');
+}
+
+/** Present old generated task/account statuses without rewriting saved history.
+ * Their flattened diagnostic suffix cannot establish new structured evidence. */
+export function localizeImageUserStatus(value: string): string {
+  const localized = localizeImageFailure(value);
+  const match = /\bIMAGE_[A-Z_]{3,64}\b/u.exec(localized);
+  if (!match) return localized;
+  const suffix = localized.slice(match.index + match[0].length);
+  if (suffix && !suffix.startsWith(' · ')) return localized;
+  const kept = suffix.split(' · ').at(-1) === tr('catalog.resultsKept') ? ' · ' + tr('catalog.resultsKept') : '';
+  return localized.slice(0, match.index) + formatImageUserFailure(new Error(match[0])) + kept;
 }

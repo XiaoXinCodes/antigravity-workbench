@@ -79,21 +79,21 @@ test('official focus callbacks list only active IDs and cannot mistake saved B f
  resolve({accounts:f.accounts,models:[{id:mb,label:'B model'}],readiness:'ready'});await tick();await tick();
  assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,false);assert.equal(f.latest().draft.accountId,B);
  f.accounts.pop();f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A]});
- assert.equal(f.latest().accountBlocked,true);assert.match(f.latest().accountStatus,/IMAGE_SAVED_ACCOUNT_REMOVED/);assert.equal(f.latest().choices.models.length,0);
+ assert.equal(f.latest().accountBlocked,true);assert.match(f.latest().accountStatus,/此生图账号已移除/);assert.equal(f.latest().choices.models.length,0);
 });
 test('a hung B lookup times out, aborts, offers retry and cannot overwrite a later successful retry',async t=>{
  const f=await fixture(t);t.mock.timers.enable({apis:['setTimeout']});let late,signal;
  f.load(s=>{signal=s;return new Promise(r=>late=r)});
  await f.send({type:'selectAccount',selection:B,...f.form});t.mock.timers.tick(59_999);await tick();assert.equal(f.latest().choicesLoading,true);
  t.mock.timers.tick(1);await tick();await tick();
- assert.equal(signal.aborted,true);assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/IMAGE_ACCOUNT_CHECK_TIMEOUT/);assert.equal(f.latest().choices.models.length,0);
+ assert.equal(signal.aborted,true);assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/账号状态检查超时/);assert.equal(f.latest().choices.models.length,0);
  f.load(async()=>({accounts:f.accounts,models:[{id:mb,label:'fresh B'}],readiness:'ready'}));await f.send({type:'checkAccount'});
  assert.equal(f.reads.at(-1).force,true);assert.equal(f.latest().accountBlocked,false);assert.equal(f.latest().choices.models[0].label,'fresh B');
  late({accounts:f.accounts,models:[{id:ma,label:'stale B'}]});await tick();assert.equal(f.latest().choices.models[0].label,'fresh B');assert.equal(f.latest().choicesLoading,false);assert.equal(f.runs.length,0);
 });
 test('current-account timeout has an in-place retry and success clears its notice',async t=>{
  const f=await fixture(t);t.mock.timers.enable({apis:['setTimeout']});f.load(()=>new Promise(()=>{}));await f.send({type:'ready'});
- t.mock.timers.tick(60_000);await tick();await tick();assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/IMAGE_ACCOUNT_CHECK_TIMEOUT/);
+ t.mock.timers.tick(60_000);await tick();await tick();assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/账号状态检查超时/);
  f.load(async()=>({accounts:f.accounts,models:[{id:ma,label:'current'}]}));await f.send({type:'checkAccount'});
  assert.equal(f.latest().accountStatus,'');assert.equal(f.latest().accountBlocked,false);assert.equal(f.latest().draft.followCurrent,true);assert.equal(f.prompts.length,0);assert.equal(f.runs.length,0);
 });
@@ -103,20 +103,20 @@ test('rapid A-B selections isolate old replies and duplicate ready notifications
  await f.send({type:'selectAccount',selection:B,...f.form});await f.send({type:'ready'});await f.send({type:'ready'});assert.equal(pending.length,1);
  await f.send({type:'selectAccount',selection:'@current',...f.form});assert.equal(f.latest().accountStatus,'');
  await f.send({type:'selectAccount',selection:B,...f.form});assert.equal(pending.length,2);assert.equal(pending[0].signal.aborted,true);
- pending[0].reject(Error('IMAGE_SAVED_MODELS_FORBIDDEN'));await tick();assert.equal(f.latest().choicesLoading,true);assert.doesNotMatch(f.latest().accountStatus,/FORBIDDEN/);
+ pending[0].reject(Error('IMAGE_SAVED_MODELS_FORBIDDEN'));await tick();assert.equal(f.latest().choicesLoading,true);assert.doesNotMatch(f.latest().accountStatus,/FORBIDDEN|访问被拒绝/);
  pending[1].resolve({accounts:f.accounts,models:[{id:mb,label:'latest B'}],readiness:'ready'});await tick();await tick();
  assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().draft.accountId,B);assert.equal(f.latest().accountBlocked,false);assert.equal(f.latest().choices.models[0].label,'latest B');
 });
 test('denied target models finish loading with an actionable failure and retry stays on B',async t=>{
  const f=await fixture(t);f.load(async()=>{throw Error('IMAGE_SAVED_MODELS_FORBIDDEN')});
- await f.send({type:'selectAccount',selection:B,...f.form});assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/IMAGE_SAVED_MODELS_FORBIDDEN/);assert.equal(f.latest().choices.models.length,0);
+ await f.send({type:'selectAccount',selection:B,...f.form});assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/访问被拒绝.*原因尚不明确/);assert.equal(f.latest().choices.models.length,0);
  f.load(async()=>({accounts:f.accounts,models:[{id:mb,label:'B'}],readiness:'ready'}));await f.send({type:'checkAccount'});
- assert.equal(f.latest().draft.accountId,B);assert.equal(f.latest().accountBlocked,false);assert.doesNotMatch(f.latest().accountStatus,/正在读取|FORBIDDEN/);assert.equal(f.runs.length,0);
+ assert.equal(f.latest().draft.accountId,B);assert.equal(f.latest().accountBlocked,false);assert.doesNotMatch(f.latest().accountStatus,/正在读取|FORBIDDEN|访问被拒绝/);assert.equal(f.runs.length,0);
 });
 test('command cancellation finishes metadata loading and a late result cannot enable generation',async t=>{
  const f=await fixture(t);let resolve;
  f.load(()=>new Promise(r=>resolve=r));await f.send({type:'selectAccount',selection:B,...f.form});f.cancel();
- assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/IMAGE_ACCOUNT_CHECK_CANCELLED/);
+ assert.equal(f.latest().choicesLoading,false);assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().canCheckAccount,true);assert.match(f.latest().accountStatus,/已取消账号状态检查/);
  resolve({accounts:f.accounts,models:[{id:mb}]});await tick();assert.equal(f.latest().choices.models.length,0);assert.equal(f.latest().draft.prompt,f.form.prompt);assert.equal(f.runs.length,0);
 });
 test('duplicate selection coalesces the active check and cancelling never schedules a background retry',async t=>{
@@ -125,7 +125,7 @@ test('duplicate selection coalesces the active check and cancelling never schedu
  await f.send({type:'selectAccount',selection:B,...f.form});
  await f.send({type:'selectAccount',selection:B,...f.form});await f.send({type:'ready'});assert.equal(calls,1);
  f.cancel();await f.send({type:'ready'});f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A]});
- f.close();await f.open();assert.equal(calls,1);assert.match(f.latest().accountStatus,/CHECK_CANCELLED/);assert.equal(f.latest().canCheckAccount,true);
+ f.close();await f.open();assert.equal(calls,1);assert.match(f.latest().accountStatus,/已取消账号状态检查/);assert.equal(f.latest().canCheckAccount,true);
  f.load(async()=>({accounts:f.accounts,models:[{id:mb}],readiness:'ready'}));await f.send({type:'checkAccount'});
  assert.equal(f.latest().accountBlocked,false);assert.equal(f.prompts.length,0);assert.equal(f.runs.length,0);
 });
@@ -134,7 +134,7 @@ test('failed automatic check stays on the selected account without ready/focus r
  f.load(async()=>{calls++;return{accounts:f.accounts,models:[],readiness:'error',accountMessage:'IMAGE_SAVED_AUTH_REQUIRED'}});
  await f.send({type:'selectAccount',selection:B,...f.form});
  for(let i=0;i<3;i++){await f.send({type:'ready'});f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A]})}
- assert.equal(calls,1);assert.equal(f.latest().draft.accountId,B);assert.equal(f.latest().accountBlocked,true);assert.match(f.latest().accountStatus,/AUTH_REQUIRED/);
+ assert.equal(calls,1);assert.equal(f.latest().draft.accountId,B);assert.equal(f.latest().accountBlocked,true);assert.match(f.latest().accountStatus,/授权不可用/);
  assert.equal(f.prompts.length,0);assert.equal(f.runs.length,0);
 });
 test('selected account replacement or host disable aborts a lookup and cannot silently renew selection',async t=>{
@@ -142,7 +142,7 @@ test('selected account replacement or host disable aborts a lookup and cannot si
   const f=await fixture(t);let resolve,signal;
   f.load(s=>{signal=s;return new Promise(r=>resolve=r)});await f.send({type:'selectAccount',selection:B,...f.form});
   change(f.accounts[1]);f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A]});
-  assert.equal(signal.aborted,true);assert.equal(f.latest().accountBlocked,true);assert.match(f.latest().accountStatus,/SELECTION_REQUIRED/);
+  assert.equal(signal.aborted,true);assert.equal(f.latest().accountBlocked,true);assert.match(f.latest().accountStatus,/账号记录已变化或尚未选择/);
   assert.equal(f.latest().choices.accounts.find(a=>a.id===B).unavailable,f.accounts[1].hostCurrent===false||f.accounts[1].migrationState==='pending');
   const reads=f.reads.length;await f.send({type:'ready'});assert.equal(f.reads.length,reads);
   resolve({accounts:f.accounts,models:[{id:mb}],readiness:'ready'});await tick();assert.equal(f.latest().choices.models.length,0);
@@ -164,7 +164,7 @@ test('healthy current refresh remains visible, collapses repeated clicks and dro
 });
 test('late refresh from an old endpoint fails closed and offers a manual recheck',async t=>{
  const f=await fixture(t);let reply;f.load(()=>new Promise(r=>reply=r));await f.send({type:'checkAccount'});f.setEndpoint('production');reply({accounts:f.accounts,models:[{id:ma,label:'old endpoint'}]});await tick();await tick();
- assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().choices.models.length,0);assert.match(f.latest().accountStatus,/ENDPOINT_CHANGED/);assert.equal(f.latest().canCheckAccount,true);assert.equal(f.runs.length,0);
+ assert.equal(f.latest().accountBlocked,true);assert.equal(f.latest().choices.models.length,0);assert.match(f.latest().accountStatus,/服务环境已变化/);assert.equal(f.latest().canCheckAccount,true);assert.equal(f.runs.length,0);
 });
 
 test('image page quota query uses selected B inline, with no confirmation, image call or file opening',async t=>{
@@ -217,7 +217,7 @@ test('a restored saved account waits for storage and resumes only its original f
 test('startup cannot silently renew a restored saved selection after replacement',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});const f=await fixture(t,{ready:false,restore:true});
  f.accounts[1].capturedAt='replacement';f.setReady(true);f.ui.accountStateChanged({pending:false,email:'a@example.test',accountIds:[A]});await tick();await tick();
- assert.equal(f.latest().accountBlocked,true);assert.equal(f.selections.size,0);assert.match(f.latest().accountStatus,/IMAGE_SAVED_SELECTION_REQUIRED/);f.close();
+ assert.equal(f.latest().accountBlocked,true);assert.equal(f.selections.size,0);assert.match(f.latest().accountStatus,/账号记录已变化或尚未选择/);f.close();
 });
 test('successful image generation freshly queries the same saved account and retains actual server 1.0',async t=>{
  const f=await fixture(t);await f.send({type:'selectAccount',selection:B,...f.form});await f.send({type:'queryQuota'});
@@ -347,7 +347,7 @@ test('same current scope notifications during and after generation repaint witho
 test('failed manual directory refresh after success keeps selected model, last catalog and successful persisted images; recovery clears only catalog warning',async t=>{
  const f=await fixture(t);t.after(f.dispose);await completeSynthetic(f);const original=f.latest().choices.catalog,selected=f.latest().draft.modelId;
  f.load(async()=>{throw require('../out/model-catalog-error').catalogError('IMAGE_SAVED_MODELS_FAILED','transport','http',400)});await f.send({type:'checkAccount'});
- assert.match(f.latest().accountStatus,/模型目录检查未完成.*HTTP 400.*图片和历史仍保留/);assert.doesNotMatch(f.latest().accountStatus,/没有提交图片|未提交图片/);assert.equal(f.latest().draft.modelId,selected);assert.deepEqual(f.latest().choices.catalog,original);assert.equal(f.latest().choices.models.length,1);assert.equal(f.latest().choices.stale,true);assert.equal(f.latest().accountBlocked,true);await assertSavedSuccess(f);
+ assert.match(f.latest().accountStatus,/模型目录检查未完成.*模型目录查询未完成.*图片和历史仍保留/);assert.doesNotMatch(f.latest().accountStatus,/没有提交图片|未提交图片/);assert.equal(f.latest().draft.modelId,selected);assert.deepEqual(f.latest().choices.catalog,original);assert.equal(f.latest().choices.models.length,1);assert.equal(f.latest().choices.stale,true);assert.equal(f.latest().accountBlocked,true);await assertSavedSuccess(f);
  f.load(async()=>({accounts:f.accounts,models:[{id:ma,label:'Renamed server model'}]}));await f.send({type:'checkAccount'});assert.equal(f.latest().choices.models[0].label,'Renamed server model');assert.equal(f.latest().accountBlocked,false);assert.equal(f.latest().choices.stale,false);assert.equal(f.latest().accountStatus,'');await assertSavedSuccess(f);
 });
 test('expired same-scope display triggers bounded refresh after success and preserves the previous display on failure',async t=>{
@@ -356,7 +356,7 @@ test('expired same-scope display triggers bounded refresh after success and pres
 });
 test('lock conflict after successful generation is a directory operation warning without an invented HTTP status',async t=>{
  const f=await fixture(t);t.after(f.dispose);await completeSynthetic(f);f.load(async()=>{throw new(require('../out/live-storage').LiveError)('LIVE_OPERATION_OR_RECOVERY_LOCKED')});await f.send({type:'checkAccount'});
- assert.match(f.latest().accountStatus,/模型目录检查未完成.*IMAGE_ACCOUNT_OPERATION_BUSY/);assert.doesNotMatch(f.latest().accountStatus,/IMAGE_SAVED_MODELS_FAILED|HTTP|没有提交图片/);assert.equal(f.latest().choices.models.length,1);await assertSavedSuccess(f);
+ assert.match(f.latest().accountStatus,/模型目录检查未完成.*另一窗口正在执行/);assert.doesNotMatch(f.latest().accountStatus,/IMAGE_SAVED_MODELS_FAILED|HTTP|没有提交图片/);assert.equal(f.latest().choices.models.length,1);await assertSavedSuccess(f);
 });
 test('first same-scope identity callback coalesces with an existing directory refresh and preserves its owner',async t=>{
  const f=await fixture(t);t.after(f.dispose);let release;f.load(signal=>new Promise(resolve=>release={signal,resolve}));await f.send({type:'checkAccount'});const before=f.reads.length;

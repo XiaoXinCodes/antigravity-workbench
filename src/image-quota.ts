@@ -1,3 +1,4 @@
+import { formatImageUserFailure } from './direct-image-http-error';
 import { parseModelCatalog } from './model-catalog';
 import { t as tr } from './i18n';
 export { quotaPercent as imageQuotaPercent } from './quota-presentation';
@@ -10,7 +11,8 @@ export interface ImageQuotaSnapshot extends ImageQuotaRow { accountId: string; e
 export function imageQuotaErrorText(error: unknown): string {
   const code = error instanceof Error ? error.message : '';
   if (/^(IMAGE_ACCOUNT_CHECK_TIMEOUT|ACCOUNT_QUOTA_TIMEOUT)$/.test(code)) return tr("imageQuota.d0f855d334");
-  if (/FORBIDDEN|ACCESS_DENIED/.test(code)) return tr("imageQuota.0536dcd4c6");
+  if (code.startsWith('IMAGE_DIRECT_')) return formatImageUserFailure(error);
+  if (['IMAGE_SAVED_MODELS_FORBIDDEN', 'ACCOUNT_QUOTA_FORBIDDEN'].includes(code)) return tr('diagnostic.accessUnknown');
   if (/AUTH_REQUIRED|AUTH_EXPIRED|REAUTH_REQUIRED/.test(code)) return tr("imageQuota.fa8806af0e");
   if (/ACCOUNT_CHANGED|ACCOUNT_REMOVED|ENDPOINT_CHANGED|MODEL_UNVERIFIED/.test(code)) return tr("imageQuota.a5985a2084");
   if (/RATE_LIMITED/.test(code)) return tr("imageQuota.d5a6407f33");
