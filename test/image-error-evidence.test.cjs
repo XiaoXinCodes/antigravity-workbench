@@ -219,3 +219,15 @@ test('old generated history renders friendly guidance without changing its store
  assert.match(localizeImageUserStatus(unknown),/原因尚不明确/);assert.doesNotMatch(localizeImageUserStatus(unknown),/需要完成验证/);
  try{setLanguage('en');assert.match(localizeImageUserStatus(legacy),/lacks permission/);}finally{setLanguage('zh-CN');}
 });
+
+test('generic permission status remains debug evidence, never a permission or verification diagnosis from prose',()=>{
+ const {formatImageUserFailure}=require('../out/direct-image-http-error');
+ for(const fixture of require('./fixtures/access-diagnostics.json').filter(row=>row.code==='IMAGE_DIRECT_FORBIDDEN'&&row.body.error?.status==='PERMISSION_DENIED')) {
+  const e=imageHttpFailure(403,fixture.body,undefined);
+  assert.equal(e.serviceStatus,'PERMISSION_DENIED',fixture.name);
+  assert.equal(debugErrorData(e).serviceStatus,'PERMISSION_DENIED',fixture.name);
+  assert.equal(e.serviceReason,undefined,fixture.name);
+  assert.match(formatImageUserFailure(e),/原因尚不明确/,fixture.name);
+  assert.doesNotMatch(formatImageUserFailure(e),/没有本次操作所需的权限|需要完成验证|SENTINEL|https:/,fixture.name);
+ }
+});

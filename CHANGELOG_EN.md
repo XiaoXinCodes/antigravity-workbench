@@ -4,6 +4,16 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.16](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.16) — 2026-10-19
+
+Understand image and quota access failures and waiting information more clearly.
+
+- Distinguish explicit account verification requirements, insufficient permission and access denials with an unknown cause, with guidance on what to do next.
+- Show suggested waiting and quota recovery information separately, preserving conflicting and unknown values.
+- Simplify errors and older task notices in both languages while retaining drafts, history and saved images.
+
+[Release notes](docs/RELEASE_0.1.16.md) · [Validation scope](docs/VALIDATION_0.1.16.md)
+
 ## [0.1.15](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.15) — 2026-10-12
 
 Find and understand the multi-account workbench, encrypted migration and Image Studio more easily.

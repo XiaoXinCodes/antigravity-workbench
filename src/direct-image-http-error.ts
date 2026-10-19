@@ -46,12 +46,13 @@ export interface ImageHttpFailureFields {
 }
 export type ImageHttpFailure = Error & ImageHttpFailureFields;
 
-function classify(status: number, reason?: string, quotaFailure = false, serviceStatus?: string, evidence?: ImageErrorEvidence): ImageHttpCode {
+function classify(status: number, reason?: string, quotaFailure = false): ImageHttpCode {
   if (status === 401) return 'IMAGE_DIRECT_AUTH_REQUIRED';
   if (status === 403) {
     if (reason === 'VALIDATION_REQUIRED') return 'IMAGE_DIRECT_VALIDATION_REQUIRED';
-    if (reason === 'PERMISSION_DENIED' || reason === 'ACCESS_DENIED' ||
-        serviceStatus === 'PERMISSION_DENIED' && evidence?.reasons === 'absent' && (evidence.details === 'absent' || evidence.details === 'array')) return 'IMAGE_DIRECT_PERMISSION_DENIED';
+    // The generic PERMISSION_DENIED status can also accompany validation challenges.
+    // Only an explicit structured reason establishes this diagnosis.
+    if (reason === 'PERMISSION_DENIED' || reason === 'ACCESS_DENIED') return 'IMAGE_DIRECT_PERMISSION_DENIED';
   }
   if (reason && HARD_QUOTA.has(reason)) return 'IMAGE_DIRECT_QUOTA_EXHAUSTED';
   if (reason && QUOTA.has(reason)) return 'IMAGE_DIRECT_QUOTA_LIMITED';
@@ -74,7 +75,7 @@ export function imageHttpFailure(status: number, body: unknown, retryHeader: unk
   const headerDelay = retryAfterSeconds(retryHeader, now);
   const { serviceReason, quotaFailure, detailDelay, evidence } = inspectImageError(root, retryHeader, headerDelay, excludedText);
   const retryAfter = headerDelay ?? detailDelay;
-  const code = classify(status, serviceReason, quotaFailure, serviceStatus, evidence);
+  const code = classify(status, serviceReason, quotaFailure);
   const error = new Error(code) as ImageHttpFailure;
   error.httpStatus = Number.isSafeInteger(status) && status >= 100 && status <= 599 ? status : 0;
   if (serviceStatus) error.serviceStatus = serviceStatus;

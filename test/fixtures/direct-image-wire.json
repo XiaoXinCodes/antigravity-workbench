@@ -9,7 +9,7 @@
     "daily": "daily-cloudcode-pa.googleapis.com"
   },
   "client": {
-    "httpUserAgent": "Antigravity-Workbench/0.1.15",
+    "httpUserAgent": "Antigravity-Workbench/0.1.16",
     "bodyUserAgent": null
   },
   "project": {
