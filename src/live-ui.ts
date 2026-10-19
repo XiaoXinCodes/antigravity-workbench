@@ -1246,7 +1246,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         errorMessage = e instanceof LockConflictError ? lockConflictMessage(e.activity) : name === 'import' && code === 'ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN' ? tr('liveUi.importUnknown') : liveErrorMessage(code, nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName));
         if (name === 'import' && ['ACCOUNT_QUOTA_REFRESH_PENDING', 'ACCOUNT_QUOTA_SECURE_SAVE_FAILED', 'ACCOUNT_QUOTA_REFRESH_SAVE_FAILED'].includes(code)) errorMessage += ' ' + tr('liveUi.importRetry');
         const retainedFailure = readLastAccountFailure(operationFailure);
-        if (retainedFailure) errorMessage += `（${retainedFailure.code}）`;
+        if (retainedFailure && name !== 'quota') errorMessage += `（${retainedFailure.code}）`;
         if (name === 'quota') {
           // Read-only queries report locally, never as modal/toast/editor notifications.
           // Invalid/unbound caller-supplied ids must not redirect errors to a different card.

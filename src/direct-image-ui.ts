@@ -18,7 +18,7 @@ import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { checkedDirectory } from './image-files';
 import { readDirectRaster } from './direct-image-raster';
 import { recoverExistingImage } from './direct-image-output';
-import { formatImageFailure, localizeImageFailure } from './direct-image-http-error';
+import { formatImageUserFailure, localizeImageFailure, localizeImageUserStatus } from './direct-image-http-error';
 import { RecentImageFailureStore, captureRecentImageFailure, formatRecentImageFailure, type ImageFailureStage } from './recent-image-failure';
 import type { DirectImageRequest } from './direct-image-core';
 import type { createDirectImageIntegration } from './direct-image-vscode';
@@ -36,7 +36,7 @@ type Choice = Awaited<ReturnType<Direct['readChoices']>>;
 const RATIOS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
 const SIZES = new Set(['auto', '1K', '2K', '4K']);
 const QUALITIES = new Set(['auto', 'detail']);
-const code = formatImageFailure;
+const code = formatImageUserFailure;
 
 function nativePath(uri: vscode.Uri): string | undefined {
   if (uri.scheme === 'file' && !uri.authority && path.isAbsolute(uri.fsPath)) return uri.fsPath;
@@ -152,19 +152,19 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         ...(comparison?.versions.filter(v => [comparison?.left, comparison?.right].includes(v.key) && !comparison?.unavailable[v.key]).map(v => path.dirname(v.file)) ?? [])])].map(directory => vscode.Uri.file(directory)) };
     const compareSide = (key: string) => { const v = comparison?.versions.find(v => v.key === key); return v ? { key, label: localizeMessage(v.label), name: path.basename(v.file), width: v.width, height: v.height,
       unavailable: comparison?.unavailable[key] ? localizeMessage(comparison.unavailable[key]!) : undefined, preview: comparison?.unavailable[key] ? '' : panel?.webview.asWebviewUri?.(vscode.Uri.file(v.file)).toString() ?? '' } : undefined; };
-    void panel.webview.postMessage({ type: 'state', endpoint: direct.getEndpoint(), languageOnly, busy, draftRevision, draftEpoch, actionRevision, status: privateText(localizeImageFailure(status)), storageNotice: privateText(localizeMessage(storageNotice)), storageBlocked: !!storageNotice, actionNotice: privateText(localizeMessage(actionNotice)), editorTarget: project.state(),
+    void panel.webview.postMessage({ type: 'state', endpoint: direct.getEndpoint(), languageOnly, busy, draftRevision, draftEpoch, actionRevision, status: privateText(localizeImageUserStatus(status)), storageNotice: privateText(localizeMessage(storageNotice)), storageBlocked: !!storageNotice, actionNotice: privateText(localizeMessage(actionNotice)), editorTarget: project.state(),
     iteration: origin ? { taskId: origin.taskId, imageIndex: origin.imageIndex, name: path.basename(origin.file), modelUnavailable } : undefined,
     savedDrafts: savedDrafts.map(s => ({ id: s.id, savedAt: s.savedAt, summary: s.draft.prompt.slice(0, 80) || tr("directImageUi.de5f067d27") })),
     comparison: comparison ? { versions: comparison.versions.map(v => ({ key: v.key, label: localizeMessage(v.label) })), left: compareSide(comparison.left), right: compareSide(comparison.right) } : undefined,
     imageFavorites: preferences.getState().imageFavorites,
-    imageQuota: { ...quota.getState(), error: localizeImageFailure(quota.getState().error ?? '') }, accountRetryPending: !!retryTimer, accountStatus: privateText(localizeImageFailure(accountStatus)), accountBlocked: accountBlocked || choicesLoading || modelUnavailable, choicesLoading, canCheckAccount: !!selectedSavedId || !officialBlocked,
+    imageQuota: { ...quota.getState(), error: localizeImageUserStatus(quota.getState().error ?? '') }, accountRetryPending: !!retryTimer, accountStatus: privateText(localizeImageUserStatus(accountStatus)), accountBlocked: accountBlocked || choicesLoading || modelUnavailable, choicesLoading, canCheckAccount: !!selectedSavedId || !officialBlocked,
     recentDiagnostic: privateText(formatRecentImageFailure(recent.get())), operationHistory: privateText(localizeLines(operationHistory)), choices: {
     accounts: choices.accounts.map(x => ({ id: x.id, label: displayAccount(x) + (x.id === currentId ? tr("directImageUi.d381a6a80a") : ''), active: x.id === currentId, unavailable: x.hostCurrent === false || x.migrationState === 'pending' })), models: choices.models, catalog: choices.catalog, stale: catalogStale },
     outputDirectory, outputName: outputDirectory ? path.basename(outputDirectory) || outputDirectory : '', references: references.map(x => path.basename(x)), referenceRevision,
     referenceImages: references.map((file, index) => ({ index, name: path.basename(file), source: file === origin?.file,
       preview: panel?.webview.asWebviewUri?.(vscode.Uri.file(file)).toString() ?? '' })),
     images: images.map((x, index) => ({ index, name: path.basename(x.file), width: x.width, height: x.height })),
-    tasks: tasks.map(task => ({ ...task, accountLabel: identityHidden() ? identityAlias(task.accountId ?? task.id) : task.accountLabel, status: privateText(localizeImageFailure(task.status)), ...(task.count === 0 && !task.prompt ? { promptSummary: localizeMessage(task.promptSummary) } : {}), prompt: undefined, references: undefined, outputDirectory: undefined,
+    tasks: tasks.map(task => ({ ...task, outcomeUnknown: task.status.includes('IMAGE_DIRECT_OUTCOME_UNKNOWN') || localizeImageFailure(task.status).includes(tr('directImageHttpError.outcomeUnknown')), accountLabel: identityHidden() ? identityAlias(task.accountId ?? task.id) : task.accountLabel, status: privateText(localizeImageUserStatus(task.status)), ...(task.count === 0 && !task.prompt ? { promptSummary: localizeMessage(task.promptSummary) } : {}), prompt: undefined, references: undefined, outputDirectory: undefined,
       origin: task.origin ? { taskId: task.origin.taskId, imageIndex: task.origin.imageIndex, rootTaskId: task.origin.rootTaskId, rootImageIndex: task.origin.rootImageIndex } : undefined,
       images: task.images.map((x, index) => ({ index, name: path.basename(x.file), width: x.width, height: x.height, projectCopy: x.projectCopy ? path.basename(x.projectCopy.file) : undefined,
       unavailable: x.unavailable ? localizeMessage(x.unavailable) : undefined, preview: x.unavailable ? '' : panel?.webview.asWebviewUri?.(vscode.Uri.file(x.file)).toString() ?? '' })) })), draft }); };
@@ -618,7 +618,7 @@ export function registerDirectImageUi(context: vscode.ExtensionContext, direct: 
         images.push(...result.images);
         task.images.push(...result.images);
         task.phase = result.batch.outcome === 'complete' ? 'complete' : result.images.length ? 'partial' : result.batch.outcome === 'cancelled' ? 'cancelled' : 'failed';
-        status = result.batch.outcome === 'complete' ? tr("directImageUi.87bc993c01", { p0: result.images.length }) : tr("directImageUi.5129adff5e", { p0: result.images.length, p1: result.batch.error ? code(new Error(result.batch.error)) : result.batch.outcome });
+        status = result.batch.outcome === 'complete' ? tr("directImageUi.87bc993c01", { p0: result.images.length }) : tr("directImageUi.5129adff5e", { p0: result.images.length, p1: result.batch.error ? code(Object.assign(new Error(result.batch.error), 'failure' in result.batch ? result.batch.failure : {})) : result.batch.outcome });
         task.status = status;
         if (result.batch.outcome === 'complete') {
           if (!cancelRequested && !active.signal.aborted && result.images.length) completedQuotaSelection = generationQuotaSelection;

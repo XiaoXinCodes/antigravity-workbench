@@ -4,6 +4,16 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
+## [0.1.16](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.16) — 2026-10-19
+
+更清楚地了解图片与额度访问失败的原因和等待信息。
+
+- 明确区分账号验证要求、权限不足和原因不明的访问拒绝，并提供下一步提示。
+- 分开展示服务端建议等待和额度恢复信息，保留冲突与未知值。
+- 简化中英文错误和旧任务提示，保留草稿、历史与已生成图片。
+
+[发布说明](docs/RELEASE_0.1.16.md) · [验证范围](docs/VALIDATION_0.1.16.md)
+
 ## [0.1.15](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.15) — 2026-10-12
 
 更清楚地找到并了解多账号工作台、加密迁移和图片工作室。

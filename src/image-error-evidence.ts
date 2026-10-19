@@ -1,6 +1,7 @@
 import { summarizeImageErrorMessage, sanitizeImageMessageSummary, type ImageMessageSummary } from './image-error-message';
 /** Fixed facts and canonical message semantics only; arbitrary server prose is not retained. */
 export const IMAGE_HTTP_REASONS = [
+  'VALIDATION_REQUIRED',
   'QUOTA_EXCEEDED', 'QUOTA_EXHAUSTED', 'DAILY_QUOTA_EXCEEDED', 'INSUFFICIENT_QUOTA', 'BILLING_HARD_LIMIT_REACHED',
   'RATE_LIMIT_EXCEEDED', 'RATE_LIMITED', 'TOO_MANY_REQUESTS', 'REQUEST_RATE_LIMIT_EXCEEDED',
   'CONCURRENT_REQUESTS_EXCEEDED', 'CONCURRENCY_LIMIT_EXCEEDED',
@@ -35,7 +36,9 @@ function own(value: unknown, key: string): unknown {
 }
 export const safeImageReason = (value: unknown): string | undefined => typeof value === 'string' && REASONS.has(value) ? value : undefined;
 const delayNumber = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= MAX_DIAGNOSTIC_DELAY_SECONDS;
-const timestamp = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z$/u.test(v) && Number.isFinite(Date.parse(v));
+export const validDiagnosticTimestamp = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z$/u.test(v) &&
+  Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 19) === v.slice(0, 19);
+const timestamp = validDiagnosticTimestamp;
 
 /** Google protobuf Duration and the h/m/s form used by quotaResetDelay; never an instruction to retry. */
 export function diagnosticDelay(value: unknown): number | undefined {
@@ -92,11 +95,12 @@ export function inspectImageError(root: unknown, retryHeader: unknown, headerDel
   const reasons = new Set<string>(), kinds = new Set<Kind>(), keys = new Set<MetadataKey>();
   let unknownReason = false, quotaFailure = false, detailDelay: number | undefined;
   if (Array.isArray(details) && details.length <= 24) for (const item of details) {
-    if (!object(item)) { kinds.add('other'); continue; }
+    if (!object(item)) { kinds.add('other'); unknownReason = true; continue; }
     const type = own(item, '@type');
     const kind: Kind = type === 'type.googleapis.com/google.rpc.ErrorInfo' ? 'error-info' : type === 'type.googleapis.com/google.rpc.RetryInfo' ? 'retry-info' :
       type === 'type.googleapis.com/google.rpc.QuotaFailure' ? 'quota-failure' : type === undefined ? 'untyped' : 'other';
     kinds.add(kind);
+    if (kind === 'other') unknownReason = true;
     if (kind === 'quota-failure') quotaFailure = true;
     if (kind === 'error-info' || kind === 'untyped') {
       const rawReason = own(item, 'reason'), reason = safeImageReason(rawReason);

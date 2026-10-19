@@ -43,11 +43,14 @@ export async function sendDirectImage(token: string, body: unknown, signal: Abor
         const status = response.statusCode ?? 0;
         const retryAfter = response.headers['retry-after'];
         const json = typeof response.headers['content-type'] === 'string' && /^application\/json(?:\s*;|$)/i.test(response.headers['content-type']);
-        const fail = (value?: unknown, shape: ImageResponseShape = 'unstructured') =>
-          finish(imageHttpFailure(status, value, retryAfter, requestId as string | undefined, shape, Date.now(), excludedText));
-        if (!json) { response.destroy(); fail(); return; }
         let errorBytes = 0;
-        const errorChunks: Buffer[] = [];
+        const errorChunks = chunks;
+        const fail = (value?: unknown, shape: ImageResponseShape = 'unstructured') => {
+          if (done) return;
+          errorChunks.length = 0;
+          finish(imageHttpFailure(status, value, retryAfter, requestId as string | undefined, shape, Date.now(), excludedText));
+        };
+        if (!json) { response.destroy(); fail(); return; }
         response.on('data', (chunk: Buffer) => {
           if (done) return;
           errorBytes += chunk.length;
@@ -55,8 +58,13 @@ export async function sendDirectImage(token: string, body: unknown, signal: Abor
           else errorChunks.push(Buffer.from(chunk));
         });
         response.on('end', () => {
+          if (done) { errorChunks.length = 0; return; }
           let parsed: unknown;
-          try { parsed = JSON.parse(Buffer.concat(errorChunks).toString('utf8')); } catch { fail(); return; }
+          try {
+            const raw = Buffer.concat(errorChunks), text = raw.toString('utf8');
+            if (!Buffer.from(text, 'utf8').equals(raw)) throw new Error();
+            parsed = JSON.parse(text);
+          } catch { fail(); return; }
           fail(parsed, parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
             'error' in parsed && typeof parsed.error === 'object' ? 'structured' : 'unstructured');
         });

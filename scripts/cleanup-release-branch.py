@@ -11,7 +11,7 @@ publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
 api = publish.api
 run = publish.run
-BRANCH = 'codex/discovery-release-0.1.15'
+BRANCH = 'codex/user-diagnostics-20261019'
 REF = 'refs/heads/' + BRANCH
 
 

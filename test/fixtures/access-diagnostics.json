@@ -1,0 +1,21 @@
+[
+  {"name":"explicit verification","body":{"error":{"status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"VALIDATION_REQUIRED"}]}},"code":"IMAGE_DIRECT_VALIDATION_REQUIRED"},
+  {"name":"explicit permission reason","body":{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"PERMISSION_DENIED"}],"status":"PERMISSION_DENIED"}},"code":"IMAGE_DIRECT_PERMISSION_DENIED"},
+  {"name":"generic permission status without explicit reason","body":{"error":{"status":"PERMISSION_DENIED"}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"unknown 403","body":{},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"message only challenge","body":{"error":{"message":"VALIDATION_REQUIRED: verify at https://accounts.google.com/evil?token=SENTINEL_TOKEN&email=private@example.test"}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"malformed details","body":{"error":{"status":"PERMISSION_DENIED","details":{"reason":"VALIDATION_REQUIRED"}}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"malformed entry","body":{"error":{"details":[null,{"reason":"VALIDATION_REQUIRED"}]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"unknown reason","body":{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"CHALLENGE_REQUIRED"}]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"conflicting reasons","body":{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"VALIDATION_REQUIRED"},{"reason":"PERMISSION_DENIED"}]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"wrong detail type","body":{"error":{"details":[{"@type":"attacker/ErrorInfo","reason":"VALIDATION_REQUIRED"}]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"duplicate agreed reason","body":{"error":{"details":[{"reason":"VALIDATION_REQUIRED"},{"reason":"VALIDATION_REQUIRED"}]}},"code":"IMAGE_DIRECT_VALIDATION_REQUIRED"},
+  {"name":"empty details with validation prose","body":{"error":{"status":"PERMISSION_DENIED","message":"Account validation is required. Visit https://accounts.google.com/verify?token=SENTINEL_TOKEN&email=private@example.test to continue.","details":[]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"null details with validation prose","body":{"error":{"status":"PERMISSION_DENIED","message":"Account validation is required. Visit https://accounts.google.com/verify?token=SENTINEL_TOKEN&email=private@example.test to continue.","details":null}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"malformed details with validation prose","body":{"error":{"status":"PERMISSION_DENIED","message":"Account validation is required. Visit https://accounts.google.com/verify?token=SENTINEL_TOKEN&email=private@example.test to continue.","details":{"reason":"VALIDATION_REQUIRED"}}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"missing structured reason with validation prose","body":{"error":{"status":"PERMISSION_DENIED","message":"Account validation is required. Visit https://accounts.google.com/verify?token=SENTINEL_TOKEN&email=private@example.test to continue.","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo"}]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"unknown structured reason with validation prose","body":{"error":{"status":"PERMISSION_DENIED","message":"Account validation is required. Visit https://accounts.google.com/verify?token=SENTINEL_TOKEN&email=private@example.test to continue.","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"CHALLENGE_REQUIRED"}]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"unsupported detail with validation prose","body":{"error":{"status":"PERMISSION_DENIED","message":"Account validation is required. Visit https://accounts.google.com/verify?token=SENTINEL_TOKEN&email=private@example.test to continue.","details":[{"@type":"unknown/ErrorInfo","reason":"PERMISSION_DENIED"}]}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"absent details with validation prose","body":{"error":{"status":"PERMISSION_DENIED","message":"Account validation is required. Visit https://accounts.google.com/verify?token=SENTINEL_TOKEN&email=private@example.test to continue."}},"code":"IMAGE_DIRECT_FORBIDDEN"},
+  {"name":"explicit access denied reason","body":{"error":{"status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_DENIED"}]}},"code":"IMAGE_DIRECT_PERMISSION_DENIED"}
+]

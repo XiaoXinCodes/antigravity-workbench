@@ -67,3 +67,9 @@ test('quota snapshots expire after one minute without fabricating a new reading'
  t.mock.timers.tick(1);assert.equal(q.getState().stale,true);assert.equal(q.getState().snapshot.remainingFraction,1);assert.equal(emits,3);
  q.selection('two');t.mock.timers.tick(60000);assert.equal(q.getState().snapshot,undefined);
 });
+
+test('structured quota failures use the same distinct wait and recovery hints as generation failures',()=>{
+ const {imageHttpFailure,formatImageUserFailure}=require('../out/direct-image-http-error');
+ const e=imageHttpFailure(429,{error:{details:[{reason:'QUOTA_EXHAUSTED',metadata:{quotaResetDelay:'7200s'}},{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'90s'}]}},'3');
+ assert.equal(imageQuotaErrorText(e),formatImageUserFailure(e));assert.match(imageQuotaErrorText(e),/3 秒和 90 秒/);assert.match(imageQuotaErrorText(e),/额度恢复等待.*7200 秒/);
+});

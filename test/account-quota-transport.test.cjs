@@ -84,3 +84,12 @@ test('per-request timeout destroys socket even when no response arrives', async 
   const calls = fixture(t, () => {}); const work = requestAccountQuota(request()); t.mock.timers.tick(15_000);
   await assert.rejects(work, /ACCOUNT_QUOTA_TIMEOUT/); assert.equal(calls[0].destroyed, true);
 });
+
+test('quota 403 preserves the no-error-body boundary even for explicit-looking reasons and malicious URLs',async t=>{
+ const calls=fixture(t,(_,reply)=>{
+  const response=reply(403,JSON.stringify({error:{status:'PERMISSION_DENIED',details:[{reason:'VALIDATION_REQUIRED',metadata:{validationUrl:'https://evil.test/?token=PRIVATE_SENTINEL'}}]}}));
+  assert.equal(response.listenerCount('data'),0);assert.equal(response.destroyed,true);
+ });
+ await assert.rejects(requestAccountQuota(request({endpoint:'quota'})),e=>e.code==='ACCOUNT_QUOTA_FORBIDDEN'&&!JSON.stringify(e).includes('PRIVATE_SENTINEL'));
+ assert.equal(calls.length,1);
+});
