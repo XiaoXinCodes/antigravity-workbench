@@ -11,7 +11,7 @@ publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
 api = publish.api
 run = publish.run
-BRANCH = 'codex/user-diagnostics-20261019'
+BRANCH = 'fix/retryable-switch-finalization'
 REF = 'refs/heads/' + BRANCH
 
 
