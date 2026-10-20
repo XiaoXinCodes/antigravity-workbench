@@ -1,5 +1,7 @@
 /** Stable message keys; add translations without changing call sites. */
 export const zhCN = {
+  "liveUi.cleanupStatus": "登录已核验，等待事务清理",
+  "liveUi.unknownStatus": "恢复状态未确认，已保留保护",
   "liveUi.cleanupRetry": "重试清理",
   "liveUi.cleanupPending": "登录已核验，事务清理尚未完成。可点击“重试清理”，无需重新切换或重载。",
   "liveUi.completionUnknown": "发现未完成的恢复标记，但缺少可核验的事务完成记录。为保护登录数据，已保留标记；这不表示另一窗口正在登录。可刷新重新检查并查看调试信息。",
@@ -1122,7 +1124,13 @@ export const zhCN = {
   "imageOperationRecord.response": "响应 {p0}: HTTP {p1} · finishReason {p2}{p3}",
   "recentImageFailure.partCharacters": "{p0}:{p1}/{p2}/{p3} 字符",
   "recentImageFailure.messageCharacters": "/{p0} 字符（正文不保存）",
-  "officialProcess.title": "后台异常与恢复",
+  "officialProcess.projects": "关联工程：{names}",
+  "officialProcess.projectUnknown": "关联工程：未识别",
+  "officialProcess.currentDetails": "本窗口后台详情",
+  "officialProcess.details": "进程详情",
+  "officialProcess.count": "检测到 {count} 个其他后台",
+  "officialProcess.projectHelp": "工程关联来自后台明确携带的目录信息，不代表准确的窗口标题。其他窗口的后台可能正常运行；任务是否结束仍无法确认。",
+  "officialProcess.title": "后台状态与恢复",
   "officialProcess.scan": "重新检查进程",
   "officialProcess.ready": "未发现冲突后台。",
   "officialProcess.blocked": "后台仍阻止切号；可重新检查或选择一个已核实的后台。",

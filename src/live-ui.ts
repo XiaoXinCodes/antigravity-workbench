@@ -509,7 +509,12 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   const scanProcesses = async (visible = true): Promise<ProcessConflictState | undefined> => {
     if (!processRecovery || disposed) return;
     processExtension = undefined; // A fresh scan may bind an updated official extension; old IDs are invalidated.
-    const scanned = await processRecovery.scan();
+    let scanned: ProcessConflictState;
+    try { scanned = await processRecovery.scan(); }
+    catch (error) {
+      if (processConflicts) processConflicts = { ...processConflicts, canContinue: false, phase: 'blocked', processes: processConflicts.processes.map(row => ({ ...row, canEnd: false })) };
+      throw error;
+    }
     if (disposed) return;
     // A hidden retry also invalidates old opaque selections. Keep an existing
     // exception panel bound to the fresh scan; never leave enabled stale IDs.
@@ -658,7 +663,9 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   // The journal, rather than the old global boolean, determines which recovery
   // action is valid. Startup only inspects encrypted recovery metadata and lock
   // ownership. The separate readiness path may activate the official extension.
-  const finalizer = typeof locks.completionIdentity === 'function' ? {
+  const finalizer = typeof locks.prepareCompletion === 'function' ? {
+    prepare: (id: string, binding: string) => locks.prepareCompletion(id, binding),
+    pending: () => locks.pendingCompletion(),
     identity: (id: string) => locks.completionIdentity(id),
     clear: (id: string, marker: string) => locks.clearCompletedRecovery(id, marker),
   } : undefined;
@@ -682,7 +689,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   const refreshRecovery = async (describe = false, diagnostic?: DebugSpan, expected?: VerificationLease): Promise<void> => {
     try {
       const journal = await service!.journal();
-      const cleanup = await service!.hasCompletion?.();
+      const cleanup = await locks.hasCompletionFence?.() || await service!.hasCompletion?.();
       if (expected && !cleanup) {
         verification.assertReady(expected);
         if (journal?.id !== expected.id || journal.phase !== expected.phase) throw new LiveError('RECOVERY_VERIFICATION_STALE');
@@ -691,6 +698,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       else { verification.clear(); verificationLease = undefined; }
       if (recoveryPhase === 'unavailable') errorMessage = undefined;
       recoveryPhase = cleanup ? 'cleanup' : journal?.phase ?? (await locks.hasRecovery() ? 'locked' : 'none');
+      if (recoveryPhase !== 'cleanup') { clearTimeout(cleanupTimer); cleanupTimer = undefined; cleanupRetries = 0; }
       scheduleCleanup();
       const wasPending = pending;
       pending = recoveryPhase !== 'none';
@@ -958,6 +966,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         if (typeof locks.reconcileRecovery === 'function') {
           const journal = await service!.journal();
           if (expected) { verification.assertReady(expected); if (journal?.id !== expected.id || journal.phase !== expected.phase) throw new LiveError('RECOVERY_VERIFICATION_STALE'); }
+          await locks.retryEndedOperation?.();
           const marker = await locks.inspectRecovery();
           const operation = await locks.inspectOperation();
           // An idle new installation never creates HOME directories or acquires a

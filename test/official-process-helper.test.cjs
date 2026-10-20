@@ -146,7 +146,7 @@ test('official 1.7.0 launch accepts repeated workspace directories and the three
   for (const scheme of ['vscode', 'vscode-insiders', 'code-oss', 'Synthetic+Host.7']) {
     let r = run(`scan-official170-scheme:${scheme}`), p = r.result.processes[0];
     assert.equal(p.kind, 'unowned-hub'); assert.equal(p.credentialScopeVerified, true); assert.equal(p.credentialScopeReason, 'verified'); assert.equal(p.canEnd, true);
-    assert.deepEqual(r.signals, []); assert.doesNotMatch(r.output, /synthetic workspace|different workspace|project=one|AGY_ENABLE_HUB|ANTIGRAVITY_AUTH_SUCCESS_APP|NODE_EXTRA_CA_CERTS/);
+    assert.deepEqual(p.projects, ['project=one', 'project two']); assert.deepEqual(r.signals, []); assert.doesNotMatch(r.output, /synthetic workspace|different workspace|AGY_ENABLE_HUB|ANTIGRAVITY_AUTH_SUCCESS_APP|NODE_EXTRA_CA_CERTS/);
     r = run(`official170-scheme:${scheme}`); assert.equal(r.result.result, 'exited'); assert.deepEqual(r.signals, [15]); assert.deepEqual(r.stages, ['term']);
   }
   let r = run('scan-official170-root-relay'), p = r.result.processes[0];

@@ -12,7 +12,7 @@ const realClock: RecoveryStoreClock = {
   clear: timer => clearTimeout(timer as NodeJS.Timeout),
 };
 export interface RecoveryStoreOptions { clock?: RecoveryStoreClock; timeoutMs?: number }
-interface Write { before: string | undefined; after: string | undefined }
+interface Write { before: string | undefined; after: string | undefined; needsAck?: boolean; acknowledged?: boolean }
 interface State {
   tail: Promise<void>; known: boolean; confirmed?: string | undefined; pending?: Write | undefined;
   // Hashes stay in memory only. They authorize waiting, never return cached secrets.
@@ -51,6 +51,7 @@ export class RecoveryStore {
     } finally { this.time.clear(timer); }
   }
   private async confirm(key: string, write: Write, state: State, timeoutCode = 'RECOVERY_SAVE_NOT_VERIFIED'): Promise<void> {
+    if (write.needsAck && !write.acknowledged) throw new LiveError('RECOVERY_DELETE_FAILED');
     const deadline = this.time.now() + this.timeout;
     let wake: (() => void) | undefined, changes = 0, exact = 0;
     const subscription = this.vault.onDidChange?.(event => { if (event.key === key) { changes++; wake?.(); } });
@@ -106,17 +107,58 @@ export class RecoveryStore {
     await prior;
     try { return await run(state); } finally { release(); }
   }
-  /** Resolve an acknowledged but uncertain mutation before recovery acts on absence. */
-  async settle(key: string): Promise<void> {
+  pending(key: string): { before: string | undefined; after: string | undefined } | undefined {
+    const pending = this.state(key).pending;
+    return pending && { before: pending.before, after: pending.after };
+  }
+  /** Caller has revalidated the exact filesystem completion fence, or a deleted
+   * receipt with its already-retired marker. Never used for credential mutations. */
+  async retryFencedPending(key: string): Promise<void> {
     await this.exclusive(key, async state => {
-      if (!state.pending) return;
+      const pending = state.pending; if (!pending) return;
+      const raw = await this.boundedRead(key, this.time.now() + this.timeout);
+      if (raw !== pending.before && raw !== pending.after) throw new LiveError('RECOVERY_CHANGED');
+      if (pending.after === undefined) await this.vault.delete(key);
+      else if (raw !== pending.after) await this.vault.store(key, pending.after);
+      pending.acknowledged = true;
+      await this.confirm(key, pending, state);
+      this.acknowledge(state, pending);
+    });
+  }
+  /** Resolve an acknowledged but uncertain mutation before recovery acts on absence. */
+  async settle(key: string): Promise<'removed' | 'stored' | null> {
+    return this.exclusive(key, async state => {
+      if (!state.pending) return null;
       const pending = state.pending;
       await this.confirm(key, pending, state, pending.after === undefined ? 'RECOVERY_DELETE_FAILED' : 'RECOVERY_SAVE_NOT_VERIFIED');
       this.acknowledge(state, pending);
+      return pending.after === undefined ? 'removed' : 'stored';
     });
   }
   async write(key: string, before: string | undefined, after: string): Promise<void> {
     await this.change(key, before, after);
+  }
+  /** Only for a receipt-bound schema-3 fenced transaction under the operation
+   * mutex. A missing read is not proof of deletion: explicitly await the mutation. */
+  async removeFenced(key: string, before: string | undefined): Promise<void> {
+    await this.exclusive(key, async state => {
+      const pending = state.pending;
+      if (pending) {
+        if (!pending.needsAck || pending.after !== undefined) throw new LiveError('RECOVERY_CHANGED');
+        const actual = await this.boundedRead(key, this.time.now() + this.timeout);
+        if (actual !== undefined && actual !== pending.before) throw new LiveError('RECOVERY_CHANGED');
+        if (!pending.acknowledged) { await this.vault.delete(key); pending.acknowledged = true; }
+        await this.confirm(key, pending, state, 'RECOVERY_DELETE_FAILED');
+        this.acknowledge(state, pending);
+        return;
+      }
+      if (await this.read(key) !== before) throw new LiveError('RECOVERY_CHANGED');
+      const write: Write = { before, after: undefined, needsAck: true, acknowledged: false };
+      state.pending = write;
+      await this.vault.delete(key); write.acknowledged = true;
+      await this.confirm(key, write, state, 'RECOVERY_DELETE_FAILED');
+      this.acknowledge(state, write);
+    });
   }
   async remove(key: string, before: string): Promise<void> { await this.change(key, before, undefined); }
   private async change(key: string, before: string | undefined, after: string | undefined): Promise<void> {

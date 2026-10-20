@@ -22,10 +22,12 @@ export interface SignedOutProof { generation: string; authValid: false }
 export interface Lifecycle { stop(): Promise<void>; reload(): Promise<void>; proof(signal?: AbortSignal): Promise<HubProof>; signedOutProof?(signal?: AbortSignal): Promise<SignedOutProof>; generation: string; restartMode?: 'component' | 'unavailable' }
 export interface VerificationGuard { id: string; phase: Journal['phase']; assertCurrent(): void }
 export interface RecoveryFinalizer {
-  identity(id: string): Promise<string>;
+  prepare(id: string, binding: string): Promise<string>;
+  pending(): Promise<string | null>;
+  identity(id: string): Promise<string | null>;
   clear(id: string, identity: string): Promise<void>;
 }
-interface Completion { schema: 1; id: string; hostId?: string; key: string; hash: string; marker: string }
+interface Completion { schema: 1; id: string; hostId?: string; key: string; hash: string; marker: string; deleted: boolean }
 export const JOURNAL_KEY = 'live-switch.recovery.v1';
 export const ACCOUNT_PREFIX = 'live-switch.account.v1.';
 export const QUOTA_REFRESH_PREFIX = 'live-switch.quota-refresh.v1.';
@@ -755,35 +757,75 @@ export class LiveSwitchService {
     await this.recoveryStore.settle(this.completionKey);
     const raw = await this.recoveryStore.read(this.completionKey);
     if (raw === undefined) return null;
+    return { raw, value: this.parseCompletion(raw) };
+  }
+  private parseCompletion(raw: string): Completion {
     let value: Completion;
     try {
       value = JSON.parse(raw) as Completion;
       if (value.schema !== 1 || typeof value.id !== 'string' || !value.id ||
           ![JOURNAL_KEY, this.recoveryKey].includes(value.key) || !/^[a-f0-9]{64}$/.test(value.hash) ||
-          typeof value.marker !== 'string' || !value.marker) throw 0;
+          typeof value.marker !== 'string' || !value.marker || typeof value.deleted !== 'boolean') throw 0;
+      const marker = JSON.parse(value.marker);
+      if (marker?.owner?.schema !== 3 || marker.owner.id !== value.id || JSON.stringify(JSON.parse(marker.raw)) !== JSON.stringify(marker.owner) ||
+          marker.owner.completion !== JSON.stringify({ id: value.id, ...this.hostBinding(), key: value.key, hash: value.hash })) throw 0;
     } catch { throw new LiveError('RECOVERY_RECORD_INVALID'); }
     this.assertHost(value, 'RECOVERY');
-    return { raw, value };
+    return value;
   }
-  async hasCompletion(): Promise<boolean> { return !!await this.completion(); }
+  async hasCompletion(): Promise<boolean> { return !!this.recoveryStore.pending(this.completionKey) || !!await this.completion(); }
   /** Mutex held throughout. No Hub call, credential write, or UI lease is involved.
    * The receipt commits verification, index promotion and the exact marker/journal.
    * It survives deletion ambiguity, disposal, lock cleanup failures and host restart. */
   async resumeCompletion(finalizer: RecoveryFinalizer): Promise<boolean> {
-    const receipt = await this.completion();
-    if (!receipt) return false;
+    const pending = this.recoveryStore.pending(this.completionKey);
+    if (pending) {
+      const value = this.parseCompletion(pending.after ?? pending.before!);
+      const marker = await finalizer.identity(value.id);
+      if (marker !== value.marker && !(marker === null && value.deleted)) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+      await this.recoveryStore.retryFencedPending(this.completionKey);
+    }
+    let receipt = await this.completion();
+    if (!receipt) {
+      const marker = await finalizer.pending();
+      if (!marker) return false;
+      let binding: Pick<Completion, 'id' | 'hostId' | 'key' | 'hash'>;
+      try {
+        const snapshot = JSON.parse(marker);
+        binding = JSON.parse(snapshot.owner.completion);
+        if (snapshot.owner.schema !== 3 || snapshot.owner.id !== binding.id ||
+            JSON.stringify(JSON.parse(snapshot.raw)) !== JSON.stringify(snapshot.owner) ||
+            typeof binding.id !== 'string' || !binding.id || ![JOURNAL_KEY, this.recoveryKey].includes(binding.key) ||
+            !/^[a-f0-9]{64}$/.test(binding.hash)) throw 0;
+      }
+      catch { throw new LiveError('RECOVERY_RECORD_INVALID'); }
+      this.assertHost(binding, 'RECOVERY');
+      const raw = JSON.stringify({ schema: 1, ...binding, marker, deleted: false });
+      await this.recoveryStore.write(this.completionKey, undefined, raw);
+      receipt = await this.completion();
+      if (!receipt) throw new LiveError('RECOVERY_SAVE_NOT_VERIFIED');
+    }
     const { value } = receipt;
-    await this.recoveryStore.settle(value.key);
     const record = await this.recoveryRecord();
     if (record) {
-      if (await finalizer.identity(value.id) !== value.marker) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
       const snapshot = this.snapshots.get(record.journal)!;
       if (record.journal.id !== value.id || snapshot.key !== value.key ||
           createHash('sha256').update(snapshot.raw).digest('hex') !== value.hash) throw new LiveError('RECOVERY_CHANGED');
-      await this.finish(undefined, record.journal);
+    }
+    const marker = await finalizer.identity(value.id);
+    if (marker !== value.marker && !(marker === null && value.deleted)) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    let raw = receipt.raw;
+    if (!value.deleted) {
+      // The schema-3 marker fences old clients, including between process restarts.
+      // Even a fresh process's stale absent read must cause an explicit deletion,
+      // not be treated as evidence that the original journal has been removed.
+      if (!record && value.key === JOURNAL_KEY && this.recoveryKey !== JOURNAL_KEY) throw new LiveError('RECOVERY_CHANGED');
+      await this.recoveryStore.removeFenced(value.key, record ? this.snapshots.get(record.journal)!.raw : undefined);
+      raw = JSON.stringify({ ...value, deleted: true });
+      await this.recoveryStore.write(this.completionKey, receipt.raw, raw);
     }
     await finalizer.clear(value.id, value.marker);
-    await this.recoveryStore.remove(this.completionKey, receipt.raw);
+    await this.recoveryStore.remove(this.completionKey, raw);
     return true;
   }
   /** Caller holds the same-host operation lock across verification, index promotion and cleanup. */
@@ -802,11 +844,12 @@ export class LiveSwitchService {
       if (!current || current.id !== journal.id || current.phase !== journal.phase || current.verification?.state !== 'verified') throw new LiveError('RECOVERY_CHANGED');
       await this.assertVerification(journal, guard);
       if (finalizer) {
-        const marker = await finalizer.identity(current.id);
-        await this.assertVerification(current, guard);
         const snapshot = this.snapshots.get(current)!;
-        const receipt: Completion = { schema: 1, id: current.id, ...this.hostBinding(), key: snapshot.key,
-          hash: createHash('sha256').update(snapshot.raw).digest('hex'), marker };
+        const binding = { id: current.id, ...this.hostBinding(), key: snapshot.key,
+          hash: createHash('sha256').update(snapshot.raw).digest('hex') };
+        committing = true;
+        const marker = await finalizer.prepare(current.id, JSON.stringify(binding));
+        const receipt: Completion = { schema: 1, ...binding, marker, deleted: false };
         // From this point the durable receipt owns cleanup, even if the UI closes.
         // Do not rewrite the journal on an ambiguous receipt store rejection.
         committing = true;

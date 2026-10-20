@@ -1060,3 +1060,16 @@ test('switch catch never rolls back or clears outside the receipt after verified
  assert.equal(await f.real.journal(),null);assert.equal(await f.real.hasCompletion(),true);assert.equal(await f.locks.hasRecovery(),true);assert.equal(f.diag.getState().recoveryPhase,'cleanup');assert.equal(f.writes(),1);
  f.locks.clearCompletedRecovery=clear;await f.call('verify');assert.equal(await f.locks.hasRecovery(),false);assert.equal(f.diag.getState().pending,false);assert.equal(f.writes(),1);
 });
+test('receipt deletion failure stays retryable through the normal focus refresh entry point',async t=>{
+ const f=await durableCompletionUi(t),remove=f.vault.delete;let fail=true;
+ f.vault.delete=async key=>{if(fail&&key===f.journalKey+'.completion')throw Error('uncommitted receipt delete');return remove(key);};
+ await f.call('verify');assert.equal(f.diag.getState().recoveryPhase,'cleanup');assert.equal(await f.locks.hasRecovery(),false);
+ const proofs=f.proofs();fail=false;await f.diag.refresh();
+ assert.equal(f.diag.getState().pending,false);assert.equal(await f.real.hasCompletion(),false);assert.equal(f.proofs(),proofs);assert.equal(f.writes(),1);
+});
+test('receipt store failure after filesystem commit stays in cleanup and refresh reconstructs it',async t=>{
+ const f=await durableCompletionUi(t),store=f.vault.store;let fail=true;
+ f.vault.store=async(k,v)=>{if(fail&&k===f.journalKey+'.completion')throw Error('uncommitted receipt');return store(k,v);};
+ await f.call('verify');assert.equal(f.diag.getState().recoveryPhase,'cleanup');const proofs=f.proofs();
+ fail=false;await f.diag.refresh();assert.equal(f.diag.getState().pending,false);assert.equal(f.proofs(),proofs);assert.equal(f.writes(),1);
+});

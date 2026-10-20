@@ -435,3 +435,11 @@ test('Windows validates synthetic child identity and force-ends only a separatel
     assert.doesNotMatch(JSON.stringify(inspected.result), /synthetic-private-value|synthetic-foreign-capability|GOOGLE_API_KEY|ANTIGRAVITY_SERVER_URL/);
   }
 });
+test('project association admits only bounded basenames and never augments termination proof',async()=>{
+ for(const projects of [['space project=one','<escaped>'],['/private/project'],['..'],['line\nname'],['hidden\u202ename'],['x'.repeat(129)],Array(17).fill('x')]){
+  const f=fixture();f.setRows([row(709,'current-hub'),row(710,'unowned-hub',{projects})]);const state=await f.recovery.scan();
+  assert.deepEqual(state.processes[0].projects,projects[0]==='space project=one'?projects:[]);
+  assert.equal(state.processes[0].canEnd,true);await f.recovery.end(state.processes[0].id,new AbortController().signal);
+  assert.equal(Object.hasOwn(f.calls[1].target,'projects'),false);
+ }
+});

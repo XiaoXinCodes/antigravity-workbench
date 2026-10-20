@@ -1,6 +1,8 @@
 import type { MessageKey } from './i18n-zh';
 /** English catalog. User data and technical identifiers are never translated. */
 export const en: Readonly<Record<MessageKey, string>> = {
+  "liveUi.cleanupStatus": "Login verified; cleanup pending",
+  "liveUi.unknownStatus": "Recovery state unknown; protection retained",
   "liveUi.cleanupRetry": "Retry cleanup",
   "liveUi.cleanupPending": "Login verified; transaction cleanup is pending. Use Retry cleanup without switching again or reloading.",
   "liveUi.completionUnknown": "A recovery marker remains without verifiable transaction completion evidence. It is preserved to protect login data; this does not mean another window is signing in. Refresh to recheck and review diagnostics.",
@@ -1123,7 +1125,13 @@ export const en: Readonly<Record<MessageKey, string>> = {
   "imageOperationRecord.response": "Response {p0}: HTTP {p1} · finishReason {p2}{p3}",
   "recentImageFailure.partCharacters": "{p0}:{p1}/{p2}/{p3} characters",
   "recentImageFailure.messageCharacters": "/{p0} characters (body not saved)",
-  "officialProcess.title": "Backend issue and recovery",
+  "officialProcess.projects": "Associated project: {names}",
+  "officialProcess.projectUnknown": "Associated project: unidentified",
+  "officialProcess.currentDetails": "Current backend details",
+  "officialProcess.details": "Process details",
+  "officialProcess.count": "Detected {count} other backends",
+  "officialProcess.projectHelp": "Project associations come from explicit backend directory arguments, not verified window titles. Other windows may be running normally; task completion remains unknown.",
+  "officialProcess.title": "Backend status and recovery",
   "officialProcess.scan": "Rescan processes",
   "officialProcess.ready": "No conflicting backend found.",
   "officialProcess.blocked": "A backend still blocks switching. Rescan or select a verified backend.",
