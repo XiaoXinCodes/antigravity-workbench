@@ -6,7 +6,10 @@ import { execFile, type ExecFileOptions } from 'node:child_process';
 import { promisify } from 'node:util';
 import { LiveError } from './live-storage';
 
-export interface LockOwner { schema: 1 | 2; owner: string; id: string; pid: number; nonce?: string; startIdentity?: string | null; purpose?: 'image' }
+export interface LockOwner { schema: 1 | 2 | 3; owner: string; id: string; pid: number; nonce?: string; startIdentity?: string | null; purpose?: 'image'; completion?: string }
+// Only claims whose owning operation has finished may be retried in this process.
+const endedClaims = new Map<string, Snapshot>();
+const endedOperations = new Map<string, LockOwner>();
 export type ProcessIdentity = { state: 'alive'; startIdentity: string } | { state: 'dead' } | { state: 'unknown' };
 export type ProcessProbe = (pid: number) => Promise<ProcessIdentity>;
 export interface LockInspection { state: 'absent' | 'active' | 'stale' | 'uncertain'; reason?: string; owner?: LockOwner }
@@ -22,7 +25,7 @@ export class LockConflictError extends LiveError {
     super(code); this.activity = structuredClone(activity);
   }
 }
-export interface LiveLockOptions { probe?: ProcessProbe; pid?: number; purpose?: 'image' }
+export interface LiveLockOptions { probe?: ProcessProbe; pid?: number; purpose?: 'image'; completion?: string }
 export interface ProcessProbeRuntime {
   platform?: NodeJS.Platform;
   signal?: (pid: number) => void;
@@ -100,8 +103,8 @@ export class LiveLocks {
         raw = await handle.readFile('utf8');
       } finally { await handle.close(); }
       const item = JSON.parse(raw) as LockOwner;
-      if (![1, 2].includes(item.schema) || !/^[a-f0-9]{64}$/.test(item.owner) || !UUID.test(item.id) || !Number.isSafeInteger(item.pid) || item.pid < 1) throw 0;
-      if (item.schema === 2 && (!UUID.test(item.nonce ?? '') || item.startIdentity !== null && (typeof item.startIdentity !== 'string' || item.startIdentity.length < 1 || item.startIdentity.length > 256))) throw 0;
+      if (!(location === this.recovery ? [1, 2, 3] : [1, 2]).includes(item.schema) || !/^[a-f0-9]{64}$/.test(item.owner) || !UUID.test(item.id) || !Number.isSafeInteger(item.pid) || item.pid < 1) throw 0;
+      if (item.schema !== 1 && (!UUID.test(item.nonce ?? '') || item.startIdentity !== null && (typeof item.startIdentity !== 'string' || item.startIdentity.length < 1 || item.startIdentity.length > 256))) throw 0;
       if (item.purpose !== undefined && item.purpose !== 'image') throw 0;
       return { owner: item, raw, dev: dir.dev, ino: dir.ino };
     } catch (error) {
@@ -125,7 +128,7 @@ export class LiveLocks {
     // probe and exact record/inode check are mandatory inside the removal claim.
     if (status.state === 'dead') return { state: 'stale', owner };
     // An alive legacy PID could be reused; without start identity it is uncertain.
-    if (owner.schema !== 2 || !owner.startIdentity) return { state: 'uncertain', reason: 'LOCK_PROCESS_IDENTITY_UNAVAILABLE', owner };
+    if (owner.schema === 1 || !owner.startIdentity) return { state: 'uncertain', reason: 'LOCK_PROCESS_IDENTITY_UNAVAILABLE', owner };
     if (status.startIdentity !== owner.startIdentity) return { state: 'stale', owner };
     return { state: 'active', reason: 'LOCK_PROCESS_STILL_ALIVE', owner };
   }
@@ -136,7 +139,7 @@ export class LiveLocks {
   async inspectOperation(): Promise<LockInspection> { return this.inspect(this.operation); }
   private activity(inspection: LockInspection, location: 'operation' | 'recovery'): LockActivity {
     const owner = inspection.owner;
-    if (inspection.state === 'active' && owner?.schema === 2 && owner.startIdentity) {
+    if (inspection.state === 'active' && owner && owner.schema !== 1 && owner.startIdentity) {
       return { ...inspection, kind: location === 'recovery' ? 'recovery' : owner.purpose === 'image' ? 'image' : 'account',
         scope: owner.pid === this.pid ? 'this-process' : 'other-process' };
     }
@@ -210,11 +213,11 @@ export class LiveLocks {
     } finally { await handle?.close(); }
   }
   private async releaseClaim(location: string, expected: Snapshot): Promise<void> {
-    const actual = await this.readClaim(location);
-    if (!actual || !this.same(actual, expected)) throw new LiveError('LOCK_OWNERSHIP_CHANGED');
-    // A live claimant releases only its own nonce. Other removers can act only on
-    // verified dead claimants, so they cannot race this normal release.
-    await fs.unlink(location);
+    try {
+      const actual = await this.readClaim(location);
+      if (!actual || !this.same(actual, expected)) throw new LiveError('LOCK_OWNERSHIP_CHANGED');
+      await fs.unlink(location); endedClaims.delete(location);
+    } catch (error) { endedClaims.set(location, expected); throw error; }
   }
   private async recoverClaim(location: string, expected: Snapshot, depth: number): Promise<void> {
     const state = await this.classify(expected);
@@ -233,6 +236,14 @@ export class LiveLocks {
   private async acquireClaim(location: string, depth = 0): Promise<Snapshot> {
     // A crash of a reaper is recoverable by another reaper, without pretending a
     // missing/old timestamp is proof. Bound pathological repeated crash chains.
+    const ended = endedClaims.get(location);
+    if (ended) {
+      endedClaims.delete(location);
+      try {
+        const actual = await this.readClaim(location);
+        if (actual && this.same(actual, ended)) await this.releaseClaim(location, ended);
+      } catch (error) { endedClaims.set(location, ended); throw error; }
+    }
     if (depth > 8) throw new LiveError('LOCK_CLEANUP_STATUS_UNKNOWN');
     const nextLocation = `${location}.next`, next = await this.readClaim(nextLocation);
     if (next) await this.recoverClaim(nextLocation, next, depth + 1);
@@ -241,15 +252,20 @@ export class LiveLocks {
     const owner: LockOwner = { schema: 2, owner: this.owner, id: randomUUID(), pid: this.pid, nonce: randomUUID(), startIdentity: status.state === 'alive' ? status.startIdentity : null };
     const staging = path.join(this.directory, `.agm-claim-${owner.nonce}`);
     const handle = await fs.open(staging, 'wx', 0o600);
-    try { await handle.writeFile(JSON.stringify(owner)); await handle.sync(); } finally { await handle.close(); }
+    let staged: Snapshot;
+    try {
+      await handle.writeFile(JSON.stringify(owner)); await handle.sync();
+      const stat = await handle.stat(); staged = { owner, raw: JSON.stringify(owner), dev: stat.dev, ino: stat.ino };
+    } finally { await handle.close(); }
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
+        let linked = false;
         try {
           // Atomic exclusive publication: even a killed reaper cannot leave a
           // half-written active .release claim. Staging contains metadata only.
-          await fs.link(staging, location);
+          await fs.link(staging, location); linked = true;
           const published = await this.readClaim(location);
-          if (!published || published.raw !== JSON.stringify(owner)) throw new LiveError('LOCK_OWNERSHIP_CHANGED');
+          if (!published || !this.same(published, staged)) throw new LiveError('LOCK_OWNERSHIP_CHANGED');
           // A stale-claim reaper may still own its child guard after unlinking
           // the previous parent claim. Do not enter through that brief gap.
           if (await this.readClaim(nextLocation)) {
@@ -258,13 +274,14 @@ export class LiveLocks {
           }
           return published;
         } catch (error) {
+          if (linked) endedClaims.set(location, staged);
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error instanceof LiveError ? error : new LiveError('LOCK_CLEANUP_STATUS_UNKNOWN');
           const existing = await this.readClaim(location);
           if (existing) await this.recoverClaim(location, existing, depth);
         }
       }
       throw new LiveError('LOCK_CLEANUP_IN_PROGRESS');
-    } finally { await fs.unlink(staging); }
+    } finally { await fs.unlink(staging).catch(() => { /* Inert metadata cannot revoke a published claim. */ }); }
   }
   private async remove(location: string, expected: Snapshot, staleOnly = false): Promise<void> {
     // Every remover takes an exclusive claim INSIDE the directory. A competing
@@ -300,12 +317,24 @@ export class LiveLocks {
   }
   private async recover(location: string): Promise<boolean> {
     const snapshot = await this.read(location); if (!snapshot) return false;
+    if (snapshot.owner.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     const status = await this.classify(snapshot);
     if (status.state !== 'stale') throw new LockConflictError(status.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN', this.activity(status, location === this.recovery ? 'recovery' : 'operation'));
     await this.remove(location, snapshot, true); return true;
   }
   async recoverAbandonedOperation(): Promise<boolean> { return this.recover(this.operation); }
+  async retryEndedOperation(): Promise<void> {
+    const ended = endedOperations.get(this.operation);
+    if (ended && ended.owner === this.owner) {
+      endedOperations.delete(this.operation);
+      try {
+        const actual = await this.read(this.operation);
+        if (actual && JSON.stringify(actual.owner) === JSON.stringify(ended)) await this.removeOwned(this.operation, ended);
+      } catch (error) { endedOperations.set(this.operation, ended); throw error; }
+    }
+  }
   async withOperation<T>(fn: () => Promise<T>): Promise<T> {
+    await this.retryEndedOperation();
     let lock: LockOwner;
     try { lock = await this.create(this.operation, randomUUID()); }
     catch (error) {
@@ -323,16 +352,88 @@ export class LiveLocks {
     }
     this.heldOperation = lock;
     try { return await fn(); }
-    finally { this.heldOperation = undefined; await this.removeOwned(this.operation, lock); }
+    finally {
+      this.heldOperation = undefined;
+      await this.releaseOperation(lock);
+    }
+  }
+  private async releaseOperation(lock: LockOwner): Promise<void> {
+    try { await this.removeOwned(this.operation, lock); }
+    catch (error) { endedOperations.set(this.operation, lock); throw error; }
   }
   async beginRecovery(id: string): Promise<void> { await this.create(this.recovery, id); }
   async assertRecovery(id: string): Promise<void> {
     const lock = (await this.read(this.recovery))?.owner;
+    if (lock?.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (!lock || lock.owner !== this.owner || lock.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
   }
   async clearRecovery(id: string): Promise<void> {
     const snapshot = await this.read(this.recovery);
+    if (snapshot?.owner.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (!snapshot || snapshot.owner.owner !== this.owner || snapshot.owner.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    await this.remove(this.recovery, snapshot);
+  }
+  /** Read-only identity; absence is usable only with a confirmed deletion receipt. */
+  async completionIdentity(id: string): Promise<string | null> {
+    await this.assertOperationHeld();
+    const snapshot = await this.read(this.recovery);
+    if (!snapshot) return null;
+    if (snapshot.owner.owner !== this.owner || snapshot.owner.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    return JSON.stringify(snapshot);
+  }
+  async hasCompletionFence(): Promise<boolean> {
+    const snapshot = await this.read(this.recovery);
+    return snapshot?.owner.schema === 3 && snapshot.owner.owner === this.owner;
+  }
+  async pendingCompletion(): Promise<string | null> {
+    await this.assertOperationHeld();
+    const snapshot = await this.read(this.recovery);
+    if (snapshot?.owner.schema !== 3) return null;
+    if (snapshot.owner.owner !== this.owner) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    return JSON.stringify(snapshot);
+  }
+  /** Fresh verification authorizes a recovery-only fence that older clients reject.
+   * A mutex serializes clients, but cannot stop an older client from restoring this
+   * same transaction between retries unless the marker itself fences that client. */
+  async prepareCompletion(id: string, binding: string): Promise<string> {
+    await this.assertOperationHeld();
+    const before = await this.read(this.recovery);
+    if (!before || before.owner.owner !== this.owner || before.owner.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    if (before.owner.schema === 3) {
+      if (before.owner.completion !== binding) throw new LiveError('RECOVERY_CHANGED');
+      return JSON.stringify(before);
+    }
+    const location = path.join(this.recovery, '.release'), claim = await this.acquireClaim(location);
+    try {
+      const current = await this.read(this.recovery);
+      if (!current || !this.same(current, before)) throw new LiveError('LOCK_OWNERSHIP_CHANGED');
+      const owner: LockOwner = { ...(before.owner.schema === 1 ? this.heldOperation! : before.owner), schema: 3, id, completion: binding };
+      const raw = JSON.stringify(owner), staging = path.join(this.directory, `.agm-completion-${randomUUID()}`);
+      // Outside the lock directory: interrupted staging is inert metadata and
+      // cannot block future .release/retire. Never remove an uncertain staging file.
+      const handle = await fs.open(staging, 'wx', 0o600);
+      try { await handle.writeFile(raw); await handle.sync(); } finally { await handle.close(); }
+      const confirmed = await this.read(this.recovery), held = await this.readClaim(location);
+      if (!confirmed || !this.same(confirmed, before) || !held || !this.same(held, claim)) throw new LiveError('LOCK_OWNERSHIP_CHANGED');
+      await fs.rename(staging, path.join(this.recovery, 'owner.json'));
+      const fenced = await this.read(this.recovery);
+      if (!fenced || fenced.dev !== before.dev || fenced.ino !== before.ino || fenced.raw !== raw) throw new LiveError('LOCK_OWNERSHIP_CHANGED');
+      return JSON.stringify(fenced);
+    } finally { await this.releaseClaim(location, claim); }
+  }
+  /** Only a durable verified receipt authorizes this path, never mere journal absence.
+   * An absent marker is the idempotent result of a prior successful retirement. */
+  async clearCompletedRecovery(id: string, identity: string): Promise<void> {
+    await this.assertOperationHeld();
+    // Validate profile/transaction binding even after a prior retirement.
+    try {
+      const expected = JSON.parse(identity) as Snapshot;
+      if (expected.owner.schema !== 3 || expected.owner.owner !== this.owner || expected.owner.id !== id ||
+          JSON.stringify(JSON.parse(expected.raw)) !== JSON.stringify(expected.owner)) throw 0;
+    } catch { throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH'); }
+    const snapshot = await this.read(this.recovery);
+    if (!snapshot) return;
+    if (snapshot.owner.owner !== this.owner || snapshot.owner.id !== id || JSON.stringify(snapshot) !== identity) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
     await this.remove(this.recovery, snapshot);
   }
   async hasRecovery(): Promise<boolean> { return (await this.read(this.recovery)) !== null; }
@@ -342,12 +443,15 @@ export class LiveLocks {
   async reconcileRecovery(journalId: string | null): Promise<'absent' | 'preserved' | 'created' | 'cleared'> {
     if (!this.heldOperation) throw new LiveError('LOCK_OPERATION_REQUIRED');
     const snapshot = await this.read(this.recovery);
+    if (snapshot?.owner.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (journalId !== null) {
       if (!snapshot) { await this.beginRecovery(journalId); return 'created'; }
       if (snapshot.owner.owner !== this.owner || snapshot.owner.id !== journalId) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
       return 'preserved';
     }
     if (!snapshot) return 'absent';
+    const status = await this.classify(snapshot);
+    if (status.state === 'active') throw new LiveError('RECOVERY_COMPLETION_UNKNOWN');
     await this.recover(this.recovery); return 'cleared';
   }
   // Compatibility entry points are now safe automatic checks, not a manual override.

@@ -530,3 +530,28 @@ test('favorites coalesce the same row while independent different rows remain ac
  const first=f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[0].key,requestId:'first'});await f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[0].key,requestId:'duplicate'});const second=f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[1].key,requestId:'second'});
  assert.equal(calls.length,2);releases.forEach(r=>r());await Promise.all([first,second]);assert.equal(f.posted.filter(m=>m.type==='complete').length,3);execute=async(...args)=>{calls.push(args)};f.provider.dispose();
 });
+
+test('verified cleanup pending exposes Verify while retaining the account mutation guard',()=>{
+ const html=renderWorkbench(state({accounts:[account],pending:true,recoveryPhase:'cleanup',status:'登录已核验，清理待重试'}),'nonce');
+ assert.match(html, /data-command="live.verify"/);
+ assert.doesNotMatch(html, /data-command="live.verify"[^>]*disabled/);
+ assert.match(html, /data-command="live.switch"[^>]*disabled/);
+ assert.doesNotMatch(html, /data-command="live.restore"/);
+});
+
+test('unknown recovery provides safe recheck and does not claim a login is running',()=>{
+ const html=renderWorkbench(state({accounts:[account],pending:true,recoveryPhase:'unavailable',status:'恢复状态未确认'}),'nonce');
+ assert.match(html,/data-command="recheck"/);assert.doesNotMatch(html,/data-command="recheck"[^>]*disabled/);
+ assert.match(html,/恢复状态未确认，已保留保护/);assert.doesNotMatch(html,/登录状态检查中/);
+ assert.match(html,/data-command="live.switch"[^>]*disabled/);assert.doesNotMatch(html,/data-command="live.restore"/);
+});
+test('other backends are a collapsed disclosure with project association and secondary destructive actions',()=>{
+ const rows=[1,2].map(i=>({id:'selection-'+i,pid:710+i,projects:i===1?['project <one>']:[],parentState:'alive',owner:'other',scope:'other-window',taskState:'unknown',canEnd:true,credentialScopeVerified:true}));
+ const html=renderWorkbench(state({processConflicts:{phase:'blocked',canContinue:false,processes:rows}}),'nonce');
+ assert.match(html,/<details id="process-conflict-list" data-persist><summary>检测到 2 个其他后台/);
+ assert.match(html,/关联工程：project &lt;one&gt;/);assert.match(html,/关联工程：未识别/);
+ assert.match(html,/<details><summary>进程详情<\/summary><p>PID 711/);
+ assert.match(html,/data-command="live.processEndAll" class="secondary"/);
+ assert.ok(html.indexOf('后台仍阻止切号')<html.indexOf('id="process-conflict-list"'));
+ assert.doesNotMatch(html,/后台异常与恢复/);
+});

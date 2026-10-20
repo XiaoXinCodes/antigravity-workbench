@@ -669,3 +669,232 @@ test('display identity persists across verified same-principal captures, but kno
  const first=(await x.service.captureCurrent(metadata,index,verify)).account;const next=token('subject-a','second');x.set({keyring:next,file:next});const same=(await x.service.captureCurrent(metadata,index,verify,true,undefined,true)).account;assert.equal(same.id,first.id);assert.equal(same.quotaDisplayId,first.quotaDisplayId);
  const changed=token('subject-b','third');x.set({keyring:changed,file:changed});const different=(await x.service.captureCurrent(metadata,index,verify,true,undefined,true)).account;assert.equal(different.id,first.id);assert.notEqual(different.quotaDisplayId,first.quotaDisplayId);const prior=different.quotaDisplayId;x.data.delete(ACCOUNT_PREFIX+first.id);const repaired=(await x.service.captureCurrent(metadata,index,verify)).account;assert.notEqual(repaired.quotaDisplayId,prior);assert.equal(x.writes(),0);
 });
+
+// Transaction completion regression fixtures use real lock directories and only synthetic tokens.
+async function completionFixture(t) {
+ const {LiveLocks}=require('../out/live-lock');
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'agm-completion-'));
+ t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const x=setup(A,'synthetic-host');
+ const locks=new LiveLocks(directory,'a'.repeat(64));
+ const finalizer={prepare:(id,binding)=>locks.prepareCompletion(id,binding),pending:()=>locks.pendingCompletion(),identity:id=>locks.completionIdentity(id),clear:(id,marker)=>locks.clearCompletedRecovery(id,marker)};
+ const saved=await saveB(x);
+ await locks.withOperation(async()=>{await x.service.install(saved.id,x.backend);await locks.beginRecovery((await x.service.journal()).id);});
+ return {...x,locks,finalizer,directory,completionKey:x.journalKey+'.completion'};
+}
+test('deterministic old protocol reproduction: deleted journal plus live marker cannot be reconciled as an active transaction',async t=>{
+ const x=await completionFixture(t);
+ await x.locks.withOperation(async()=>{await x.service.finishVerified(x.backend); /* old UI lease invalidates here, before clearRecovery */ });
+ assert.equal(await x.service.journal(),null);assert.equal((await x.locks.inspectRecovery()).state,'active');
+ await assert.rejects(x.locks.withOperation(()=>x.locks.reconcileRecovery(null)),/RECOVERY_COMPLETION_UNKNOWN/);
+ assert.equal(await x.locks.hasRecovery(),true);
+});
+test('committed finalization ignores a lease invalidated by journal deletion and closes both durable records',async t=>{
+ const x=await completionFixture(t),j=await x.service.journal();let valid=true;
+ const original=x.vault.delete;x.vault.delete=async key=>{await original(key);if(key===x.journalKey)valid=false;};
+ await x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,{id:j.id,phase:j.phase,assertCurrent(){if(!valid)throw new LiveError('RECOVERY_VERIFICATION_STALE');}},x.finalizer));
+ assert.equal(valid,false);assert.equal(await x.service.journal(),null);assert.equal(await x.locks.hasRecovery(),false);assert.equal(await x.service.hasCompletion(),false);
+});
+test('clear failure retains receipt; reopened service finishes without proof, credential write or reload',async t=>{
+ const x=await completionFixture(t);const writes=x.writes(),phases=[...x.phases];let calls=0;
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,{...x.finalizer,clear:async()=>{calls++;throw Error('injected clear failure');}})),/RECOVERY_CLEANUP_PENDING/);
+ assert.equal(await x.service.journal(),null);assert.equal(await x.service.hasCompletion(),true);assert.equal(await x.locks.hasRecovery(),true);
+ const reopened=new LiveSwitchService(x.vault,{read:async()=>assert.fail('no credentials'),write:async()=>assert.fail('no write')},'synthetic-host');
+ assert.equal(await x.locks.withOperation(()=>reopened.resumeCompletion(x.finalizer)),true);
+ assert.equal(await x.locks.withOperation(()=>reopened.resumeCompletion(x.finalizer)),false);
+ assert.equal(calls,1);assert.equal(await x.locks.hasRecovery(),false);assert.equal(x.writes(),writes);assert.deepEqual(x.phases,phases);
+});
+test('journal delete rejection after commit is resolved by pending confirmation, never by a second credential transaction',async t=>{
+ const x=await completionFixture(t),original=x.vault.delete;let deletes=0;
+ x.vault.delete=async key=>{await original(key);if(key===x.journalKey&&++deletes===1)throw Error('committed but rejected');};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+ assert.equal(await x.service.hasCompletion(),true);
+ await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));
+ assert.equal(deletes,2);assert.equal(await x.locks.hasRecovery(),false);assert.equal(await x.service.hasCompletion(),false);
+});
+test('receipt store rejection after commit survives disposal and resumes exact still-present verified journal',async t=>{
+ const x=await completionFixture(t),original=x.vault.store;
+ x.vault.store=async(key,value)=>{await original(key,value);if(key===x.completionKey&&!JSON.parse(value).deleted)throw Error('receipt committed but rejected');};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+ assert.equal((await x.service.journal()).verification.state,'verified');assert.equal(await x.locks.hasRecovery(),true);
+ await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));
+ assert.equal(await x.service.journal(),null);assert.equal(await x.locks.hasRecovery(),false);
+});
+test('retired marker followed by clear error is idempotent on retry',async t=>{
+ const x=await completionFixture(t),unlink=fs.unlink;
+ fs.unlink=async file=>{if(String(file).includes('.antigravity-account-manager-switch.lock.retired.')&&String(file).endsWith('owner.json'))throw Error('post-retirement unlink fault');return unlink(file);};
+ try {await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);}
+ finally {fs.unlink=unlink;}
+ assert.ok((await fs.readdir(x.directory)).some(name=>name.includes('.antigravity-account-manager-switch.lock.retired.')));
+ assert.equal(await x.locks.hasRecovery(),false);assert.equal(await x.service.hasCompletion(),true);
+ await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));assert.equal(await x.service.hasCompletion(),false);
+});
+test('receipt delete rejection after commit is safely acknowledged on retry',async t=>{
+ const x=await completionFixture(t),original=x.vault.delete;
+ x.vault.delete=async key=>{await original(key);if(key===x.completionKey){x.vault.delete=original;throw Error('receipt delete committed');}};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+ assert.equal(await x.locks.hasRecovery(),false);assert.equal(await x.service.hasCompletion(),true);
+ assert.equal(await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer)),false);
+ assert.equal(await x.service.hasCompletion(),false);
+});
+test('old receipt cannot delete a replacement marker, including the same id with a new nonce/inode',async t=>{
+ const x=await completionFixture(t);const id=(await x.service.journal()).id;
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,{...x.finalizer,clear:async()=>{throw Error('pause');}})),/RECOVERY_CLEANUP_PENDING/);
+ await x.locks.withOperation(async()=>{await x.locks.clearCompletedRecovery(id,JSON.parse(x.data.get(x.completionKey)).marker);await x.locks.beginRecovery(id);});
+ await assert.rejects(x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer)),/RECOVERY_LOCK_OWNER_MISMATCH/);
+ assert.equal(await x.locks.hasRecovery(),true);assert.equal(await x.service.hasCompletion(),true);
+});
+test('receipt cannot delete a changed journal or restore committed credentials',async t=>{
+ const x=await completionFixture(t),original=x.vault.store;
+ x.vault.store=async(key,value)=>{await original(key,value);if(key===x.completionKey&&!JSON.parse(value).deleted)throw Error('pause');};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+ await assert.rejects(x.service.restore(x.backend),/RECOVERY_CLEANUP_PENDING/);
+ const raw=x.data.get(x.journalKey),j=JSON.parse(raw);j.oldGeneration='changed';x.data.set(x.journalKey,JSON.stringify(j));
+ await assert.rejects(x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer)),/RECOVERY_CHANGED/);
+ assert.equal(await x.locks.hasRecovery(),true);assert.equal(x.data.get(x.journalKey),JSON.stringify(j));
+});
+test('another window and profile cannot finalize while the account mutex is held',async t=>{
+ const x=await completionFixture(t),{LiveLocks}=require('../out/live-lock');
+ const other=new LiveLocks(x.directory,'a'.repeat(64)),foreign=new LiveLocks(x.directory,'b'.repeat(64));
+ await x.locks.withOperation(async()=>{
+  await assert.rejects(other.withOperation(()=>assert.fail('entered competing window')),/LIVE_OPERATION_OR_RECOVERY_LOCKED/);
+  await assert.rejects(foreign.withOperation(()=>assert.fail('entered competing profile')),/LIVE_OPERATION_OR_RECOVERY_LOCKED/);
+ });
+ assert.equal(await x.locks.hasRecovery(),true);
+});
+test('receipt and legacy unbound journal stay isolated from a different credential host',async t=>{
+ const x=await completionFixture(t);
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,{...x.finalizer,clear:async()=>{throw Error('pause');}})),/RECOVERY_CLEANUP_PENDING/);
+ const other=new LiveSwitchService(x.vault,x.slots,'different-host');
+ assert.equal(await other.hasCompletion(),false);await assert.rejects(x.locks.withOperation(()=>other.resumeCompletion(x.finalizer)),/RECOVERY_HOST_MISMATCH|RECOVERY_HOST_REQUIRED|RECOVERY_RECORD_INVALID/);
+ assert.equal(await x.locks.hasRecovery(),true);
+});
+
+test('an unsettled journal delete keeps the operation mutex until the mutation actually settles',async t=>{
+ const x=await completionFixture(t),{LiveLocks}=require('../out/live-lock'),other=new LiveLocks(x.directory,'a'.repeat(64));
+ const original=x.vault.delete;let resolveDelete,entered;
+ const started=new Promise(resolve=>{entered=resolve;});
+ x.vault.delete=async key=>{if(key===x.journalKey){entered();await new Promise(resolve=>{resolveDelete=resolve;});}await original(key);};
+ const finishing=x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer));await started;
+ await assert.rejects(other.withOperation(()=>assert.fail('mutex released early')),/LIVE_OPERATION_OR_RECOVERY_LOCKED/);
+ assert.equal(await x.locks.hasRecovery(),true);resolveDelete();await finishing;
+ assert.equal(await x.locks.hasRecovery(),false);
+});
+test('a live release claim blocks finalization; removing the injected claim permits exact retry',async t=>{
+ const x=await completionFixture(t),marker=path.join(x.directory,'.antigravity-account-manager-switch.lock');
+ const clear=x.finalizer.clear;
+ const claim={schema:2,owner:'a'.repeat(64),id:require('node:crypto').randomUUID(),pid:process.pid,nonce:require('node:crypto').randomUUID(),startIdentity:(await require('../out/live-lock').probeProcessIdentity(process.pid)).startIdentity};
+ const blocked={...x.finalizer,clear:async(...args)=>{await fs.writeFile(path.join(marker,'.release'),JSON.stringify(claim),{flag:'wx',mode:0o600});return clear(...args);}};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,blocked)),/RECOVERY_CLEANUP_PENDING/);
+ assert.equal(await x.locks.hasRecovery(),true);assert.equal(await x.service.hasCompletion(),true);
+ await fs.unlink(path.join(marker,'.release'));
+ await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));assert.equal(await x.locks.hasRecovery(),false);
+});
+test('same-host legacy key completion survives process reconstruction without migrating its backup',async t=>{
+ const x=await completionFixture(t);x.data.set(JOURNAL_KEY,x.data.get(x.journalKey));x.data.delete(x.journalKey);
+ x.service=new LiveSwitchService({...x.vault},x.slots,'synthetic-host');
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,{...x.finalizer,clear:async()=>{throw Error('pause');}})),/RECOVERY_CLEANUP_PENDING/);
+ const receipt=JSON.parse(x.data.get(x.completionKey));assert.equal(receipt.key,JOURNAL_KEY);
+ const vault={get:async k=>x.data.get(k),store:async(k,v)=>{x.data.set(k,v);},delete:async k=>{x.data.delete(k);}};
+ const reopened=new LiveSwitchService(vault,x.slots,'synthetic-host');
+ await x.locks.withOperation(()=>reopened.resumeCompletion(x.finalizer));assert.equal(await x.locks.hasRecovery(),false);assert.equal(x.data.has(JOURNAL_KEY),false);
+});
+test('late predecessor reads after receipt persistence cannot authorize another transaction or cancel cleanup',async t=>{
+ const x=await completionFixture(t),get=x.vault.get,store=x.vault.store;let stale=0;
+ x.vault.store=async(key,value)=>{await store(key,value);if(key===x.completionKey)stale=2;};
+ x.vault.get=async key=>key===x.completionKey&&stale-->0?undefined:get(key);
+ await x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer));
+ assert.equal(await x.service.hasCompletion(),false);assert.equal(await x.locks.hasRecovery(),false);
+});
+test('marker created before any journal write remains unknown when its owner is alive',async t=>{
+ const {LiveLocks}=require('../out/live-lock'),directory=await fs.mkdtemp(path.join(os.tmpdir(),'agm-no-journal-'));
+ t.after(()=>fs.rm(directory,{recursive:true,force:true}));const locks=new LiveLocks(directory,'a'.repeat(64));
+ await locks.withOperation(()=>locks.beginRecovery(require('node:crypto').randomUUID()));
+ await assert.rejects(locks.withOperation(()=>locks.reconcileRecovery(null)),/RECOVERY_COMPLETION_UNKNOWN/);
+ assert.equal(await locks.hasRecovery(),true);
+});
+
+test('each SecretStorage read boundary after completion commit can fail once and restart converges',async t=>{
+ let injected=0;
+ for(let boundary=1;boundary<=14;boundary++)await t.test('completion read '+boundary,async t=>{
+  const x=await completionFixture(t),get=x.vault.get,store=x.vault.store;let committed=false,reads=0;
+  x.vault.store=async(k,v)=>{await store(k,v);if(k===x.completionKey)committed=true;};
+  x.vault.get=async k=>{if(committed&&++reads===boundary){injected++;throw Error('injected read interruption');}return get(k);};
+  try {await x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer));}
+  catch(error){assert.equal(error.code,'RECOVERY_CLEANUP_PENDING');}
+  // A new vault object models losing all RecoveryStore in-memory acknowledgements.
+  const vault={get,store,delete:async k=>{x.data.delete(k);}};
+  const restarted=new LiveSwitchService(vault,x.slots,'synthetic-host');
+  await x.locks.withOperation(()=>restarted.resumeCompletion(x.finalizer));
+  assert.equal(await restarted.journal(),null);assert.equal(await restarted.hasCompletion(),false);assert.equal(await x.locks.hasRecovery(),false);
+ });
+ assert.equal(injected,14,'exercise every storage read boundary on the successful completion path');
+});
+
+test('a fresh process cannot use stale journal absence as deletion evidence',async t=>{
+ const x=await completionFixture(t),store=x.vault.store;
+ x.vault.store=async(k,v)=>{await store(k,v);if(k===x.completionKey&&!JSON.parse(v).deleted)throw Error('crash after receipt');};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+ assert.equal((await x.locks.inspectRecovery()).owner.schema,3);assert.equal(x.data.has(x.journalKey),true);
+ let stale=2,deletes=0;
+ const vault={get:async k=>k===x.journalKey&&stale-->0?undefined:x.data.get(k),store:async(k,v)=>{x.data.set(k,v);},delete:async k=>{if(k===x.journalKey)deletes++;x.data.delete(k);}};
+ const restarted=new LiveSwitchService(vault,x.slots,'synthetic-host');
+ await x.locks.withOperation(()=>restarted.resumeCompletion(x.finalizer));
+ assert.equal(deletes,1);assert.equal(x.data.has(x.journalKey),false);assert.equal(await x.locks.hasRecovery(),false);assert.equal(await restarted.hasCompletion(),false);
+});
+test('a journal reappearing between stale absent reads stops cleanup without deleting anything',async t=>{
+ const x=await completionFixture(t),store=x.vault.store;
+ x.vault.store=async(k,v)=>{await store(k,v);if(k===x.completionKey&&!JSON.parse(v).deleted)throw Error('pause');};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+ let stale=true,deletes=0;
+ const vault={get:async k=>{if(k===x.journalKey&&stale){stale=false;return undefined;}return x.data.get(k);},store:async(k,v)=>{x.data.set(k,v);},delete:async k=>{deletes++;x.data.delete(k);}};
+ const restarted=new LiveSwitchService(vault,x.slots,'synthetic-host');
+ await assert.rejects(x.locks.withOperation(()=>restarted.resumeCompletion(x.finalizer)),/RECOVERY_CHANGED/);
+ assert.equal(deletes,0);assert.equal(await x.locks.hasRecovery(),true);
+ await x.locks.withOperation(()=>restarted.resumeCompletion(x.finalizer));assert.equal(await x.locks.hasRecovery(),false);
+});
+test('crash after fencing but before receipt persistence reconstructs completion without fresh verification',async t=>{
+ const x=await completionFixture(t);
+ const interrupted={...x.finalizer,prepare:async (id,binding)=>{await x.finalizer.prepare(id,binding);throw Error('fenced before receipt');}};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,interrupted)));
+ assert.equal((await x.locks.inspectRecovery()).owner.schema,3);assert.ok(await x.service.journal());assert.equal(await x.service.hasCompletion(),false);
+ await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));assert.equal(await x.locks.hasRecovery(),false);
+});
+test('confirmed deleted receipt never re-deletes a journal after marker retirement',async t=>{
+ const x=await completionFixture(t);
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,{...x.finalizer,clear:async(...args)=>{await x.finalizer.clear(...args);throw Error('retired');}})),/RECOVERY_CLEANUP_PENDING/);
+ const receipt=JSON.parse(x.data.get(x.completionKey));assert.equal(receipt.deleted,true);
+ let journalDeletes=0;const vault={get:async k=>x.data.get(k),store:async(k,v)=>{x.data.set(k,v);},delete:async k=>{if(k===x.journalKey)journalDeletes++;x.data.delete(k);}};
+ const restarted=new LiveSwitchService(vault,x.slots,'synthetic-host');
+ await x.locks.withOperation(()=>restarted.resumeCompletion(x.finalizer));assert.equal(journalDeletes,0);
+});
+test('rejected uncommitted journal deletion cannot be certified by stale absent reads',async t=>{
+ const x=await completionFixture(t),store=x.vault.store;
+ x.vault.store=async(k,v)=>{await store(k,v);if(k===x.completionKey&&!JSON.parse(v).deleted)throw Error('pause');};
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)));
+ let reject=true,deletes=0;
+ const vault={get:async k=>k===x.journalKey?undefined:x.data.get(k),store:async(k,v)=>{x.data.set(k,v);},delete:async k=>{if(k===x.journalKey){deletes++;if(reject)throw Error('not committed');}x.data.delete(k);}};
+ const service=new LiveSwitchService(vault,x.slots,'synthetic-host');
+ for(let i=0;i<2;i++)await assert.rejects(x.locks.withOperation(()=>service.resumeCompletion(x.finalizer)),/not committed/);
+ assert.equal(deletes,2);assert.equal(x.data.has(x.journalKey),true);assert.equal(await x.locks.hasRecovery(),true);
+ reject=false;await x.locks.withOperation(()=>service.resumeCompletion(x.finalizer));
+ assert.equal(deletes,3);assert.equal(x.data.has(x.journalKey),false);assert.equal(await x.locks.hasRecovery(),false);
+});
+test('own completion claim release failure retries without reload or arbitrary live-owner deletion',async t=>{
+ const x=await completionFixture(t),unlink=fs.unlink;let failed=false;
+ fs.unlink=async location=>{if(!failed&&location===path.join(x.directory,'.antigravity-account-manager-switch.lock','.release')){failed=true;throw Error('temporary IO');}return unlink(location);};
+ t.after(()=>{fs.unlink=unlink;});
+ await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+ assert.equal(failed,true);await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));
+ assert.equal(await x.locks.hasRecovery(),false);assert.equal(await x.service.hasCompletion(),false);
+});
+test('same service retries uncommitted receipt store and deletion after transient failures',async t=>{
+ for(const stage of ['initial','deleted','remove'])await t.test(stage,async t=>{
+  const x=await completionFixture(t),store=x.vault.store,remove=x.vault.delete;let fail=true;
+  x.vault.store=async(k,v)=>{if(fail&&k===x.completionKey&&((stage==='initial'&&!JSON.parse(v).deleted)||(stage==='deleted'&&JSON.parse(v).deleted))){fail=false;throw Error('not committed');}return store(k,v);};
+  x.vault.delete=async k=>{if(fail&&k===x.completionKey&&stage==='remove'){fail=false;throw Error('not committed');}return remove(k);};
+  await assert.rejects(x.locks.withOperation(()=>x.service.finishVerified(x.backend,undefined,undefined,x.finalizer)),/RECOVERY_CLEANUP_PENDING/);
+  await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));
+  assert.equal(await x.locks.hasRecovery(),false);assert.equal(await x.service.hasCompletion(),false);assert.equal(await x.service.journal(),null);
+ });
+});

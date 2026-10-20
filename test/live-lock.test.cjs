@@ -238,7 +238,7 @@ test('live orphan recovery cannot be cleared through the old manual override', a
   await write(dir, recovery, record()); const before = await read(dir, recovery);
   const locks = new LiveLocks(dir, OWNER, options(async () => ({ state: 'alive', startIdentity: 'old-start' })));
   await assert.rejects(locks.clearAbandonedRecovery(), /LOCK_PROCESS_STILL_ALIVE/);
-  await assert.rejects(locks.withOperation(() => locks.reconcileRecovery(null)), /LOCK_PROCESS_STILL_ALIVE/);
+  await assert.rejects(locks.withOperation(() => locks.reconcileRecovery(null)), /RECOVERY_COMPLETION_UNKNOWN/);
   assert.equal(await read(dir, recovery), before);
 }));
 
@@ -404,4 +404,53 @@ test('real killed extension-host process is recovered automatically with no manu
     assert.equal((await locks.inspectOperation()).state, 'stale'); await locks.withOperation(async () => {});
     assert.deepEqual(await fs.readdir(dir), []);
   } finally { child.kill('SIGKILL'); await exited; }
+}));
+
+test('completion fence upgrades only recovery and preserves the process/nonce identity',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER,options()),id=randomUUID();await locks.beginRecovery(id);const before=JSON.parse(await read(dir,recovery));
+ await locks.withOperation(async()=>{
+  const fenced=JSON.parse(await locks.prepareCompletion(id,"test-binding"));assert.equal(fenced.owner.schema,3);
+  assert.deepEqual({...fenced.owner,schema:2,completion:undefined},{...before,completion:undefined});assert.equal(JSON.parse(await read(dir,operation)).schema,2);
+  assert.equal(await locks.completionIdentity(id),JSON.stringify(fenced));
+  assert.equal(await locks.prepareCompletion(id,"test-binding"),JSON.stringify(fenced));
+ });
+ assert.equal((await locks.inspectRecovery()).state,'active');
+}));
+test('receipt profile binding is checked even when the marker was already retired',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER,options()),other=new LiveLocks(dir,OTHER,options()),id=randomUUID();await locks.beginRecovery(id);let marker;
+ await locks.withOperation(async()=>{marker=await locks.prepareCompletion(id,"test-binding");await locks.clearCompletedRecovery(id,marker);});
+ await assert.rejects(other.withOperation(()=>other.clearCompletedRecovery(id,marker)),/RECOVERY_LOCK_OWNER_MISMATCH/);
+}));
+test('dead and PID-reused completion fences are never reclaimed by ordinary recovery',async()=>fixture(async dir=>{
+ const id=randomUUID();await write(dir,recovery,record({schema:3,id,completion:'binding'}));
+ for(const probe of [async()=>({state:'dead'}),async()=>({state:'alive',startIdentity:'replacement'})]){
+  const locks=new LiveLocks(dir,OWNER,options(probe));
+  await locks.withOperation(async()=>{
+   await assert.rejects(locks.reconcileRecovery(null),/RECOVERY_CLEANUP_PENDING/);
+   await assert.rejects(locks.reconcileRecovery(id),/RECOVERY_CLEANUP_PENDING/);
+   await assert.rejects(locks.assertRecovery(id),/RECOVERY_CLEANUP_PENDING/);
+   await assert.rejects(locks.clearRecovery(id),/RECOVERY_CLEANUP_PENDING/);
+   await assert.rejects(locks.clearAbandonedRecovery(),/RECOVERY_CLEANUP_PENDING/);
+  });assert.equal(await locks.hasRecovery(),true);
+ }
+}));
+test('finished operation release failure is retried by exact owner identity',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER,options()),unlink=fs.unlink;let failed=false;
+ fs.unlink=async p=>{if(!failed&&p===path.join(dir,operation,'.release')){failed=true;throw Error('temporary');}return unlink(p);};
+ // Fail before retirement so the operation directory remains live.
+ const rename=fs.rename;fs.rename=async(a,b)=>{if(a===path.join(dir,operation)&&!failed)throw Error('temporary retire');return rename(a,b);};
+ try {await assert.rejects(locks.withOperation(async()=>{}));}finally{fs.rename=rename;fs.unlink=unlink;}
+ assert.equal(failed,true);let entered=false;await locks.withOperation(async()=>{entered=true;});assert.equal(entered,true);
+}));
+test('claim retry retains its exact authority across consecutive release and read failures',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER,options()),id=randomUUID();await locks.beginRecovery(id);
+ const unlink=fs.unlink,lstat=fs.lstat,claim=path.join(dir,recovery,'.release');let failDelete=true,failRead=false;
+ fs.unlink=async p=>{if(p===claim&&failDelete){failDelete=false;throw Error('temporary delete');}return unlink(p);};
+ fs.lstat=async p=>{if(p===claim&&failRead){failRead=false;throw Error('temporary read');}return lstat(p);};
+ try {
+  await assert.rejects(locks.withOperation(()=>locks.prepareCompletion(id,'binding')));
+  failRead=true;await assert.rejects(locks.withOperation(async()=>{const marker=await locks.completionIdentity(id);await locks.clearCompletedRecovery(id,marker);}));
+  await locks.withOperation(async()=>{const marker=await locks.completionIdentity(id);await locks.clearCompletedRecovery(id,marker);});
+  assert.equal(await locks.hasRecovery(),false);
+ }finally{fs.unlink=unlink;fs.lstat=lstat;}
 }));

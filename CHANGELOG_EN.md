@@ -4,6 +4,17 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.17](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.17) — 2026-10-20
+
+Improve completion recovery after account switching and make backend status easier to inspect.
+
+- Retry transient storage or lock-cleanup failures after successful switch verification; closing the view or receiving an old callback no longer interrupts committed completion.
+- Distinguish login in progress, cleanup pending and unconfirmed state, with retry or recheck actions. Older leftovers without completion evidence remain protected.
+- Collapse other backends by default. Expand to inspect status and actions, with process details available separately and expansion choices retained.
+- On Linux / WSL, show associated project names when explicit launch-directory evidence is available. Otherwise show unidentified; an associated project is not a verified window title. Project identification is not yet available on Windows / macOS.
+
+[Release notes](docs/RELEASE_0.1.17.md) · [Validation scope](docs/VALIDATION_0.1.17.md)
+
 ## [0.1.16](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.16) — 2026-10-19
 
 Understand image and quota access failures and waiting information more clearly.

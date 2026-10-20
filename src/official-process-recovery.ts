@@ -13,7 +13,7 @@ const credentialScopeReasons = ['verified', 'process-identity-unverified', 'hub-
 type ProcessScopeReason = typeof scopeReasons[number];
 type CredentialScopeReason = typeof credentialScopeReasons[number];
 export interface ProcessConflict {
-  id: string; pid: number; parentPid?: number; startedAt?: string;
+  id: string; projects?: string[]; pid: number; parentPid?: number; startedAt?: string;
   owner: 'current' | 'other' | 'detached' | 'unknown';
   parentState: 'alive' | 'gone' | 'unknown'; taskState: 'unknown'; canEnd: boolean;
   endMode?: 'force';
@@ -27,6 +27,7 @@ export interface ProcessConflictState {
   current?: ProcessConflict; currentCount?: number; totalCount?: number;
 }
 interface Target {
+  projects?: string[];
   pid: number; parentPid: number; startTicks?: string; bootId?: string; commandHash?: string; platform?: 'win32';
   kind: 'current-hub' | 'unowned-hub' | 'unverified';
   parentState: 'alive' | 'gone' | 'unknown'; startedAt?: string; canEnd: boolean;
@@ -137,7 +138,8 @@ function target(value: unknown, platform: NodeJS.Platform): Target {
   const credentialScopeReason = credentialScopeReasons.find(reason => reason === row.credentialScopeReason);
   const credentialScopeVerified = row.credentialScopeVerified === true;
   if (row.kind === 'current-hub' && scope !== 'current-window') throw new LiveError('PROCESS_CHECK_FAILED');
-  return { pid: row.pid, parentPid: row.parentPid,
+  const projects = Array.isArray(row.projects) && row.projects.length <= 16 && row.projects.every(name => typeof name === 'string' && name.length > 0 && name.length <= 128 && !/[/\\\p{Cc}\p{Cf}]/u.test(name) && name !== '.' && name !== '..') ? row.projects as string[] : [];
+  return { projects, pid: row.pid, parentPid: row.parentPid,
     ...(typeof row.startTicks === 'string' ? { startTicks: row.startTicks } : {}), ...(typeof row.bootId === 'string' ? { bootId: row.bootId } : {}), ...(typeof row.commandHash === 'string' ? { commandHash: row.commandHash } : {}), ...(platform === 'win32' ? { platform: 'win32' } : {}),
     kind: row.kind as Target['kind'], scope, ...(scopeReason ? { scopeReason } : {}), credentialScopeVerified, ...(credentialScopeReason ? { credentialScopeReason } : {}), parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub' && credentialScopeVerified, ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
 }
@@ -209,8 +211,8 @@ export class OfficialProcessRecovery {
     if (before !== this.currentGeneration()) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
     if (new Set(rows.map(row => row.pid)).size !== rows.length || rows.filter(row => row.kind === 'current-hub').length > 1) throw new LiveError('PROCESS_CHECK_FAILED');
     const processes: ProcessConflict[] = rows.length ? rows.map(row => {
-      const id = randomUUID(); if (row.canEnd) this.targets.set(id, row);
-      return { id, pid: row.pid, parentPid: row.parentPid, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+      const id = randomUUID(); if (row.canEnd) { const { projects: _projects, ...proof } = row; void _projects; this.targets.set(id, proof); }
+      return { id, projects: row.projects ?? [], pid: row.pid, parentPid: row.parentPid, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
         owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' ? 'unknown' : row.scope === 'detached' ? 'detached' : 'other',
         scope: row.scope, ...(row.scopeReason ? { scopeReason: row.scopeReason } : {}), credentialScopeVerified: row.credentialScopeVerified, ...(row.credentialScopeReason ? { credentialScopeReason: row.credentialScopeReason } : {}), parentState: row.parentState, taskState: 'unknown', canEnd: row.canEnd, ...(this.platform === 'win32' && row.canEnd ? { endMode: 'force' as const } : {}) };
     }) : fallback;

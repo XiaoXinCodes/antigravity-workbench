@@ -93,6 +93,20 @@ def scope(parent, birth, owner):
         child_birth, cursor = int(value[1]), value[0]
     return 'unknown', 'ancestry-limit'
 
+def associated_projects(args):
+    # Explicit workspace arguments are association evidence, never window titles.
+    # Return basenames only; no cwd guess, log parsing, path or session export.
+    result = []
+    for arg in args:
+        if not arg.startswith('--add-dir='): continue
+        directory = arg[len('--add-dir='):]
+        if not os.path.isabs(directory): continue
+        name = os.path.basename(os.path.normpath(directory))
+        if not name or name in ('.', '..') or len(name) > 128 or any(ord(c) < 32 or ord(c) == 127 or c in '/\\' or 0x202a <= ord(c) <= 0x202e or 0x2066 <= ord(c) <= 0x2069 for c in name): continue
+        if name not in result: result.append(name)
+        if len(result) == 16: break
+    return result
+
 def eligible(row):
     return row['kind'] == 'unowned-hub' and row.get('credentialScopeVerified') is True
 
@@ -140,7 +154,7 @@ def inspect(pid, request, boot_id):
     after_image = os.stat(base + '/exe')
     if before != stat(pid) or uid != os.stat(base).st_uid or executable != os.readlink(base + '/exe') or image_identity != (after_image.st_dev, after_image.st_ino) or raw != after or boot_id != boot() or process_home is not None and launch_environment(pid, request.get('home')) != (process_home, environment_proof, environment_reason): raise ValueError()
     proof_hash = hashlib.sha256(raw + b'\0ENV=' + environment_proof.encode('utf-8') + b'\0PPID=' + str(before[0]).encode() + b'\0IMAGE=' + ('%d:%d' % image_identity).encode()).hexdigest()
-    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official else 'unverified', 'scope': ownership, 'scopeReason': scope_reason, 'credentialScopeVerified': credential_verified, 'credentialScopeReason': credential_reason, 'parentState': parent_state, 'startedAt': started}
+    return {'pid': pid, 'parentPid': before[0], 'startTicks': before[1], 'bootId': boot_id, 'commandHash': proof_hash, 'kind': 'current-hub' if current else 'unowned-hub' if official else 'unverified', 'scope': ownership, 'scopeReason': scope_reason, 'credentialScopeVerified': credential_verified, 'credentialScopeReason': credential_reason, 'parentState': parent_state, 'startedAt': started, 'projects': associated_projects(args) if official else []}
 
 def bind(target, request):
     fd = os.pidfd_open(target['pid'], 0)

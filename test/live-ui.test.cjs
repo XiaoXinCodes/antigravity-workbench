@@ -1006,3 +1006,70 @@ test('controller reconstruction restores a historical card, failure keeps it, an
 test('same-ID replacement with unchanged timestamp while waiting for a lock neither queries nor receives an error',async t=>{
  const f=setup();t.after(()=>f.context.subscriptions.forEach(s=>s.dispose()));f.state.set('live-switch.accounts.v1',[{...saved,quotaDisplayId:saved.id}]);let unlock,reads=0;f.locks.withOperation=fn=>new Promise(r=>unlock=()=>r(fn()));f.ui.savedQuota=async()=>{reads++;return {...await f.backend.proof(),quotaSource:'server'}};const pending=f.call('quota',saved.id);await settle();f.state.set('live-switch.accounts.v1',[{...saved,quotaDisplayId:'00000000-0000-4000-8000-000000000099'}]);unlock();await pending;assert.equal(reads,0);assert.equal(f.diag.getAccounts()[0].quota,undefined);
 });
+
+async function durableCompletionUi(t, installed = true) {
+ const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'agm-ui-completion-'));
+ t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const {LiveLocks}=require('../out/live-lock'),{LiveSwitchService,JOURNAL_KEY}=require('../out/live-switch');
+ const locks=new LiveLocks(directory,'a'.repeat(64));const f=setup({locks});await f.diag.refresh();
+ t.after(()=>{for(const sub of f.context.subscriptions)sub.dispose();});
+ const data=new Map(),vault={get:async k=>data.get(k),store:async(k,v)=>{data.set(k,v);},delete:async k=>{data.delete(k);}};
+ const token=id=>JSON.stringify({token:{refresh_token:'synthetic-'+id}}),a={keyring:token('a'),file:null},b={keyring:token('b'),file:null};let current=b,writes=0,proofs=0;
+ const real=new LiveSwitchService(vault,{read:async()=>({...current}),write:async(next,expected)=>{assert.deepEqual(current,expected);current={...next};writes++;}});
+ const saved=await real.capture({label:'B',expectedEmail:'b@example.test',identitySource:'hub'});current=a;
+ f.state.set('live-switch.accounts.v1',[saved]);
+ for(const name of ['journal','account','install','finishVerified','hasCompletion','resumeCompletion','recoverImport','recoverLogin'])f.service[name]=real[name].bind(real);
+ f.backend.reload=async()=>{f.backend.generation='new';};f.backend.proof=async()=>{proofs++;return{email:'b@example.test',generation:f.backend.generation,authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]};};
+ if(installed)await locks.withOperation(async()=>{await real.install(saved.id,f.backend);await locks.beginRecovery((await real.journal()).id);});
+ return {...f,saved,real,data,vault,journalKey:JOURNAL_KEY,writes:()=>writes,proofs:()=>proofs};
+}
+test('UI cleanup failure exposes retry and duplicate Verify clicks converge without switching again',async t=>{
+ const f=await durableCompletionUi(t),clear=f.locks.clearCompletedRecovery.bind(f.locks);let fail=true;
+ f.locks.clearCompletedRecovery=async(...args)=>{if(fail)throw Error('injected cleanup fault');return clear(...args);};
+ await f.call('verify');assert.equal(f.diag.getState().pending,true);assert.equal(f.diag.getState().recoveryPhase,'cleanup');assert.match(f.diag.getState().status,/清理/);
+ const proofs=f.proofs();fail=false;await Promise.all([f.call('verify'),f.call('verify')]);
+ assert.equal(f.diag.getState().pending,false);assert.equal(f.diag.getState().recoveryPhase,'none');assert.equal(await f.locks.hasRecovery(),false);assert.equal(f.writes(),1);assert.equal(f.proofs(),proofs);
+ assert.ok(!f.events.includes('workbench.action.reloadWindow'));
+});
+test('closing the controller after journal deletion invalidates its lease but cannot abort committed cleanup',async t=>{
+ const f=await durableCompletionUi(t),original=f.vault.delete;
+ f.vault.delete=async key=>{await original(key);if(key===f.journalKey)for(const sub of f.context.subscriptions)sub.dispose();};
+ await f.call('verify');assert.equal(await f.real.journal(),null);assert.equal(await f.real.hasCompletion(),false);assert.equal(await f.locks.hasRecovery(),false);assert.equal(f.writes(),1);
+});
+test('focus refresh completes a durable receipt with no journal and no active verification lease',async t=>{
+ const f=await durableCompletionUi(t),clear=f.locks.clearCompletedRecovery.bind(f.locks);let fail=true;
+ f.locks.clearCompletedRecovery=async(...args)=>{if(fail)throw Error('pause');return clear(...args);};
+ await f.call('verify');assert.equal(await f.real.journal(),null);assert.equal(f.diag.getState().recoveryPhase,'cleanup');
+ fail=false;await f.diag.refresh();assert.equal(f.diag.getState().pending,false);assert.equal(await f.locks.hasRecovery(),false);assert.equal(await f.real.hasCompletion(),false);
+});
+
+test('failure of the obsolete pending display cache cannot undo completed cleanup',async t=>{
+ const f=await durableCompletionUi(t),update=f.context.globalState.update;
+ f.context.globalState.update=async(key,value)=>{if(key==='live-switch.pending.v1')throw Error('display cache unavailable');return update(key,value);};
+ await f.call('verify');assert.equal(await f.locks.hasRecovery(),false);assert.equal(f.diag.getState().pending,false);assert.equal(f.diag.getState().recoveryPhase,'none');
+});
+
+
+test('switch catch never rolls back or clears outside the receipt after verified cleanup fails',async t=>{
+ const f=await durableCompletionUi(t,false),clear=f.locks.clearCompletedRecovery.bind(f.locks);
+ f.ui.answer='切换账号';f.backend.restartMode='component';
+ f.locks.clearCompletedRecovery=async()=>{throw Error('injected cleanup failure');};
+ f.service.restore=async()=>assert.fail('committed target must not roll back');
+ await f.call('switch',f.saved.id);
+ assert.equal(await f.real.journal(),null);assert.equal(await f.real.hasCompletion(),true);assert.equal(await f.locks.hasRecovery(),true);assert.equal(f.diag.getState().recoveryPhase,'cleanup');assert.equal(f.writes(),1);
+ f.locks.clearCompletedRecovery=clear;await f.call('verify');assert.equal(await f.locks.hasRecovery(),false);assert.equal(f.diag.getState().pending,false);assert.equal(f.writes(),1);
+});
+test('receipt deletion failure stays retryable through the normal focus refresh entry point',async t=>{
+ const f=await durableCompletionUi(t),remove=f.vault.delete;let fail=true;
+ f.vault.delete=async key=>{if(fail&&key===f.journalKey+'.completion')throw Error('uncommitted receipt delete');return remove(key);};
+ await f.call('verify');assert.equal(f.diag.getState().recoveryPhase,'cleanup');assert.equal(await f.locks.hasRecovery(),false);
+ const proofs=f.proofs();fail=false;await f.diag.refresh();
+ assert.equal(f.diag.getState().pending,false);assert.equal(await f.real.hasCompletion(),false);assert.equal(f.proofs(),proofs);assert.equal(f.writes(),1);
+});
+test('receipt store failure after filesystem commit stays in cleanup and refresh reconstructs it',async t=>{
+ const f=await durableCompletionUi(t),store=f.vault.store;let fail=true;
+ f.vault.store=async(k,v)=>{if(fail&&k===f.journalKey+'.completion')throw Error('uncommitted receipt');return store(k,v);};
+ await f.call('verify');assert.equal(f.diag.getState().recoveryPhase,'cleanup');const proofs=f.proofs();
+ fail=false;await f.diag.refresh();assert.equal(f.diag.getState().pending,false);assert.equal(f.proofs(),proofs);assert.equal(f.writes(),1);
+});
