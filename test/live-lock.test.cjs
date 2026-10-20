@@ -238,7 +238,7 @@ test('live orphan recovery cannot be cleared through the old manual override', a
   await write(dir, recovery, record()); const before = await read(dir, recovery);
   const locks = new LiveLocks(dir, OWNER, options(async () => ({ state: 'alive', startIdentity: 'old-start' })));
   await assert.rejects(locks.clearAbandonedRecovery(), /LOCK_PROCESS_STILL_ALIVE/);
-  await assert.rejects(locks.withOperation(() => locks.reconcileRecovery(null)), /LOCK_PROCESS_STILL_ALIVE/);
+  await assert.rejects(locks.withOperation(() => locks.reconcileRecovery(null)), /RECOVERY_COMPLETION_UNKNOWN/);
   assert.equal(await read(dir, recovery), before);
 }));
 

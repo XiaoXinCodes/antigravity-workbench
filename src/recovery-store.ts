@@ -106,6 +106,15 @@ export class RecoveryStore {
     await prior;
     try { return await run(state); } finally { release(); }
   }
+  /** Resolve an acknowledged but uncertain mutation before recovery acts on absence. */
+  async settle(key: string): Promise<void> {
+    await this.exclusive(key, async state => {
+      if (!state.pending) return;
+      const pending = state.pending;
+      await this.confirm(key, pending, state, pending.after === undefined ? 'RECOVERY_DELETE_FAILED' : 'RECOVERY_SAVE_NOT_VERIFIED');
+      this.acknowledge(state, pending);
+    });
+  }
   async write(key: string, before: string | undefined, after: string): Promise<void> {
     await this.change(key, before, after);
   }

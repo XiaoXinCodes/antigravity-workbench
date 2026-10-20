@@ -1,6 +1,9 @@
 import type { MessageKey } from './i18n-zh';
 /** English catalog. User data and technical identifiers are never translated. */
 export const en: Readonly<Record<MessageKey, string>> = {
+  "liveUi.cleanupRetry": "Retry cleanup",
+  "liveUi.cleanupPending": "Login verified; transaction cleanup is pending. Use Retry cleanup without switching again or reloading.",
+  "liveUi.completionUnknown": "A recovery marker remains without verifiable transaction completion evidence. It is preserved to protect login data; this does not mean another window is signing in. Refresh to recheck and review diagnostics.",
   "diagnostic.resourceUnavailable": "The selected resource is unavailable or access is limited. Check this account’s service eligibility and available models in official Google Antigravity, then retry manually.",
   "diagnostic.resourceUnknown": "The server temporarily limited resource use; the specific cause is unconfirmed. Retry manually later.",
   "diagnostic.endpointChanged": "The service environment changed. Check the selected account again, then retry manually.",

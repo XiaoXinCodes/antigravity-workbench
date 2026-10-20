@@ -530,3 +530,11 @@ test('favorites coalesce the same row while independent different rows remain ac
  const first=f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[0].key,requestId:'first'});await f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[0].key,requestId:'duplicate'});const second=f.message({command:'quota.favorite',accountId:account.id,quotaKey:rows[1].key,requestId:'second'});
  assert.equal(calls.length,2);releases.forEach(r=>r());await Promise.all([first,second]);assert.equal(f.posted.filter(m=>m.type==='complete').length,3);execute=async(...args)=>{calls.push(args)};f.provider.dispose();
 });
+
+test('verified cleanup pending exposes Verify while retaining the account mutation guard',()=>{
+ const html=renderWorkbench(state({accounts:[account],pending:true,recoveryPhase:'cleanup',status:'登录已核验，清理待重试'}),'nonce');
+ assert.match(html, /data-command="live.verify"/);
+ assert.doesNotMatch(html, /data-command="live.verify"[^>]*disabled/);
+ assert.match(html, /data-command="live.switch"[^>]*disabled/);
+ assert.doesNotMatch(html, /data-command="live.restore"/);
+});

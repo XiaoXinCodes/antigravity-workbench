@@ -1,5 +1,8 @@
 /** Stable message keys; add translations without changing call sites. */
 export const zhCN = {
+  "liveUi.cleanupRetry": "重试清理",
+  "liveUi.cleanupPending": "登录已核验，事务清理尚未完成。可点击“重试清理”，无需重新切换或重载。",
+  "liveUi.completionUnknown": "发现未完成的恢复标记，但缺少可核验的事务完成记录。为保护登录数据，已保留标记；这不表示另一窗口正在登录。可刷新重新检查并查看调试信息。",
   "diagnostic.resourceUnavailable": "所选资源暂不可用或访问受限。请在官方 Google Antigravity 检查此账号的服务资格和可用模型，然后手动重试。",
   "diagnostic.resourceUnknown": "服务端暂时限制资源使用，具体原因未确认。请稍后手动重试。",
   "diagnostic.endpointChanged": "服务环境已变化。请重新检查所选账号，然后手动重试。",

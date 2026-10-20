@@ -335,6 +335,22 @@ export class LiveLocks {
     if (!snapshot || snapshot.owner.owner !== this.owner || snapshot.owner.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
     await this.remove(this.recovery, snapshot);
   }
+  /** Persist this exact marker with the verified completion receipt, under the mutex. */
+  async completionIdentity(id: string): Promise<string> {
+    await this.assertOperationHeld();
+    const snapshot = await this.read(this.recovery);
+    if (!snapshot || snapshot.owner.owner !== this.owner || snapshot.owner.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    return JSON.stringify(snapshot);
+  }
+  /** Only a durable verified receipt authorizes this path, never mere journal absence.
+   * An absent marker is the idempotent result of a prior successful retirement. */
+  async clearCompletedRecovery(id: string, identity: string): Promise<void> {
+    await this.assertOperationHeld();
+    const snapshot = await this.read(this.recovery);
+    if (!snapshot) return;
+    if (snapshot.owner.owner !== this.owner || snapshot.owner.id !== id || JSON.stringify(snapshot) !== identity) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    await this.remove(this.recovery, snapshot);
+  }
   async hasRecovery(): Promise<boolean> { return (await this.read(this.recovery)) !== null; }
   /** Read the host-bound encrypted journal first; call only inside withOperation.
    * A matching journal-backed marker is retained. This class NEVER deletes a journal.
@@ -348,6 +364,8 @@ export class LiveLocks {
       return 'preserved';
     }
     if (!snapshot) return 'absent';
+    const status = await this.classify(snapshot);
+    if (status.state === 'active') throw new LiveError('RECOVERY_COMPLETION_UNKNOWN');
     await this.recover(this.recovery); return 'cleared';
   }
   // Compatibility entry points are now safe automatic checks, not a manual override.

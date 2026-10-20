@@ -294,6 +294,8 @@ export function lockConflictMessage(activity: LockActivity): string {
 export function liveErrorMessage(code: string, environment?: NativeHostStatus): string {
   if (environment && !environment.available && environment.code === code) return environment.message;
   const messages: Record<string, string> = {
+    RECOVERY_CLEANUP_PENDING: tr('liveUi.cleanupPending'),
+    RECOVERY_COMPLETION_UNKNOWN: tr('liveUi.completionUnknown'),
     RECOVERY_VERIFICATION_TIMEOUT: tr("liveUi.3ae0ac698e"),
     RECOVERY_VERIFICATION_STALE: tr("liveUi.903f7dde0d"),
     ACCOUNT_SWITCH_IMAGE_RUNNING: tr("liveUi.4606818832"),
@@ -486,7 +488,7 @@ export interface LiveUiDependencies { quotaDisplay?: QuotaDisplayCache; service?
 export interface LiveQuotaSnapshot { email: string; observedAt: string; source: 'server' | 'hub-status'; buckets: HubProof['buckets'] }
 export interface LiveQuotaState { observationFingerprint?: string; historical?: boolean; accountFingerprint?: string; phase: 'loading' | 'ready' | 'error' | 'mismatch'; snapshot?: LiveQuotaSnapshot; message?: string }
 export type LiveAccountView = SavedLogin & { hostCurrent?: boolean; quota?: LiveQuotaState; active?: boolean; activeVerifiedAt?: string };
-export type LiveRecoveryPhase = 'checking' | 'none' | 'authorizing' | 'prepared' | 'installed' | 'restored' | 'locked' | 'unavailable';
+export type LiveRecoveryPhase = 'checking' | 'none' | 'authorizing' | 'prepared' | 'installed' | 'restored' | 'locked' | 'cleanup' | 'unavailable';
 export interface LiveUiState { recoveryPhase: LiveRecoveryPhase; status: string; busy: boolean; pending: boolean; identityChecking?: boolean; initializing?: boolean; identityVerifiedDuringRecovery?: boolean; currentLoginSave?: 'saved' | 'update'; lastKnownAccountId?: string; error?: string; lastFailure?: LastAccountFailure; environment: NativeHostStatus; official: NativeHostStatus; storageMode?: string; accountStorageReady: boolean; currentQuota?: LiveQuotaState; activeEmail?: string; activeVerifiedAt?: string; processConflicts?: ProcessConflictState; processSwitchTarget?: string }
 export interface LiveUiController { getStatus(): string; getAccounts(): LiveAccountView[]; getState(): LiveUiState; refresh(): Promise<void>; recheck(): Promise<void>; ensureIdentity(): Promise<void> }
 export function registerLiveUi(context: vscode.ExtensionContext, dependencies: LiveUiDependencies = {}): LiveUiController {
@@ -647,6 +649,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (recoveryPhase === 'restored') return tr("liveUi.63111612b1");
     if (recoveryPhase === 'authorizing') return tr("liveUi.65e0cdf585");
     if (recoveryPhase === 'prepared') return tr("liveUi.0d81fd2a48");
+    if (recoveryPhase === 'cleanup') return tr('liveUi.cleanupPending');
     if (recoveryPhase === 'locked') return tr("liveUi.8bd7685208");
     if (recoveryPhase === 'unavailable') return errorMessage || tr("liveUi.453801e37a");
     if (recoveryPhase === 'checking') return tr("liveUi.dd4ea9f875");
@@ -655,20 +658,45 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   // The journal, rather than the old global boolean, determines which recovery
   // action is valid. Startup only inspects encrypted recovery metadata and lock
   // ownership. The separate readiness path may activate the official extension.
+  const finalizer = typeof locks.completionIdentity === 'function' ? {
+    identity: (id: string) => locks.completionIdentity(id),
+    clear: (id: string, marker: string) => locks.clearCompletedRecovery(id, marker),
+  } : undefined;
+  async function resumeCompletion(): Promise<boolean> {
+    if (!finalizer || !service?.resumeCompletion) return false;
+    try { return await service.resumeCompletion(finalizer); }
+    catch (error) {
+      if (error instanceof LiveError && ['RECOVERY_CHANGED', 'RECOVERY_LOCK_OWNER_MISMATCH', 'RECOVERY_RECORD_INVALID'].includes(error.code)) throw error;
+      if (await service.hasCompletion()) throw new LiveError('RECOVERY_CLEANUP_PENDING');
+      throw error;
+    }
+  }
+  let cleanupTimer: NodeJS.Timeout | undefined;
+  let cleanupRetries = 0;
+  function scheduleCleanup(): void {
+    if (disposed || cleanupTimer || recoveryPhase !== 'cleanup' || cleanupRetries >= 5) return;
+    cleanupTimer = setTimeout(() => { cleanupTimer = undefined; cleanupRetries++; void refresh(); }, 1500);
+    cleanupTimer.unref?.();
+  }
+  context.subscriptions.push({ dispose: () => clearTimeout(cleanupTimer) });
   const refreshRecovery = async (describe = false, diagnostic?: DebugSpan, expected?: VerificationLease): Promise<void> => {
     try {
       const journal = await service!.journal();
-      if (expected) {
+      const cleanup = await service!.hasCompletion?.();
+      if (expected && !cleanup) {
         verification.assertReady(expected);
         if (journal?.id !== expected.id || journal.phase !== expected.phase) throw new LiveError('RECOVERY_VERIFICATION_STALE');
       }
-      if (journal && (journal.phase === 'installed' || journal.phase === 'restored')) verificationLease = verification.bind(journal.id, journal.phase);
+      if (!cleanup && journal && (journal.phase === 'installed' || journal.phase === 'restored')) verificationLease = verification.bind(journal.id, journal.phase);
       else { verification.clear(); verificationLease = undefined; }
       if (recoveryPhase === 'unavailable') errorMessage = undefined;
-      recoveryPhase = journal?.phase ?? (await locks.hasRecovery() ? 'locked' : 'none');
+      recoveryPhase = cleanup ? 'cleanup' : journal?.phase ?? (await locks.hasRecovery() ? 'locked' : 'none');
+      scheduleCleanup();
       const wasPending = pending;
       pending = recoveryPhase !== 'none';
-      if (context.globalState.get(PENDING, false) !== pending) await context.globalState.update(PENDING, pending);
+      if (context.globalState.get(PENDING, false) !== pending) {
+        try { await context.globalState.update(PENDING, pending); } catch { /* Legacy display cache is not transaction evidence. */ }
+      }
       if (describe && (pending || wasPending)) status = recoveryDescription();
     } catch (error) {
       if (expected && error instanceof LiveError && ['RECOVERY_VERIFICATION_STALE', 'RECOVERY_VERIFICATION_TIMEOUT'].includes(error.code)) throw error;
@@ -704,13 +732,12 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     const guarded: Lifecycle = { ...backend, get generation() { return backend.generation; },
       proof: () => verification.proof(lease, signal => backend.proof(signal)),
       ...(backend.signedOutProof ? { signedOutProof: () => verification.proof(lease, signal => backend.signedOutProof!(signal)) } : {}) };
-    const proof = await service!.finishVerified(guarded, index, { id: journal.id, phase: journal.phase, assertCurrent: () => verification.assertScope(lease) });
+    const proof = await service!.finishVerified(guarded, index, { id: journal.id, phase: journal.phase, assertCurrent: () => verification.assertScope(lease) }, finalizer);
     operationStage = 'cleanup';
-    verification.assertScope(lease);
-    await locks.clearRecovery(journal.id);
-    verification.assertScope(lease);
-    await context.globalState.update(PENDING, false);
-    verification.assertScope(lease);
+    if (!finalizer) await locks.clearRecovery(journal.id);
+    // The committed transaction owns cleanup; a closed view cannot cancel it.
+    if (disposed) return true;
+    try { await context.globalState.update(PENDING, false); } catch { /* The journal, receipt and marker are authoritative. */ }
     pending = false; recoveryPhase = 'none'; errorMessage = undefined;
     activeEmail = proof?.email; activeVerifiedAt = proof?.observedAt; activeGeneration = proof?.generation;
     status = journal.phase === 'installed' ? tr("liveUi.a1b61d14e0", { p0: proof?.email ?? journal.target.expectedEmail }) : proof ? tr("liveUi.097966e84e", { p0: proof.email }) : tr("liveUi.a47ce4fffc");
@@ -957,8 +984,9 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
             diagnostic.end('blocked', {code: 'LOCK_PROCESS_STILL_ALIVE'}); return;
           }
           if (operation.state === 'uncertain') throw new LiveError(operation.reason || 'LOCK_PROCESS_STATUS_UNKNOWN');
-          if (journal || marker.state !== 'absent' || operation.state === 'stale') {
+          if (journal || marker.state !== 'absent' || operation.state === 'stale' || await service!.hasCompletion?.()) {
             await locks.withOperation(async () => {
+              await resumeCompletion();
               const current = await service!.journal();
               if (expected) { verification.assertReady(expected); if (current?.id !== expected.id || current.phase !== expected.phase) throw new LiveError('RECOVERY_VERIFICATION_STALE'); }
               await locks.reconcileRecovery(current?.id ?? null);
@@ -971,6 +999,9 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
           const attempted = verificationLease;
           try { await locks.withOperation(() => reconcileLogin(attempted)); }
           catch (error) {
+            if (error instanceof LiveError && error.code === 'RECOVERY_CLEANUP_PENDING') {
+              await refreshRecovery(true); scheduleCleanup(); return;
+            }
             if (attempted) {
               if (!verification.matches(attempted)) return;
               const current = await service!.journal();
@@ -997,7 +1028,8 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         if (expected && error instanceof LiveError && error.code === 'RECOVERY_VERIFICATION_STALE') { discardVerification(expected); return; }
         if (expected && (!verification.matches(expected) || error instanceof LiveError && ['RECOVERY_VERIFICATION_STALE', 'RECOVERY_VERIFICATION_TIMEOUT'].includes(error.code))) return;
         diagnostic.end('failed', debugErrorData(error));
-        recoveryPhase = 'unavailable'; pending = true;
+        recoveryPhase = error instanceof LiveError && error.code === 'RECOVERY_CLEANUP_PENDING' ? 'cleanup' : 'unavailable'; pending = true;
+        scheduleCleanup();
         errorMessage = liveErrorMessage(error instanceof LiveError ? error.code : 'RECOVERY_RECORD_INVALID'); status = errorMessage;
       }
     })().finally(() => { diagnostic.end('completed'); recoveryRefresh = undefined; if (!disposed) dependencies.changed?.(); });
@@ -1229,6 +1261,9 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
           if (name === 'quota' && quotaTarget && !items().some(account => account.id === quotaTarget.id && accountDisplayFingerprint(account) === quotaIdentity && quotaObservationFingerprint(account) === quotaObservation)) throw new LiveError('ACCOUNT_QUOTA_ACCOUNT_CHANGED');
           // Finish or roll back a crashed import before another credential operation.
           if (name !== 'quota' && name !== 'export') {
+            if (name === 'verify') cleanupRetries = 0;
+            const resumed = await resumeCompletion();
+            if (resumed && name === 'verify') { await refreshRecovery(true); completed = true; return; }
             const journal = await service!.journal();
             if (['processEnd', 'processEndAll', 'processContinue'].includes(name) && (journal || await locks.hasRecovery())) throw new LiveError('RECOVERY_PENDING');
             await locks.reconcileRecovery?.(journal?.id ?? null);
@@ -1444,6 +1479,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       });
       return true;
     } catch (error) {
+      if (error instanceof LiveError && error.code === 'RECOVERY_CLEANUP_PENDING') throw error;
       debugSpan?.event('recovering', debugErrorData(error));
       if (prepared) {
         // A replaced recovery record belongs to another transaction. Do not
@@ -1550,7 +1586,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       return true;
     } catch (e) {
       await rememberFailure(e);
-      if (disposed || e instanceof LiveError && e.code === 'RECOVERY_VERIFICATION_STALE') throw e;
+      if (disposed || e instanceof LiveError && ['RECOVERY_VERIFICATION_STALE', 'RECOVERY_CLEANUP_PENDING'].includes(e.code)) throw e;
       // A conflicting record is evidence of another state, not a failed target
       // that this transaction may roll back. Keep it byte-for-byte intact.
       if (e instanceof LiveError && ['RECOVERY_CHANGED', 'RECOVERY_PENDING', 'RECOVERY_RECORD_CONFLICT', 'RECOVERY_RECORD_INVALID'].includes(e.code)) throw e;
@@ -1677,7 +1713,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     currentQuota = matching.length ? undefined : { phase: 'ready', snapshot, message: tr("liveUi.aa9c92f9f7") };
     return matching;
   }
-  register('verify', async () => { verificationSuspended = false; return await reconcileLogin(undefined, true, true); });
+  register('verify', async () => { cleanupRetries = 0; verificationSuspended = false; return await reconcileLogin(undefined, true, true); });
   context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.live.quotaCancel', () => { ++quotaCancelRevision; quotaAbort?.abort(); }));
   register('quota', async argument => {
     if (quotaStartedRevision !== quotaCancelRevision) throw new LiveError('QUOTA_QUERY_CANCELLED');
@@ -1823,6 +1859,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   // There is no user-facing override for active, foreign or uncertain ownership.
   register('unlock', async () => {
     await locks.withOperation(async () => {
+      await resumeCompletion();
       const journal = await service!.journal();
       await locks.reconcileRecovery?.(journal?.id ?? null);
       await refreshRecovery(true);
