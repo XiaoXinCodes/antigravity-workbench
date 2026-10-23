@@ -1,3 +1,4 @@
+import { fileRouteFailureReason } from './file-route-failure';
 import { imageEndpointHost, validImageRequestId } from './direct-image-protocol';
 import { sanitizeImageResponseEvidence, trimImageResponseEvidence } from './image-response-evidence';
 /** Diagnostics are constructed from fixed fields/enums; no raw log or error capture. */
@@ -438,6 +439,8 @@ export function debugFailureOutcome(value: unknown): DebugOutcome {
 function count(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 10000; }
 export function sanitizeDebugData(value: unknown): Record<string, unknown> | undefined {
   const result: Record<string, unknown> = {};
+  const routeReason = fileRouteFailureReason(value);
+  if (routeReason) result.fileRouteFailureReason = routeReason;
   const switchStage = own(value, 'switchStage');
   if (member(switchStage, ['route', 'args', 'confirm', 'lock', 'contract', 'census', 'scope', 'prepare', 'helper'])) result.switchStage = switchStage;
   const errorCode = own(value, 'code'); if (errorCode !== undefined) result.code = code(errorCode);

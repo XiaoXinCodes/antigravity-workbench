@@ -12,7 +12,7 @@ import { LiveError, assertSlotIdentity, equalSlots } from './live-storage';
 import { EnvironmentTokenSlots, resolveOfficialStorageMode } from './live-environment';
 import { LiveLocks, probeProcessIdentity } from './live-lock';
 import { assertNativeHost, resolveCredentialHostId } from './native-host';
-import { createWslReadGuard } from './live-wsl-proof';
+import { createWslReadGuard, wslFileRouteError } from './live-wsl-proof';
 import { assertOfficialWriteContract } from './official-contract';
 import { OfflineRecoveryStore } from './offline-recovery-store';
 import { inspectOfflineLinuxProcesses } from './offline-process-census';
@@ -114,7 +114,7 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
       const official = dependencies.official(); await assertOfficialWriteContract(official);
       dependencies.stage?.('scope');
       const guard = createWslReadGuard(os.homedir(), path.join(os.homedir(), '.gemini', 'bin', 'agy'), () => dependencies.official().exports);
-      if (!await guard()) throw new LiveError('WSL_FILE_ROUTE_UNVERIFIED');
+      if (!await guard()) throw wslFileRouteError(guard.fileRouteFailureReason);
       const before = await dependencies.proof(), slots = new EnvironmentTokenSlots(os.homedir()), backup = await slots.read();
       if (!before.authValid || before.quotaSource !== 'server') throw new LiveError('HUB_IDENTITY_NOT_VERIFIED');
       assertSlotIdentity(backup, before.email);
@@ -165,7 +165,7 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
       if (!record || record.id !== id || record.hostId !== host || record.execution?.owner !== dependencies.owner) throw new LiveError('OFFLINE_RECOVERY_INVALID');
       const official = dependencies.official(); await assertOfficialWriteContract(official);
       const guard = createWslReadGuard(os.homedir(), path.join(os.homedir(), '.gemini', 'bin', 'agy'), () => dependencies.official().exports);
-      if (!await guard()) throw new LiveError('WSL_FILE_ROUTE_UNVERIFIED');
+      if (!await guard()) throw wslFileRouteError(guard.fileRouteFailureReason);
       const slots = new EnvironmentTokenSlots(os.homedir()), before = await slots.read();
       if (before.keyringState !== 'unobserved') throw new LiveError('OFFLINE_SCOPE_UNVERIFIED');
       const proof = await dependencies.proof();
@@ -204,7 +204,7 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
       if (!record || record.execution?.owner !== dependencies.owner || !['installed', 'verified', 'restored', 'restored-verified', ...(automatic ? ['prepared'] : [])].includes(record.phase)) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
       const official = dependencies.official(); await assertOfficialWriteContract(official);
       const guard = createWslReadGuard(os.homedir(), path.join(os.homedir(), '.gemini', 'bin', 'agy'), () => dependencies.official().exports);
-      if (!await guard()) throw new LiveError('WSL_FILE_ROUTE_UNVERIFIED');
+      if (!await guard()) throw wslFileRouteError(guard.fileRouteFailureReason);
       const slots = new EnvironmentTokenSlots(os.homedir()), before = await slots.read();
       const restored = automatic ? classifyOfflineSettlement(record, before) === 'original' : ['restored', 'restored-verified'].includes(record.phase);
       const expectedEmail = restored ? record.originalEmail : record.expectedEmail, expected = restored ? record.backup : record.target;

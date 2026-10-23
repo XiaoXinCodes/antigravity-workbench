@@ -1098,3 +1098,11 @@ test('cancelling account admission leaves recovery, backend and credentials unto
  for(const event of ['recovery','install','stop','bad-direct-reload'])assert.equal(f.events.includes(event),false,event);
  f.context.subscriptions.forEach(sub=>sub.dispose());
 });
+test('debug OFF persists file route enum and reload reader preserves it without error payload',async()=>{
+ const f=setup();await f.diag.refresh();selectFixture(f,'a@example.test');f.ui.answer='切换账号';f.backend.restartMode='component';
+ f.service.install=async()=>{throw Object.assign(require('../out/live-wsl-proof').wslFileRouteError('pid-marker-mismatch'),{message:'PRIVATE_LOG_TOKEN',path:'/private/path'});};
+ await f.call('switch');const record=f.state.get('live-switch.lastFailure.v1');
+ assert.equal(record.code,'WSL_FILE_ROUTE_UNVERIFIED');assert.equal(record.fileRouteFailureReason,'pid-marker-mismatch');
+ assert.doesNotMatch(JSON.stringify(record),/PRIVATE|\/private/);
+ const reloaded=setup({state:f.state});assert.equal(reloaded.diag.getState().lastFailure.fileRouteFailureReason,'pid-marker-mismatch');
+});

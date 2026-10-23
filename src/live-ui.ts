@@ -1,3 +1,4 @@
+import { fileRouteFailureReason } from './file-route-failure';
 import { registerOfflineUi } from './offline-ui';
 import { OwnComponentLifecycle } from './component-own-lifecycle';
 import { ComponentCoordination, type ComponentBirth, type ComponentCensus } from './component-coordination';
@@ -777,7 +778,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     try { phase = (await service?.journal())?.phase ?? 'none'; } catch { /* Preserve the original error if journal inspection fails. */ }
     if (disposed) return;
     const record = readLastAccountFailure(operationFailure && recovery ? { ...operationFailure, recoveryCode: debugErrorCode(error) } :
-      { schema: 1, at: new Date().toISOString(), action: operationAction, stage: operationStage, phase, code: debugErrorCode(error) });
+      { schema: 1, at: new Date().toISOString(), action: operationAction, stage: operationStage, phase, code: debugErrorCode(error), fileRouteFailureReason: fileRouteFailureReason(error) });
     if (!record) return;
     lastFailure = operationFailure = record;
     try { await context.globalState.update(LAST_ACCOUNT_FAILURE, record); } catch { /* Diagnostics must not alter recovery outcome. */ }

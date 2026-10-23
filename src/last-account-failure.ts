@@ -1,3 +1,4 @@
+import { fileRouteFailureReason, type FileRouteFailureReason } from './file-route-failure';
 import { debugErrorCode } from './debug-events';
 import type { LiveInstallStage } from './live-switch';
 
@@ -9,7 +10,7 @@ const PHASES = ['none', 'authorizing', 'prepared', 'installed', 'restored', 'una
 export type AccountFailureStage = typeof OFFLINE_PREPARE_STAGES[number] | LiveInstallStage | 'command' | 'verify' | 'resume' | 'restore' | 'cleanup';
 export interface LastAccountFailure {
   schema: 1; at: string; action: typeof ACTIONS[number]; stage: AccountFailureStage;
-  phase: typeof PHASES[number]; code: string; recoveryCode?: string;
+  phase: typeof PHASES[number]; code: string; recoveryCode?: string; fileRouteFailureReason?: FileRouteFailureReason;
 }
 function own(value: unknown, key: string): unknown {
   if (!value || typeof value !== 'object') return undefined;
@@ -25,5 +26,6 @@ export function readLastAccountFailure(value: unknown): LastAccountFailure | und
   if (own(value, 'schema') !== 1 || typeof at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u.test(at) || !Number.isFinite(Date.parse(at)) ||
       !member(action, ACTIONS) || !member(stage, STAGES) || !member(phase, PHASES) || typeof code !== 'string' || debugErrorCode({code}) !== code) return undefined;
   return { schema: 1, at, action, stage, phase, code,
+    ...(fileRouteFailureReason(value) ? { fileRouteFailureReason: fileRouteFailureReason(value)! } : {}),
     ...(typeof recoveryCode === 'string' && debugErrorCode({code: recoveryCode}) === recoveryCode ? {recoveryCode} : {}) };
 }
