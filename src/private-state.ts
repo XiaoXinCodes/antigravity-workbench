@@ -26,7 +26,12 @@ export class PrivateState<T> implements LocalState<T> {
     catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return this.initial(); throw e; }
     try {
       const s = await handle.stat();
-      if (!s.isFile() || s.nlink !== 1 || s.size > 2 * 1024 * 1024 || process.getuid && (s.uid !== process.getuid() || (s.mode & 0o077))) throw Error('AUTOMATION_STORAGE_UNSAFE');
+      if (!s.isFile() || s.nlink > 1 || s.size > 2 * 1024 * 1024 || process.getuid && (s.uid !== process.getuid() || (s.mode & 0o077))) throw Error('AUTOMATION_STORAGE_UNSAFE');
+      // A writer may atomically replace state.json after open but before this
+      // first fstat. The old descriptor is then unlinked, not a hard link or an
+      // unsafe pathname. Reject its snapshot as changed so callers can reopen
+      // and repeat every ownership/mode check against the new current file.
+      if (s.nlink === 0) throw Error('AUTOMATION_STORAGE_CHANGED');
       const buffer = Buffer.alloc(2 * 1024 * 1024 + 1); let total = 0;
       while (total < buffer.length) { const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total); if (!bytesRead) break; total += bytesRead; }
       const after = await handle.stat();

@@ -20,7 +20,7 @@ function fixture(hostId='target-linux-wsl', data=new Map()) {
   };
   const index={read:()=>structuredClone(rows),write:async value=>{rows=structuredClone(value);}};
   let proof;
-  const calls=[];const backend={generation:'old',stop:async()=>{calls.push('stop');},reload:async()=>{calls.push('reload');backend.generation='new-'+calls.filter(v=>v==='reload').length},proof:async()=>proof||({email:current.keyring===token('a')?'a@example.test':'b@example.test',generation:backend.generation,authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]})};
+  const calls=[];const backend={generation:'old',assertCredentialWriteSafe:async()=>{}, stop:async()=>{calls.push('stop');},reload:async()=>{calls.push('reload');backend.generation='new-'+calls.filter(v=>v==='reload').length},proof:async()=>proof||({email:current.keyring===token('a')?'a@example.test':'b@example.test',generation:backend.generation,authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]})};
   const key=hostId===undefined?IMPORT_PREFIX:`${IMPORT_PREFIX}.host.${crypto.createHash('sha256').update(hostId).digest('hex')}`;
   return {data,vault,service,index,slots,backend,calls,key:key+'.v2',legacyKey:key,legacy,rows:()=>rows,setRows:v=>{rows=v;},reads:()=>reads,writes:()=>writes,current:()=>current,proof:v=>{proof=v;}};
 }

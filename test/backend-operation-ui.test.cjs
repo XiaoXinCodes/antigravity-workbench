@@ -33,7 +33,7 @@ function fixture(t, options = {}) {
     UIKind: { Desktop: 1 }, ExtensionKind: { UI: 1, Workspace: 2 }, ProgressLocation: { Notification: 1 }, Uri: { file: fileUri },
     env: { uiKind: 1 }, extensions: { getExtension: id => id === official.id ? official : undefined },
     workspace: { isTrusted: true, getConfiguration: () => ({ get: () => undefined }) },
-    commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, getCommands: async () => [], executeCommand: async name => { record('command', name); } },
+    commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, getCommands: async () => ui.commandList || [], executeCommand: async name => { record('command', name); return ui.execute?.(name); } },
     window: {
       onDidChangeWindowState: () => ({ dispose() {} }),
       async showWarningMessage(message, options, action) { warnings.push({message, options, action}); record('confirmation', {message, action}); if (ui.warning) return ui.warning(message, action); return ui.consent ? action : undefined; },
@@ -72,6 +72,7 @@ function fixture(t, options = {}) {
   };
   const backend = {
     get generation() { return generation; }, restartMode: 'component',
+    async assertCredentialWriteSafe() {},
     async stop() { record('stop-hub'); running = false; },
     async reload() { record('reload-hub'); running = true; generation = `synthetic-generation-${++serial}`; official.exports = {...official.exports, csrfToken: `synthetic-csrf-${serial}`}; ui.afterReload?.(); },
     async proof() { if (!running) throw new LiveError('OFFICIAL_HUB_NOT_READY'); record('proof', currentEmail); if (ui.proofFailure) throw ui.proofFailure; return proof(); },
@@ -88,12 +89,12 @@ function fixture(t, options = {}) {
     async endMany(ids, signal) { record('end-many', [...ids]); if (ids.some(id => !selections.has(id)) || rows.some(row => !ids.includes(row.id))) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); if (ui.endMany) return ui.endMany(ids, signal); rows = []; return ids.map(() => 'exited'); },
     invalidate() { selections.clear(); }
   };
-  const controller = api.registerLiveUi(context, { service, locks, lifecycle: async() => {
+  const controller = api.registerLiveUi(context, { service, locks, ...(options.publicLifecycle ? {} : { lifecycle: async() => {
     record('resolve-lifecycle'); if (rows.length) throw new LiveError('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN');
     return running ? backend : {...backend, generation:'stopped'};
-  }, currentIdentity: async() => ({...proof(),generation:load('live-hub').generation(official.exports)}), currentQuota: async() => proof(), processRecovery: recovery, changed: () => record('ui-state') });
+  } }), currentIdentity: async() => ({...proof(),generation:load('live-hub').generation(official.exports)}), currentQuota: async() => proof(), processRecovery: recovery, changed: () => { record('ui-state'); ui.onChanged?.(); } });
   t.after(() => { context.subscriptions.forEach(subscription => subscription.dispose()); trace.push({ test: t.name, synthetic: true, events, warnings, final: controller.getState() }); });
-  return { accounts, events, warnings, notifications, ui, state, data, context, controller, backend, service, locks, recovery, record, current: () => structuredClone(currentSlots), email: () => currentEmail, rows: () => rows, setRows: value => { rows = value; }, activity: value => { activity = value; }, call: (name, argument) => commands.get(`antigravityAccounts.live.${name}`)(argument) };
+  return { official, accounts, events, warnings, notifications, ui, state, data, context, controller, backend, service, locks, recovery, record, current: () => structuredClone(currentSlots), email: () => currentEmail, rows: () => rows, setRows: value => { rows = value; }, activity: value => { activity = value; }, call: (name, argument) => commands.get(`antigravityAccounts.live.${name}`)(argument) };
 }
 const count = (f, name) => f.events.filter(row => row.event === name).length;
 const order = (f, before, after) => assert.ok(f.events.findIndex(row => row.event === before) < f.events.findIndex(row => row.event === after), `${before} must precede ${after}`);
@@ -104,6 +105,86 @@ async function establishVerifiedA(f) {
   await f.controller.refresh();await f.call('verify');
   assert.equal(f.controller.getState().activeEmail,'a@example.test');
 }
+// Characterize the reported state without assuming why the native helper failed.
+// These tests preserve the mutation guard; they do not certify official 1.9.0.
+for (const countUnknown of [0, 1, 4]) test(`verified login with ${countUnknown} unknown processes and no current Hub blocks before mutation`, async t => {
+  const f = fixture(t);
+  await establishVerifiedA(f);
+  f.events.length = 0;
+  f.recovery.scan = async () => ({
+    phase: 'blocked', canContinue: false, currentCount: 0, totalCount: countUnknown,
+    processes: Array.from({ length: countUnknown }, (_, index) => ({
+      id: `unknown-${index}`, pid: 2000 + index, owner: 'unknown', scope: 'unknown',
+      parentState: 'unknown', taskState: 'unknown', canEnd: false,
+      credentialScopeVerified: false, credentialScopeReason: 'process-identity-unverified'
+    })), limitation: 'ownership'
+  });
+  await f.call('switch', ACCOUNT_B);
+  const state = f.controller.getState();
+  assert.equal(state.activeEmail, 'a@example.test');
+  assert.equal(state.lastFailure.code, 'OFFICIAL_HUB_PROCESS_UNVERIFIED');assert.match(state.error,/当前窗口的 Hub 进程无法核验/);
+  assert.equal(state.processConflicts.processes.length, countUnknown);
+  assert.ok(state.processConflicts.processes.every(row => row.owner === 'unknown'));
+  assert.equal(f.warnings.length, 0);
+  noBackendMutation(f);
+  assert.equal(count(f, 'lock'), 0);
+});
+test('stale active exports with three live peer Hubs cannot recover through repeated rescans or create a pending transaction', async t => {
+  const f = fixture(t);
+  await establishVerifiedA(f);
+  f.events.length = 0;
+  let scans = 0;
+  f.recovery.scan = async () => {
+    scans++;
+    return { phase: 'blocked', canContinue: false, currentCount: 0, totalCount: 3,
+      processes: [710, 711, 712].map(pid => ({ ...detached(pid), owner: 'other', scope: 'other-window', parentState: 'alive' })) };
+  };
+  await f.call('switch', ACCOUNT_B);
+  assert.equal(f.controller.getState().lastFailure.code,'OFFICIAL_HUB_PROCESS_UNVERIFIED');
+  await f.call('processEndAll');
+  assert.match(f.controller.getState().error, /当前窗口的 Hub 进程无法核验/);
+  for (let attempt = 0; attempt < 3; attempt++) await f.call('processScan');
+  await f.call('processContinue');
+  const state = f.controller.getState();
+  assert.ok(scans >= 5);
+  assert.equal(state.processConflicts.currentCount, 0);
+  assert.equal(state.processConflicts.canContinue, false);
+  assert.equal(state.pending, false);
+  assert.equal(state.busy, false);
+  assert.equal(await f.service.journal(), null);
+  assert.equal(f.warnings.length, 0);
+  noBackendMutation(f);
+});
+for (const scenario of ['failed', 'timeout', 'exports-cleared', 'exports-invalid', 'late-revision', 'late-generation']) test(`passive Hub probe ${scenario} cannot leave stale verification or erase a newer proof`, async t => {
+  let probe;
+  const originalInterval = global.setInterval;
+  global.setInterval = (callback, ms, ...rest) => {
+    if (ms === 5000) { probe = callback; return originalInterval(() => {}, ms); }
+    return originalInterval(callback, ms, ...rest);
+  };
+  let f;
+  try { f = fixture(t); } finally { global.setInterval = originalInterval; }
+  await establishVerifiedA(f);
+  const hub = load('live-hub'), originalQuery = hub.queryHub;
+  let reject;
+  hub.queryHub = () => new Promise((_resolve, fail) => { reject = fail; });
+  t.after(() => { hub.queryHub = originalQuery; });
+  if (scenario === 'exports-cleared') f.official.exports = {};
+  if (scenario === 'exports-invalid') f.official.exports = { port: -1 };
+  const observed = []; f.ui.onChanged = () => observed.push(f.controller.getState().activeEmail);
+  probe(); await new Promise(setImmediate);
+  if (scenario.startsWith('exports-')) { assert.ok(observed.includes(undefined)); return; }
+  assert.equal(typeof reject, 'function');
+  if (scenario === 'late-generation') f.official.exports = { ...f.official.exports, port: 34568 };
+  if (scenario.startsWith('late')) await f.controller.recheck();
+  reject(new (load('live-storage').LiveError)(scenario === 'timeout' ? 'HUB_RPC_TIMEOUT' : 'HUB_RPC_FAILED'));
+  await new Promise(setImmediate);
+  if (scenario.startsWith('late')) assert.equal(f.controller.getState().activeEmail, 'a@example.test');
+  else {
+    // The failed generation must be invalidated synchronously before any retry.
+    assert.ok(observed.includes(undefined), 'failed probe must remove active identity before any retry');
+  }
+});
 test('hidden identity masks the native switch consent without changing the target or credentials', async t => {
   const privacy=load('identity-presentation');privacy.setIdentityHidden(true);t.after(()=>privacy.setIdentityHidden(false));
   const f=fixture(t);f.ui.consent=false;await f.call('switch',ACCOUNT_B);
@@ -131,7 +212,7 @@ test('verified current login plus an unknown-scope extra Hub reports ownership b
   await f.call('switch',ACCOUNT_B);
   assert.equal(f.warnings.length,0);noBackendMutation(f);assert.equal(f.email(),'a@example.test');
   assert.equal(f.controller.getState().activeEmail,'a@example.test');
-  assert.match(f.controller.getState().error,/OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED/);
+  assert.equal(f.controller.getState().lastFailure.code,'OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED');
   assert.equal(f.controller.getState().processConflicts.current.pid,1001);
   assert.equal(f.controller.getState().processConflicts.processes[0].pid,710);
 });
@@ -320,4 +401,87 @@ test('English consent retains selected PID scope and an explicit interruption wa
 
 test.after(()=>{
   if(process.env.BACKEND_UI_TIMELINE){fs.mkdirSync(path.dirname(process.env.BACKEND_UI_TIMELINE),{recursive:true});fs.writeFileSync(process.env.BACKEND_UI_TIMELINE,JSON.stringify({moduleRoot:output,synthetic:true,realGoogleCalls:false,traces:trace},null,2)+'\n');}
+});
+for (const scenario of ['success', 'cancel', 'journal', 'lock', 'double-click']) test(`component recovery command ${scenario} never stops a backend or writes credentials`, async t => {
+  const f = fixture(t), contract = load('official-contract'), hub = load('live-hub');
+  const oldEntry = contract.assertOfficialEntrypoint, oldProof = hub.queryFreshIdentity;
+  contract.assertOfficialEntrypoint = async () => {};
+  hub.queryFreshIdentity = async () => ({ generation: hub.generation(f.official.exports) });
+  t.after(() => { contract.assertOfficialEntrypoint = oldEntry; hub.queryFreshIdentity = oldProof; });
+  await establishVerifiedA(f); f.events.length = 0;
+  f.official.packageJSON.version = '1.8.0';
+  f.ui.commandList = ['antigravity.reconnect', 'antigravity.panel.focus'];
+  let started = false;
+  f.recovery.scan = async () => ({ phase: started ? 'clear' : 'blocked', canContinue: started, currentCount: started ? 1 : 0, totalCount: started ? 1 : 0, processes: [], ...(started ? {current:{pid:1001,owner:'current',credentialScopeVerified:true}} : {}) });
+  f.recovery.currentProcessIdentity = () => started ? { pid: 1001, startTicks: '999999' } : undefined;
+  f.ui.execute = async name => { if (name === 'antigravity.panel.focus') started = true; };
+  if (scenario === 'cancel') f.ui.consent = false;
+  if (scenario === 'journal') f.service.journal = async () => ({ phase: 'installed' });
+  if (scenario === 'lock') f.activity({ state: 'active', kind: 'switch', scope: 'other' });
+  const first = f.call('hubRecover');
+  if (scenario === 'double-click') await f.call('hubRecover');
+  await first;
+  noBackendMutation(f);
+  const commands = f.events.filter(row => row.event === 'command').map(row => row.detail);
+  if (['success', 'double-click'].includes(scenario)) {
+    assert.deepEqual(commands, f.ui.commandList);
+    assert.equal(f.controller.getState().error, undefined);
+  } else assert.deepEqual(commands, []);
+});
+test('ending observation during reconnect retains the operation until actual component verification', async t => {
+  const f = fixture(t), contract = load('official-contract'), oldEntry = contract.assertOfficialEntrypoint;
+  contract.assertOfficialEntrypoint = async () => {}; t.after(() => { contract.assertOfficialEntrypoint = oldEntry; });
+  await establishVerifiedA(f); f.events.length = 0;
+  f.official.packageJSON.version = '1.8.0';
+  f.ui.commandList = ['antigravity.reconnect', 'antigravity.panel.focus'];
+  let started = false;
+  f.recovery.scan = async () => ({ phase:'blocked',canContinue:false,currentCount:started?1:0,totalCount:started?1:0,processes:[],...(started?{current:{credentialScopeVerified:true}}:{}) });
+  f.recovery.currentProcessIdentity = () => started ? {pid:1001,startTicks:'999'} : undefined;
+  const hub = load('live-hub'), oldProof = hub.queryFreshIdentity;
+  hub.queryFreshIdentity = async () => ({generation:hub.generation(f.official.exports)}); t.after(()=>{hub.queryFreshIdentity=oldProof;});
+  const began = deferred(), finish = deferred();
+  f.ui.execute = async command => { if(command==='antigravity.reconnect'){began.resolve(); await finish.promise;} else started=true; };
+  const first = f.call('hubRecover'); await waitForStart(began.promise);
+  await f.call('hubRecoverCancel'); await first;
+  assert.equal(count(f, 'unlock'), 0);
+  await f.call('hubRecover');
+  assert.match(f.controller.getState().error, /组件恢复仍在进行/);
+  finish.resolve(); await f.call('processScan');
+  assert.equal(count(f, 'unlock'), 1);
+  assert.deepEqual(f.events.filter(row=>row.event==='command').map(row=>row.detail), ['antigravity.reconnect','antigravity.panel.focus']);
+  noBackendMutation(f);
+});
+for(const scenario of ['success','cancel','replaced','unknown-peer']) test(`restart current component with peers: ${scenario}`,async t=>{
+ const f=fixture(t),contract=load('official-contract'),hub=load('live-hub');
+ const oldEntry=contract.assertOfficialEntrypoint,oldProof=hub.queryFreshIdentity;
+ contract.assertOfficialEntrypoint=async()=>{};hub.queryFreshIdentity=async()=>({generation:hub.generation(f.official.exports)});
+ t.after(()=>{contract.assertOfficialEntrypoint=oldEntry;hub.queryFreshIdentity=oldProof;});
+ await establishVerifiedA(f);f.events.length=0;f.official.packageJSON.version='1.8.0';
+ f.ui.commandList=['antigravity.reconnect','antigravity.panel.focus'];
+ const peers=[800,801,802].map(pid=>verifiedPeer(pid,'other-window'));
+ if(scenario==='unknown-peer')peers[0].scope='unknown';
+ let running=true,birth='old',stops=0,starts=0;
+ f.recovery.scan=async()=>({phase:'blocked',canContinue:false,currentCount:running?1:0,totalCount:peers.length+(running?1:0),processes:peers,...(running?{current:{pid:1001,credentialScopeVerified:true}}:{})});
+ f.recovery.currentProcessIdentity=()=>running?{pid:1001,startTicks:birth}:undefined;
+ f.recovery.recoveryPeerIdentity=()=>JSON.stringify(peers.map(p=>({...p,startTicks:'peer-birth',commandHash:'synthetic'})));
+ f.recovery.assertCurrentProcess=async expected=>{assert.deepEqual(expected,{pid:1001,startTicks:birth});};
+ const main=path.join(f.official.extensionPath,'extension.js'),previous=require.cache[main];
+ require.cache[main]={loaded:true,exports:{deactivate:async()=>{++stops;f.record('component-stop',1001);running=false;f.official.exports={csrfToken:'synthetic-official-csrf'};}}};
+ t.after(()=>{if(previous)require.cache[main]=previous;else delete require.cache[main];});
+ f.ui.execute=async command=>{if(command==='antigravity.reconnect'){++starts;running=true;birth='new';f.official.exports={port:34568,csrfToken:'synthetic-official-csrf'};}};
+ if(scenario==='cancel')f.ui.consent=false;
+ if(scenario==='replaced')f.ui.warning=async(_message,action)=>{birth='reused';return action;};
+ await f.call('hubRestart');
+ assert.equal(stops,scenario==='success'?1:0);assert.equal(starts,scenario==='success'?1:0);
+ assert.equal(count(f,'credential-write'),0);assert.equal(count(f,'end-many'),0);assert.equal(count(f,'end-one'),0);
+ assert.equal(peers.length,3);
+ if(scenario==='success'){assert.equal(f.controller.getState().error,undefined);assert.match(f.warnings.at(-1).message,/任务会中断/);}
+});
+
+for(const action of ['switch','login']) test(`public lifecycle ${action} blocks before stopping peers or starting OAuth`,async t=>{
+ const f=fixture(t,{publicLifecycle:true,rows:[verifiedPeer(710),verifiedPeer(711)]});
+ const before=f.current();await f.call(action,action==='switch'?ACCOUNT_B:undefined);
+ assert.equal(f.controller.getState().lastFailure.code,'OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE');
+ noBackendMutation(f);assert.equal(count(f,'oauth'),0);assert.equal(f.warnings.length,0);
+ assert.equal(await f.service.journal(),null);assert.deepEqual(f.current(),before);
 });

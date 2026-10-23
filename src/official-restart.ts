@@ -12,8 +12,8 @@ interface RestartRuntime {
   now?(): number; timeoutMs?: number;
 }
 /** Reconnect is the official registered command. It invalidates the renderer's
- * cached server URL; focusing its view runs desktopSetup and starts the stopped
- * backend. Do not use triggerUpdate (updates software), resetConversation, private
+ * cached server URL and re-renders an already resolved view. Focus resolves a
+ * view only when needed; it is not an unconditional backend start command. Do not use triggerUpdate (updates software), resetConversation, private
  * workbench commands, activate() twice, or mutate the official workspace history.
  */
 export async function restartOfficialComponent(_previous: string, runtime: RestartRuntime): Promise<string> {

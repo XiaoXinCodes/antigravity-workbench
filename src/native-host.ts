@@ -48,14 +48,14 @@ export function assertNativeHost(context: HostContext, trusted: boolean, desktop
 }
 export interface CredentialHostIdentity { platform: NodeJS.Platform; hostname: string; home: string; distroIdentity?: string }
 /** Pure fingerprint when explicit identity inputs are supplied; never includes credentials. */
-export function credentialHostId(context: HostContext, remoteName?: string, storageMode = 'native-keyring', identity: Partial<CredentialHostIdentity> = {}): string {
+export function credentialHostId(context: { extension: Pick<vscode.Extension<unknown>, 'extensionKind'> }, remoteName?: string, storageMode = 'native-keyring', identity: Partial<CredentialHostIdentity> = {}): string {
   return createHash('sha256').update(JSON.stringify([identity.platform ?? process.platform, identity.hostname ?? os.hostname(), identity.home ?? os.homedir(), context.extension.extensionKind === 2 ? remoteName || 'local' : 'local', storageMode, identity.distroIdentity ?? null])).digest('hex');
 }
 export interface HostIdentityDependencies {
   platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; hostname?: () => string; homedir?: () => string; readMachineId?: () => Promise<string>;
 }
 /** Read only the current Linux system identity, never another host's files or credentials. */
-export async function resolveCredentialHostId(context: HostContext, remoteName?: string, storageMode = 'native-keyring', dependencies: HostIdentityDependencies = {}): Promise<string> {
+export async function resolveCredentialHostId(context: { extension: Pick<vscode.Extension<unknown>, 'extensionKind'> }, remoteName?: string, storageMode = 'native-keyring', dependencies: HostIdentityDependencies = {}): Promise<string> {
   const platform = dependencies.platform ?? process.platform, env = dependencies.env ?? process.env;
   const identity: CredentialHostIdentity = { platform, hostname: (dependencies.hostname ?? os.hostname)(), home: (dependencies.homedir ?? os.homedir)() };
   const wsl = platform === 'linux' && (storageMode === 'wsl-file' || context.extension.extensionKind === 2 && remoteName === 'wsl' || !!env.WSL_DISTRO_NAME || !!env.WSL_INTEROP);

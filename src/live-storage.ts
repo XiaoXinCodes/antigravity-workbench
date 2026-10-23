@@ -170,18 +170,30 @@ export class OfficialTokenSlots implements Slots {
     finally { await file?.close(); }
   }
   async read(): Promise<TokenSlots> { return { keyring: await this.keyring.read(), file: await this.readFile() }; }
-  async write(value: TokenSlots, expected: TokenSlots): Promise<void> {
+  async write(value: TokenSlots, expected: TokenSlots, beforeMutation?: () => Promise<void>): Promise<void> {
     if (value.keyringState !== undefined || expected.keyringState !== undefined) throw new LiveError('OFFICIAL_STORAGE_SCOPE_MISMATCH');
     if (!equalSlots(await this.read(), expected)) throw new LiveError('OFFICIAL_STORAGE_CHANGED');
-    if (value.keyring !== expected.keyring) await this.keyring.write(value.keyring);
+    if (value.keyring !== expected.keyring) {
+      if (beforeMutation) {
+        await beforeMutation();
+        if (!equalSlots(await this.read(), expected)) throw new LiveError('OFFICIAL_STORAGE_CHANGED');
+      }
+      await this.keyring.write(value.keyring);
+    }
     if (value.file !== expected.file) {
       if (await this.readFile() !== expected.file) throw new LiveError('OFFICIAL_STORAGE_CHANGED');
-      if (value.file === null) await fs.unlink(this.file);
+      const assertFileMutation = async (): Promise<void> => {
+        if (!beforeMutation) return;
+        await beforeMutation();
+        if (await this.readFile() !== expected.file || await this.keyring.read() !== value.keyring) throw new LiveError('OFFICIAL_STORAGE_CHANGED');
+      };
+      if (value.file === null) { await assertFileMutation(); await fs.unlink(this.file); }
       else {
         const temp = path.join(path.dirname(this.file), `.agm-${randomUUID()}.tmp`);
         try {
           const handle = await fs.open(temp, 'wx', 0o600);
           try { await handle.writeFile(value.file, 'utf8'); await handle.sync(); } finally { await handle.close(); }
+          await assertFileMutation();
           await fs.rename(temp, this.file);
         } finally { await fs.unlink(temp).catch(e => { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new LiveError('TEMP_CLEANUP_FAILED'); }); }
       }

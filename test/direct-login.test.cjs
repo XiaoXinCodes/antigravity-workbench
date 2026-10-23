@@ -10,7 +10,7 @@ function setup(initial=A) {
   const data = new Map(), events=[]; let current=structuredClone(initial);
   const vault = { get:async k=>data.get(k), store:async(k,v)=>{data.set(k,v)}, delete:async k=>{data.delete(k)} };
   const slots = { read:async()=>structuredClone(current), write:async(next,expected)=>{assert.deepEqual(current,expected);events.push('write');current=structuredClone(next)} };
-  const backend = { generation:'original', stop:async()=>{events.push('stop')}, reload:async()=>{events.push('reload');backend.generation='fresh-'+events.filter(e=>e==='reload').length}, proof:async()=>({email:(current.keyring||current.file)===fixture('A')?'a@example.test':'b@example.test',generation:backend.generation,authValid:true,quotaSource:'server',buckets:[],observedAt:new Date().toISOString()}), signedOutProof:async()=>({generation:backend.generation,authValid:false}) };
+  const backend = { generation:'original', assertCredentialWriteSafe:async()=>{}, stop:async()=>{events.push('stop')}, reload:async()=>{events.push('reload');backend.generation='fresh-'+events.filter(e=>e==='reload').length}, proof:async()=>({email:(current.keyring||current.file)===fixture('A')?'a@example.test':'b@example.test',generation:backend.generation,authValid:true,quotaSource:'server',buckets:[],observedAt:new Date().toISOString()}), signedOutProof:async()=>({generation:backend.generation,authValid:false}) };
   return { data, events, vault, slots, backend, service:new LiveSwitchService(vault,slots), set:v=>{current=structuredClone(v)}, current:()=>current };
 }
 const metadata={label:'B',expectedEmail:'b@example.test',identitySource:'hub'};

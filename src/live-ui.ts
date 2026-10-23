@@ -1,3 +1,11 @@
+import { registerOfflineUi } from './offline-ui';
+import { OwnComponentLifecycle } from './component-own-lifecycle';
+import { ComponentCoordination, type ComponentBirth, type ComponentCensus } from './component-coordination';
+import { ComponentMailbox } from './component-mailbox';
+import { ComponentSwitch } from './component-switch';
+import { inspectOfflineLinuxProcesses } from './offline-process-census';
+import { admitReadyOfficialWrite } from './official-write-admission';
+import { MissingHubRecovery, canRecoverWithPeers } from './missing-hub-recovery';
 import { displayAccount, displayEmail } from './identity-presentation';
 import { localizeMessage, t as tr } from './i18n';
 import { accountDisplayFingerprint } from './quota-presentation';
@@ -13,19 +21,19 @@ import * as os from 'node:os';
 import { realpathSync, constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { LiveLocks, LockConflictError, type LockActivity } from './live-lock';
+import { LiveLocks, LockConflictError, probeProcessIdentity, type LockActivity } from './live-lock';
 import { querySavedAccountQuota, type SavedAccountQuotaOptions, type ImportedAccountQuota } from './account-quota';
 import { createConsumerRefreshProvider } from './account-quota-client';
 import { acceptanceEvents, acceptanceReport, type AcceptanceAction } from './acceptance-report';
 import { createRequire } from 'node:module';
 import { LiveError, tokenAccountHint, runPrivate, equalSlots, type TokenSlots } from './live-storage';
-import { createWslFileGuard, type WslFileGuard } from './live-wsl-proof';
+import { createWslFileGuard, createWslReadGuard, readPinnedWslProcess, type WslFileGuard } from './live-wsl-proof';
 import { EnvironmentTokenSlots, resolveOfficialStorageMode, assertWslBackendExecutable } from './live-environment';
-import { LiveSwitchService, type HubProof, type Lifecycle, type SavedLogin, type LiveAccount } from './live-switch';
+import { assertCredentialWriteSafe, LiveSwitchService, type HubProof, type Lifecycle, type SavedLogin, type LiveAccount } from './live-switch';
 import { generation, hasOfficialHubApi, queryHub, queryFreshQuota, queryFreshIdentity, querySignedOutHub, loginWithOfficialHub, type OfficialApi } from './live-hub';
 import { normalizeLabel } from './core';
 import { encryptAccountArchive, decryptAccountArchive, readMigrationArchive, prepareMigrationExport, writeMigrationArchive } from './account-migration';
-import { assertOfficialEntrypoint, diagnosticBackendVersion, officialEntryPath } from './official-contract';
+import { assertOfficialWriteContract, assertOfficialEntrypoint, diagnosticBackendVersion, officialEntryPath } from './official-contract';
 import { assertNativeHost, resolveCredentialHostId, hostLabel, sameNativeHost, nativeHostStatus, type NativeHostStatus } from './native-host';
 import { matchesOfficialExtension, pinOfficialExtension } from './official-extension-identity';
 import { canRestartOfficialComponent, restartOfficialComponent } from './official-restart';
@@ -39,7 +47,76 @@ const OFFICIAL_ID = 'google.google-antigravity';
 const localRequire = createRequire(__filename);
 const pendingOfficialStops = new WeakMap<() => unknown, Promise<void>>();
 const pendingOfficialStopPaths = new Map<string, Promise<void>>();
-export function loadedDeactivator(filename: string, cache: NodeJS.Dict<NodeModule> = localRequire.cache, options: { timeoutMs?: number } = {}): (() => Promise<void>) | null {
+
+/** Private, exact-source 1.8 adapter. This only controls the calling host's Hub;
+ * shared credential mutation additionally requires ComponentCoordination. */
+export async function resolveOwnComponent(context: vscode.ExtensionContext, assertOwner: () => Promise<void>, recovering = false): Promise<OwnComponentLifecycle> {
+  if (process.platform !== 'linux' || await resolveOfficialStorageMode() !== 'wsl-file') throw new LiveError('COMPONENT_CONTRACT_UNSUPPORTED');
+  const extension = officialExtensionForHost(context), pinned = pinOfficialExtension(extension);
+  if (recovering && !extension.isActive) {
+    if (await assertOfficialWriteContract(extension) !== '1.8.0') throw new LiveError('COMPONENT_CONTRACT_UNSUPPORTED');
+    await assertOwner(); await extension.activate();
+  }
+  const identity = await probeProcessIdentity(process.pid);
+  if (identity.state !== 'alive') throw new LiveError('HOST_IDENTITY_UNAVAILABLE');
+  const home = os.homedir(), executable = path.join(home, '.gemini', 'bin', 'agy');
+  await assertWslBackendExecutable(executable);
+  const stop = loadedDeactivator(officialEntryPath(extension), undefined, { waitForSettlement: true });
+  if (!stop) throw new LiveError('OFFICIAL_LIFECYCLE_NOT_LOADED');
+  const assertCurrent = (): void => {
+    if (!extension.isActive || !matchesOfficialExtension(pinned, officialExtensionForHost(context))) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+  };
+  const ownCount = async (): Promise<number> => {
+    assertCurrent();
+    const api = extension.exports;
+    const snapshot = await inspectWslProcesses(executable, hasOfficialHubApi(api) ? api : undefined);
+    const own = snapshot.processes.filter(row => row.parentPid === process.pid);
+    if (own.some(row => row.kind === 'unverified') || snapshot.current && snapshot.current.parentPid !== process.pid) throw new LiveError('OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED');
+    return own.length;
+  };
+  if (recovering && !hasOfficialHubApi(extension.exports)) {
+    if (await assertOfficialWriteContract(extension) !== '1.8.0' || !canRestartOfficialComponent(await vscode.commands.getCommands(true))) throw new LiveError('COMPONENT_CONTRACT_UNSUPPORTED');
+    await assertOwner();
+    await restartOfficialComponent('stopped', { api: () => extension.exports, assertCurrent, processCount: ownCount,
+      execute: command => vscode.commands.executeCommand(command) });
+    await assertOwner();
+  }
+  return new OwnComponentLifecycle({
+    host: { pid: process.pid, startIdentity: identity.startIdentity },
+    contract: async () => {
+      assertCurrent();
+      if (await assertOfficialWriteContract(extension) !== '1.8.0' || !canRestartOfficialComponent(await vscode.commands.getCommands(true))) throw new LiveError('COMPONENT_CONTRACT_UNSUPPORTED');
+      return '1.8.0';
+    },
+    ready: async () => {
+      assertCurrent();
+      const api = extension.exports;
+      if (!hasOfficialHubApi(api)) throw new LiveError('OFFICIAL_HUB_NOT_READY');
+      const expected = generation(api), current = await readPinnedWslProcess(executable, api);
+      if (!await createWslReadGuard(home, executable, () => extension.exports)()) throw new LiveError('WSL_FILE_ROUTE_UNVERIFIED');
+      const birth = await probeProcessIdentity(current.pid);
+      assertCurrent();
+      if (birth.state !== 'alive' || !birth.startIdentity.endsWith(`:${current.startTicks}`) || !hasOfficialHubApi(extension.exports) || generation(extension.exports) !== expected || await ownCount() !== 1) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+      return { hub: { pid: current.pid, startIdentity: birth.startIdentity }, generation: expected };
+    },
+    proof: signal => queryFreshIdentity(extension.exports, signal),
+    stop: async () => {
+      assertCurrent(); await stop();
+      await waitForOfficialBackendStop({ assertCurrent, stopped: async () => !hasOfficialHubApi(extension.exports) && await ownCount() === 0 });
+    },
+    stopped: async previous => {
+      assertCurrent();
+      const birth = await probeProcessIdentity(previous.pid);
+      return (birth.state === 'dead' || birth.state === 'alive' && birth.startIdentity !== previous.startIdentity) && !hasOfficialHubApi(extension.exports) && await ownCount() === 0;
+    },
+    restart: async () => { await restartOfficialComponent('stopped', {
+      api: () => extension.exports, assertCurrent, processCount: ownCount,
+      execute: command => vscode.commands.executeCommand(command),
+    }); },
+    assertOwner: async () => { assertCurrent(); await assertOwner(); },
+  });
+}
+export function loadedDeactivator(filename: string, cache: NodeJS.Dict<NodeModule> = localRequire.cache, options: { timeoutMs?: number; waitForSettlement?: boolean } = {}): (() => Promise<void>) | null {
   // Never load/re-evaluate another extension. Only use the module already loaded by this host.
   const canonical = (value: string): string => {
     let resolved: string;
@@ -71,6 +148,7 @@ export function loadedDeactivator(filename: string, cache: NodeJS.Dict<NodeModul
     // Both handlers consume late rejection. Neither schedules any restart,
     // credential mutation, callback or second stop on actual completion.
     void actual.then(clear, clear);
+    if (options.waitForSettlement) { await actual; return; }
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([actual, new Promise<never>((_resolve, reject) => {
@@ -144,6 +222,11 @@ export async function resolveOfficialReadOnlyHub(context: vscode.ExtensionContex
     },
   };
 }
+/** Contract check before destructive consent. Ready/current admission is checked
+ * separately by the lifecycle, so this cannot authorize writing from an empty scan. */
+export async function assertOfficialCredentialWriteBarrier(context: vscode.ExtensionContext): Promise<void> {
+  await assertOfficialWriteContract(officialExtensionForHost(context));
+}
 export async function resolveOfficialLifecycle(context: vscode.ExtensionContext, requireRunning = true, startForLogin = false): Promise<LoginLifecycle> {
   const extension = officialExtensionForHost(context);
   const main = officialEntryPath(extension);
@@ -204,15 +287,61 @@ export async function resolveOfficialLifecycle(context: vscode.ExtensionContext,
   if (currentGeneration() !== initialGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
   const fileGuard = wsl ? createWslFileGuard(os.homedir(), executable, () => extension.exports, scopedCount) : undefined;
   let fileScopeUsed = false;
+  let admittedReady = false, stoppedByThisLifecycle = false;
+  const writeGuard = async (signal?: AbortSignal): Promise<void> => {
+    if (signal?.aborted) throw new LiveError('CANCELLED');
+    const contract = await assertOfficialWriteContract(extension);
+    assertSameExtension();
+    if (stoppedByThisLifecycle) {
+      if (hasOfficialHubApi(extension.exports) || await scopedCount() !== 0 || hasOfficialHubApi(extension.exports)) throw new LiveError('OFFICIAL_BACKEND_NOT_STOPPED');
+      assertSameExtension();
+      return;
+    }
+    const readyIdentity = async (): Promise<string> => {
+      if (signal?.aborted) throw new LiveError('CANCELLED');
+      if (!hasOfficialHubApi(extension.exports)) throw new LiveError('OFFICIAL_WRITE_REQUIRES_READY_HUB');
+      if (currentGeneration() !== expectedGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+      const readOnly = await resolveOfficialReadOnlyHub(context);
+      try { await readOnly.freshProof!(signal); }
+      catch (error) {
+        if (!(error instanceof LiveError) || error.code !== 'HUB_AUTH_INVALID') throw error;
+        await querySignedOutHub(extension.exports, signal);
+      }
+      let currentBirth: OfficialProcessIdentity | undefined;
+      if (nativeLinux) {
+        const snapshot = await inspectWslProcesses(executable, extension.exports);
+        assertWslProcessExclusivity(snapshot, true);
+        currentBirth = snapshot.current;
+        if (!pinnedProcess || !sameOfficialProcess(pinnedProcess, snapshot.current!)) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+      } else {
+        if (process.platform !== 'win32' || await scopedCount() !== 1) throw new LiveError('OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED');
+        currentBirth = pinnedProcess;
+      }
+      assertSameExtension();
+      if (currentGeneration() !== expectedGeneration || readOnly.generation !== expectedGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+      if (!currentBirth) throw new LiveError('OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED');
+      return JSON.stringify([expectedGeneration, currentBirth.pid, currentBirth.startTicks]);
+    };
+    if (admittedReady) await readyIdentity();
+    else await admitReadyOfficialWrite(contract, readyIdentity, undefined, signal);
+    if (signal?.aborted) throw new LiveError('CANCELLED');
+    admittedReady = true;
+  };
+
   if (currentGeneration() !== initialGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
   return {
     ...(backendVersion ? { backendVersion } : {}),
     ...(fileGuard ? { fileOnlyGuard: async (allowStopped: boolean) => { const result = await fileGuard(allowStopped); fileScopeUsed ||= result; return result; } } : {}),
     get generation() { return expectedGeneration; },
     restartMode: componentRestart ? 'component' : 'unavailable',
+    credentialAdmissionNeedsDrain: extension.packageJSON?.version === '1.9.0',
+    assertCredentialWriteSafe: writeGuard,
     async stop() {
       // Cancellation/recovery can follow an already completed stop. Never stop a newer hub.
-      if (!extension.exports?.port && await scopedCount() === 0 && !extension.exports?.port) return;
+      if (!extension.exports?.port && await scopedCount() === 0 && !extension.exports?.port) {
+        // An empty scan never grants write admission to a new lifecycle.
+        return;
+      }
       if (currentGeneration() !== expectedGeneration) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
       assertSameExtension();
       if (nativeLinux) {
@@ -240,8 +369,10 @@ export async function resolveOfficialLifecycle(context: vscode.ExtensionContext,
           return remaining === 0 && extension.exports?.port === undefined;
         },
       });
+      stoppedByThisLifecycle = admittedReady;
     },
     async reload() {
+      stoppedByThisLifecycle = false; admittedReady = false;
       if (!componentRestart) throw new LiveError('OFFICIAL_COMPONENT_RESTART_UNAVAILABLE');
       // The old instance has exited; a reconnect intentionally obtains a new
       // birth. Never clear this pin merely because a stop/query failed.
@@ -294,8 +425,27 @@ export function lockConflictMessage(activity: LockActivity): string {
 export function liveErrorMessage(code: string, environment?: NativeHostStatus): string {
   if (environment && !environment.available && environment.code === code) return environment.message;
   const messages: Record<string, string> = {
+    COMPONENT_CONTRACT_UNSUPPORTED: tr('component.unsupported'),
+    COMPONENT_PARTICIPANTS_UNSUPPORTED: tr('component.unsupported'),
+    COMPONENT_PARTICIPANT_UNAVAILABLE: tr('component.unsupported'),
+    COMPONENT_CENSUS_UNVERIFIED: tr('component.unsupported'),
+    COMPONENT_RECOVERY_REQUIRED: tr('component.recoveryRequired'),
+    COMPONENT_RESTORE_FAILED: tr('component.recoveryRequired'),
+    COMPONENT_ACTION_PENDING: tr('component.recoveryRequired'),
     RECOVERY_CLEANUP_PENDING: tr('liveUi.cleanupPending'),
     RECOVERY_COMPLETION_UNKNOWN: tr('liveUi.completionUnknown'),
+    OFFLINE_HELPER_NOT_READY: tr('ui.helperFailed'),
+    OFFLINE_HELPER_SPAWN_FAILED: tr('ui.helperFailed'),
+    OFFLINE_HELPER_EXITED: tr('ui.helperFailed'),
+    OFFLINE_HELPER_ACK_TIMEOUT: tr('ui.helperFailed'),
+    OFFLINE_HELPER_PROTOCOL_INVALID: tr('ui.helperFailed'),
+    OFFLINE_CENSUS_UNVERIFIED: tr('ui.censusFailed'),
+    OFFLINE_SCOPE_UNVERIFIED: tr('ui.scopeFailed'),
+    OFFLINE_PLATFORM_UNSUPPORTED: tr('ui.platformFailed'),
+    OFFLINE_OPERATION_FAILED: tr('ui.unknownFailure'),
+    UNCLASSIFIED_ERROR: tr('ui.unknownFailure'),
+    OFFLINE_RECOVERY_REQUIRED: tr('offline.pending'),
+    OFFLINE_SWITCH_REQUIRED: tr('offline.required'),
     RECOVERY_VERIFICATION_TIMEOUT: tr("liveUi.3ae0ac698e"),
     RECOVERY_VERIFICATION_STALE: tr("liveUi.903f7dde0d"),
     ACCOUNT_SWITCH_IMAGE_RUNNING: tr("liveUi.4606818832"),
@@ -343,6 +493,7 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     OFFICIAL_ENTRY_UNAVAILABLE: tr("liveUi.194846bd15"),
     OFFICIAL_LIFECYCLE_NOT_LOADED: tr("liveUi.97eb81eb23"),
     OPEN_OFFICIAL_ANTIGRAVITY_FIRST: tr("liveUi.5d02b3a4cc"),
+    OFFICIAL_WRITE_REQUIRES_READY_HUB: tr('liveUi.writeRequiresReadyHub'),
     OFFICIAL_HUB_NOT_READY: tr("liveUi.a832201dec"),
     OFFICIAL_HUB_API_UNAVAILABLE: tr("liveUi.7570ca6121"),
     OVERRIDE_OR_REMOTE_AUTH_UNSUPPORTED: tr("liveUi.63bdd7b18a"),
@@ -350,6 +501,10 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN: tr("officialProcess.unownedHub"),
     OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED: tr("officialProcess.unverifiedOwner"),
     OFFICIAL_HUB_PROCESS_UNVERIFIED: tr("officialProcess.missingCurrentHub"),
+    HUB_RECOVERY_PENDING: tr('officialProcess.recoveryPending'),
+    HUB_RECOVERY_TIMEOUT: tr('officialProcess.recoveryTimeout'),
+    HUB_RECOVERY_CANCELLED: tr('officialProcess.recoveryCancelled'),
+    HUB_RECOVERY_PROCESS_BLOCKED: tr('officialProcess.recoveryBlocked'),
     OFFICIAL_BACKEND_STOP_TIMEOUT: tr("officialProcess.stopTimeout"),
     OFFICIAL_PROCESS_END_UNAVAILABLE: tr(process.platform === 'win32' ? 'officialProcess.windowsHelperUnavailable' : 'officialProcess.helperUnavailable'),
     OFFICIAL_PROCESS_SELECTION_STALE: tr('officialProcess.stale'),
@@ -357,6 +512,7 @@ export function liveErrorMessage(code: string, environment?: NativeHostStatus): 
     OFFICIAL_PROCESS_END_DENIED: tr('officialProcess.denied'),
     CLOSE_ALL_AGY_PROCESSES: tr("liveUi.a2212b3cf0"),
     PROCESS_CHECK_FAILED: tr("liveUi.48b983ce10"),
+    OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE: tr('liveUi.credentialWriteBarrierUnavailable'),
     OFFICIAL_BACKEND_NOT_STOPPED: tr("liveUi.117b4a7721"),
     SAVED_ACCOUNT_LIMIT: tr("liveUi.8cfc34264f"),
     ACCOUNT_ID_INVALID: tr("liveUi.2fb2db27b6"),
@@ -483,16 +639,23 @@ function migrationPasswordError(value: string): string | null {
   return Array.from(value).length >= 12 && Buffer.byteLength(value, 'utf8') <= 1024 ? null : tr("liveUi.7376751be7");
 }
 type LifecycleResolver = (requireRunning?: boolean, startForLogin?: boolean) => Promise<LoginLifecycle>;
-export interface LiveUiDependencies { quotaDisplay?: QuotaDisplayCache; service?: LiveSwitchService; locks?: LiveLocks; lifecycle?: LifecycleResolver; processCount?: typeof processCount; changed?: () => void; savedQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<HubProof>; importQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<ImportedAccountQuota>; currentQuota?: (expectedEmail: string, signal?: AbortSignal) => Promise<HubProof>; currentIdentity?: (signal?: AbortSignal) => Promise<HubProof | undefined>; verificationClock?: VerificationClock; processRecovery?: Pick<OfficialProcessRecovery, 'scan' | 'end' | 'invalidate'> & Partial<Pick<OfficialProcessRecovery, 'endMany' | 'currentProcessIdentity'>> }
+export interface CooperativeComponents {
+  host: ComponentBirth; mailbox: Pick<ComponentMailbox, 'participant' | 'restoreCompleted' | 'hasRestoration'>;
+  local(): Lifecycle | undefined; census(): Promise<ComponentCensus>;
+  readFileRoute(): Promise<boolean>; readCurrent(scope: TokenSlots): Promise<TokenSlots>;
+}
+export interface LiveUiDependencies { components?: CooperativeComponents; storageMode?: 'wsl-file' | 'native-keyring'; quotaDisplay?: QuotaDisplayCache; service?: LiveSwitchService; locks?: LiveLocks; lifecycle?: LifecycleResolver; processCount?: typeof processCount; changed?: () => void; savedQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<HubProof>; importQuota?: (account: LiveAccount, signal?: AbortSignal, options?: SavedAccountQuotaOptions) => Promise<ImportedAccountQuota>; currentQuota?: (expectedEmail: string, signal?: AbortSignal) => Promise<HubProof>; currentIdentity?: (signal?: AbortSignal) => Promise<HubProof | undefined>; verificationClock?: VerificationClock; processRecovery?: Pick<OfficialProcessRecovery, 'scan' | 'end' | 'invalidate'> & Partial<Pick<OfficialProcessRecovery, 'endMany' | 'currentProcessIdentity' | 'assertCurrentProcess' | 'recoveryPeerIdentity'>> }
 /** Fresh query state stays in memory; persisted observations are always historical. */
 export interface LiveQuotaSnapshot { email: string; observedAt: string; source: 'server' | 'hub-status'; buckets: HubProof['buckets'] }
 export interface LiveQuotaState { observationFingerprint?: string; historical?: boolean; accountFingerprint?: string; phase: 'loading' | 'ready' | 'error' | 'mismatch'; snapshot?: LiveQuotaSnapshot; message?: string }
 export type LiveAccountView = SavedLogin & { hostCurrent?: boolean; quota?: LiveQuotaState; active?: boolean; activeVerifiedAt?: string };
 export type LiveRecoveryPhase = 'checking' | 'none' | 'authorizing' | 'prepared' | 'installed' | 'restored' | 'locked' | 'cleanup' | 'unavailable';
-export interface LiveUiState { recoveryPhase: LiveRecoveryPhase; status: string; busy: boolean; pending: boolean; identityChecking?: boolean; initializing?: boolean; identityVerifiedDuringRecovery?: boolean; currentLoginSave?: 'saved' | 'update'; lastKnownAccountId?: string; error?: string; lastFailure?: LastAccountFailure; environment: NativeHostStatus; official: NativeHostStatus; storageMode?: string; accountStorageReady: boolean; currentQuota?: LiveQuotaState; activeEmail?: string; activeVerifiedAt?: string; processConflicts?: ProcessConflictState; processSwitchTarget?: string }
+export interface LiveUiState { recoveryPhase: LiveRecoveryPhase; status: string; busy: boolean; pending: boolean; offlinePending?: boolean; offlineStatus?: string; componentRestoration?: boolean; identityChecking?: boolean; hubRecovering?: boolean; initializing?: boolean; identityVerifiedDuringRecovery?: boolean; currentLoginSave?: 'saved' | 'update'; lastKnownAccountId?: string; error?: string; lastFailure?: LastAccountFailure; environment: NativeHostStatus; official: NativeHostStatus; storageMode?: string; accountStorageReady: boolean; currentQuota?: LiveQuotaState; activeEmail?: string; activeVerifiedAt?: string; processConflicts?: ProcessConflictState; processSwitchTarget?: string }
 export interface LiveUiController { getStatus(): string; getAccounts(): LiveAccountView[]; getState(): LiveUiState; refresh(): Promise<void>; recheck(): Promise<void>; ensureIdentity(): Promise<void> }
 export function registerLiveUi(context: vscode.ExtensionContext, dependencies: LiveUiDependencies = {}): LiveUiController {
   const processErrors = new Set(['OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN', 'OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED', 'OFFICIAL_HUB_PROCESS_UNVERIFIED', 'CLOSE_OTHER_AGY_PROCESSES', 'HUB_CHANGED_DURING_OPERATION', 'OFFICIAL_PROCESS_SELECTION_STALE', 'OFFICIAL_BACKEND_STOP_TIMEOUT']);
+  const hubRecovery = new MissingHubRecovery();
+  context.subscriptions.push({ dispose: () => hubRecovery.cancel() });
   let processConflicts: ProcessConflictState | undefined;
   let blockedSwitch: { id: string; fingerprint: string } | undefined;
   let processAbort: AbortController | undefined;
@@ -508,6 +671,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   }));
   const scanProcesses = async (visible = true): Promise<ProcessConflictState | undefined> => {
     if (!processRecovery || disposed) return;
+    if (hubRecovery.pending) return processConflicts; // The recovery observer owns the scanner until settlement.
     processExtension = undefined; // A fresh scan may bind an updated official extension; old IDs are invalidated.
     let scanned: ProcessConflictState;
     try { scanned = await processRecovery.scan(); }
@@ -534,7 +698,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     }
   };
   let service = dependencies.service, captureService = dependencies.service;
-  let storageMode: string | undefined, setupError: unknown;
+  let storageMode: string | undefined = dependencies.storageMode; let setupError: unknown;
   const slots = new EnvironmentTokenSlots(os.homedir());
   const mutationSlots = new EnvironmentTokenSlots(os.homedir(), process.platform, process.env, { fileOnlyGuard: allowStopped => fileOnlyGuard?.(allowStopped) ?? Promise.resolve(false) }, 'mutation');
   // Kernel/environment inspection only; no credential file or keyring is read on activation.
@@ -552,6 +716,22 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     return { available: false, code, message: liveErrorMessage(code) };
   };
   const locks = dependencies.locks || new LiveLocks(path.join(os.homedir(), '.gemini'), createHash('sha256').update(context.globalStorageUri.toString()).digest('hex'));
+  let componentMailbox: ComponentMailbox | undefined, ownComponent: OwnComponentLifecycle | undefined;
+  let componentHost: ComponentBirth | undefined, componentSetupError: unknown;
+  const componentReady = serviceReady.then(async () => {
+    // Injected unit-test services never activate native IPC as a side effect.
+    if (storageMode !== 'wsl-file' || dependencies.service) return;
+    const identity = await probeProcessIdentity(process.pid);
+    if (identity.state !== 'alive') throw new LiveError('HOST_IDENTITY_UNAVAILABLE');
+    componentHost = { pid: process.pid, startIdentity: identity.startIdentity };
+    componentMailbox = new ComponentMailbox(path.join(os.homedir(), '.gemini', 'workbench-components-v1'), componentHost, locks,
+      async (assertOwner, recovering) => {
+        ownComponent = await resolveOwnComponent(context, assertOwner, recovering);
+        const local = ownComponent;
+        return { prepare: () => local.prepare(!recovering), stop: () => local.stop(), resume: () => local.reload(), describe: () => local.describe() };
+      });
+    await componentMailbox.start(); context.subscriptions.push(componentMailbox);
+  }).catch(error => { componentSetupError = error; });
   interface PreparedBackendAction {
     action: string; argument?: string; fingerprint?: string; backend?: LoginLifecycle;
     scan?: ProcessConflictState; images: ImageActivitySnapshot;
@@ -560,12 +740,29 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   let preparedBackendAction: PreparedBackendAction | undefined;
   let reloadRequested = false;
   let requestedRestartBackend: Lifecycle | undefined;
+  const checkWriteAdmission = async (backend: Lifecycle): Promise<void> => {
+    if (!backend.credentialAdmissionNeedsDrain) {
+      await assertCredentialWriteSafe(backend);
+      if (disposed) throw new LiveError('CANCELLED');
+      return;
+    }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: tr('liveUi.writeAdmission'), cancellable: true }, async (_progress, token) => {
+      const controller = new AbortController();
+      const cancel = token.onCancellationRequested(() => controller.abort());
+      if (token.isCancellationRequested) controller.abort();
+      try {
+        await assertCredentialWriteSafe(backend, controller.signal);
+        if (disposed || controller.signal.aborted) throw new LiveError('CANCELLED');
+      } finally { cancel.dispose(); }
+    });
+  };
   const deferred = (backend: Lifecycle): Lifecycle => {
     if (backend.restartMode === 'unavailable') throw new LiveError('OFFICIAL_COMPONENT_RESTART_UNAVAILABLE');
     return backend.restartMode === 'component' ? backend : { ...backend, reload: async () => { reloadRequested = true; requestedRestartBackend = backend; } };
   };
   let busy = false, status = context.globalState.get(PENDING, false) ? tr("liveUi.dd4ea9f875") : tr("liveUi.d47369e8f6");
   let recoveryPhase: LiveRecoveryPhase = 'checking';
+  let offlinePending = false;
   let pending = context.globalState.get(PENDING, false);
   let errorMessage: string | undefined;
   let debugSpan: DebugSpan | undefined;
@@ -678,18 +875,128 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       throw error;
     }
   }
+  // Retain a pre-write cleanup obligation while this coordinator is alive.
+  // A timeout does not erase actor/request identities or authorize a new write.
+  let componentAbort: { id: string } | undefined;
+  async function automaticComponentSwitch(argument: unknown, action: 'switch' | 'verify' | 'restore'): Promise<boolean> {
+    await componentReady;
+    if (componentSetupError) throw componentSetupError;
+    const components: CooperativeComponents | undefined = dependencies.components ?? (componentMailbox && componentHost ? {
+      mailbox: componentMailbox, host: componentHost, local: () => ownComponent,
+      census: () => inspectOfflineLinuxProcesses({ uid: process.getuid!(), home: os.homedir(), knownHosts: [componentHost!], scope: 'file-only' }),
+      readCurrent: scope => mutationSlots.read(scope),
+      readFileRoute: () => {
+        const official = officialExtensionForHost(context);
+        return createWslReadGuard(os.homedir(), path.join(os.homedir(), '.gemini', 'bin', 'agy'), () => official.exports)();
+      },
+    } : undefined);
+    if (!components || !finalizer) throw new LiveError('COMPONENT_PARTICIPANTS_UNSUPPORTED');
+    const { mailbox, host } = components;
+    let selected = accountArgument(argument, items());
+    if (action === 'switch' && argument !== undefined && !selected) throw new LiveError('ACCOUNT_ID_INVALID');
+    if (action === 'switch' && !selected) selected = (await vscode.window.showQuickPick(items().map(account => ({ label: displayAccount(account), account })), { title: tr('liveUi.13e45587a6') }))?.account;
+    if (action === 'switch' && !selected) return false;
+    const fingerprint = selected && JSON.stringify(selected);
+    return locks.withOperation(async () => {
+      await resumeCompletion();
+      if (componentAbort) {
+        const abort = componentAbort, journal = await service!.journal(), recovery = await locks.inspectRecovery();
+        if (journal) throw new LiveError('RECOVERY_CHANGED');
+        if (recovery.state === 'absent') {
+          // Credential commit finished, but restoring a peer failed. Its
+          // durable actor record remains; never recreate a credential marker.
+          await mailbox.restoreCompleted(await locks.inspectOperation()); componentAbort = undefined;
+        } else {
+          if (recovery.owner?.id !== abort.id || recovery.owner.schema !== 2) throw new LiveError('RECOVERY_CHANGED');
+          // Rebind IPC requests to the newly acquired operation through prepare
+          // below; the old group's participants carry an expired operation token.
+          const current = await locks.inspectOperation();
+          const cleanup = new ComponentCoordination({ recovering: true, census: () => components.census(),
+            assertOperation: () => locks.assertOperationHeld(), participant: identity => mailbox.participant(identity, current, abort.id, 40_000, true) });
+          await cleanup.prepare(); await cleanup.close();
+          await locks.clearRecovery(abort.id); componentAbort = undefined;
+        }
+      }
+      const existing = await service!.journal(), marker = await locks.inspectRecovery();
+      if (marker.owner?.schema === 4) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
+      if (!existing && marker.state !== 'absent') await locks.reconcileRecovery(null);
+      if (!existing) await mailbox.restoreCompleted(await locks.inspectOperation());
+      if (action !== 'switch' && !existing) { await refreshRecovery(true); return true; }
+      const census = () => components.census();
+      const discovered = await census();
+      if (!discovered.complete || discovered.unknown) throw new LiveError('COMPONENT_CENSUS_UNVERIFIED');
+      const proceed = tr('component.confirm'), restore = tr('component.restore'), keep = tr('component.keep');
+      const choice = existing
+        ? await vscode.window.showWarningMessage(tr('component.recoveryPrompt', { count: discovered.hosts.length }), { modal: true }, proceed, restore, keep)
+        : await vscode.window.showWarningMessage(tr('component.switchPrompt', { count: discovered.hosts.length, account: displayEmail(selected!.expectedEmail, items()) }), { modal: true }, proceed);
+      if (!choice) return false;
+      if (!existing && JSON.stringify(items().find(item => item.id === selected!.id)) !== fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+      const transaction = existing?.id ?? randomUUID();
+      if (existing) await locks.reconcileRecovery(transaction); else await locks.beginRecovery(transaction);
+      const operation = await locks.inspectOperation();
+      const group = new ComponentCoordination({ census, recovering: !!existing, assertOperation: () => locks.assertOperationHeld(),
+        participant: identity => mailbox.participant(identity, operation, transaction, 40_000, !!existing) });
+      let driver: ComponentSwitch | undefined;
+      activeEmail = undefined; activeVerifiedAt = undefined; activeGeneration = undefined;
+      await context.globalState.update(PENDING, true); pending = true;
+      try {
+        await group.prepare();
+        const local = components.local();
+        if (!local) throw new LiveError('COMPONENT_ACTOR_UNAVAILABLE');
+        driver = new ComponentSwitch({ service: service!, group, host, local, index, finalizer,
+          assertOperation: () => locks.assertOperationHeld(), readCurrent: scope => components.readCurrent(scope),
+          readFileRoute: () => components.readFileRoute() });
+        fileOnlyGuard = allowStopped => driver!.fileOnlyGuard(allowStopped);
+        let proof: HubProof | null;
+        if (!existing) proof = await driver.install(selected!.id, transaction);
+        else if (choice === keep) proof = await driver.retainCurrent(transaction);
+        else if (choice === restore || action === 'restore' || existing.phase === 'prepared') proof = await driver.restore(transaction);
+        else proof = await driver.recoverVerification();
+        await group.close();
+        await mailbox.restoreCompleted(operation);
+        await context.globalState.update(PENDING, false); pending = false; recoveryPhase = 'none';
+        if (proof) { activeEmail = proof.email; activeVerifiedAt = proof.observedAt; activeGeneration = proof.generation; }
+        return true;
+      } catch (error) {
+        const journal = await service!.journal();
+        if (!journal) {
+          componentAbort = { id: transaction };
+          await group.close();
+          const recovery = await locks.inspectRecovery();
+          if (recovery.owner?.id === transaction && recovery.owner.schema === 2) await locks.clearRecovery(transaction);
+          componentAbort = undefined;
+        } else if (!existing && driver && journal.id === transaction && !await service!.hasCompletion()) {
+          try {
+            await driver.restore(transaction); await group.close();
+            await context.globalState.update(PENDING, false); pending = false; recoveryPhase = 'none';
+          } catch {
+            // Preserve the journal, original backup and peer stop state. The
+            // normal Verify/Restore buttons reopen the three recovery choices.
+            // Unknown refreshed/external credentials are never blindly replaced.
+            throw new LiveError('COMPONENT_RECOVERY_REQUIRED');
+          }
+          throw new LiveError('SWITCH_FAILED_ORIGINAL_RESTORED');
+        }
+        throw error;
+      } finally { await refreshRecovery(false); }
+    });
+  }
   let cleanupTimer: NodeJS.Timeout | undefined;
   let cleanupRetries = 0;
   function scheduleCleanup(): void {
-    if (disposed || cleanupTimer || recoveryPhase !== 'cleanup' || cleanupRetries >= 5) return;
+    if (disposed || cleanupTimer || recoveryPhase !== 'cleanup' || componentAbort || componentRestoration || cleanupRetries >= 5) return;
     cleanupTimer = setTimeout(() => { cleanupTimer = undefined; cleanupRetries++; void refresh(); }, 1500);
     cleanupTimer.unref?.();
   }
   context.subscriptions.push({ dispose: () => clearTimeout(cleanupTimer) });
+  let componentRestoration = false;
   const refreshRecovery = async (describe = false, diagnostic?: DebugSpan, expected?: VerificationLease): Promise<void> => {
     try {
       const journal = await service!.journal();
       const cleanup = await locks.hasCompletionFence?.() || await service!.hasCompletion?.();
+      await componentReady;
+      componentRestoration = !journal && (!!componentAbort || !await locks.hasRecovery() &&
+        await (dependencies.components?.mailbox ?? componentMailbox)?.hasRestoration() === true);
       if (expected && !cleanup) {
         verification.assertReady(expected);
         if (journal?.id !== expected.id || journal.phase !== expected.phase) throw new LiveError('RECOVERY_VERIFICATION_STALE');
@@ -697,20 +1004,22 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       if (!cleanup && journal && (journal.phase === 'installed' || journal.phase === 'restored')) verificationLease = verification.bind(journal.id, journal.phase);
       else { verification.clear(); verificationLease = undefined; }
       if (recoveryPhase === 'unavailable') errorMessage = undefined;
-      recoveryPhase = cleanup ? 'cleanup' : journal?.phase ?? (await locks.hasRecovery() ? 'locked' : 'none');
+      recoveryPhase = cleanup || componentRestoration ? 'cleanup' : journal?.phase ?? (await locks.hasRecovery() ? 'locked' : 'none');
       if (recoveryPhase !== 'cleanup') { clearTimeout(cleanupTimer); cleanupTimer = undefined; cleanupRetries = 0; }
       scheduleCleanup();
+      const offlineMarker = recoveryPhase === 'locked' ? await locks.inspectRecovery() : undefined;
+      offlinePending = offlineMarker?.owner?.schema === 4 && offlineMarker.owner.owner === createHash('sha256').update(context.globalStorageUri.toString()).digest('hex');
       const wasPending = pending;
       pending = recoveryPhase !== 'none';
       if (context.globalState.get(PENDING, false) !== pending) {
         try { await context.globalState.update(PENDING, pending); } catch { /* Legacy display cache is not transaction evidence. */ }
       }
-      if (describe && (pending || wasPending)) status = recoveryDescription();
+      if (describe && (pending || wasPending)) status = componentRestoration ? tr('component.restorePending') : recoveryDescription();
     } catch (error) {
       if (expected && error instanceof LiveError && ['RECOVERY_VERIFICATION_STALE', 'RECOVERY_VERIFICATION_TIMEOUT'].includes(error.code)) throw error;
       diagnostic?.end('failed', debugErrorData(error));
       // Unknown, corrupt, legacy, or other-host backups must remain blocked and intact.
-      recoveryPhase = 'unavailable'; pending = true;
+      offlinePending = false; recoveryPhase = 'unavailable'; pending = true;
       const code = error instanceof LiveError ? error.code : 'RECOVERY_RECORD_INVALID';
       errorMessage = liveErrorMessage(code); status = errorMessage;
     }
@@ -810,7 +1119,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (signal.aborted) abort();
   });
   async function refreshIdentity(diagnostic: DebugSpan): Promise<void> {
-    if (busy || disposed) { diagnostic.end('cancelled'); return; }
+    if (busy || disposed || hubRecovery.pending) { diagnostic.end('cancelled'); return; }
     clearTimeout(identityTimer); identityTimer = undefined;
     const controller = new AbortController();
     const revision = identityRevision;
@@ -949,7 +1258,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   let recoveryRefresh: Promise<void> | undefined;
   const refresh = (expected?: VerificationLease): Promise<void> => {
     if (expected) { try { verification.assertReady(expected); } catch { return Promise.resolve(); } }
-    if (busy || disposed) return Promise.resolve();
+    if (busy || disposed || hubRecovery.pending) return Promise.resolve();
     if (recoveryRefresh) return recoveryRefresh;
     const diagnostic = beginDebugOperation('account.refresh');
     recoveryRefresh = (async () => {
@@ -963,6 +1272,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
         diagnostic.end('blocked', debugErrorData(setupError ?? new Error(host.code))); return;
       }
       try {
+        if (componentAbort) { await refreshRecovery(true); return; }
         if (typeof locks.reconcileRecovery === 'function') {
           const journal = await service!.journal();
           if (expected) { verification.assertReady(expected); if (journal?.id !== expected.id || journal.phase !== expected.phase) throw new LiveError('RECOVERY_VERIFICATION_STALE'); }
@@ -1004,7 +1314,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
           }
         }
         await refreshRecovery(true, diagnostic, expected);
-        if (!verificationSuspended && ['installed', 'restored'].includes(recoveryPhase)) {
+        if (storageMode !== 'wsl-file' && !verificationSuspended && ['installed', 'restored'].includes(recoveryPhase)) {
           const attempted = verificationLease;
           try { await locks.withOperation(() => reconcileLogin(attempted)); }
           catch (error) {
@@ -1084,16 +1394,29 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   let probeRunning = false;
   let probedIdentity: string | undefined;
   const officialProbe = setInterval(() => {
-    if (disposed || busy || recoveryRefresh || probeRunning || !nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName).available) return;
+    if (disposed || busy || hubRecovery.pending || recoveryRefresh || probeRunning || !nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName).available) return;
     probeRunning = true;
+    const probeRevision = identityRevision, probeVerifiedAt = activeVerifiedAt;
+    let probeExtension: ReturnType<typeof pinOfficialExtension> | undefined;
+    let probeGeneration: string | undefined;
+    const probeCurrent = (): boolean => {
+      if (disposed || busy || recoveryRefresh || probeRevision !== identityRevision || probeVerifiedAt !== activeVerifiedAt || !probeExtension) return false;
+      try { const current = officialExtensionForHost(context); return current.isActive && matchesOfficialExtension(probeExtension, current); } catch { return false; }
+    };
+    try { const current = officialExtensionForHost(context); probeExtension = pinOfficialExtension(current); if (hasOfficialHubApi(current.exports)) probeGeneration = generation(current.exports); } catch { /* Resolver reports unavailable state. */ }
     // Only the existing loopback Hub is probed; no saved credentials, OAuth or
     // remote quota query is started to detect a candidate login change.
     void resolveOfficialReadOnlyHub(context).then(backend => backend.proof()).then(proof => {
+      if (!probeCurrent()) return;
+      const current = officialExtensionForHost(context);
+      if (!hasOfficialHubApi(current.exports) || generation(current.exports) !== probeGeneration || proof.generation !== probeGeneration) return;
       const candidate = JSON.stringify([proof.email.toLowerCase(), proof.generation, proof.authValid]);
       const changed = candidate !== probedIdentity; probedIdentity = candidate;
-      if (changed && !disposed && !busy && (proof.email.toLowerCase() !== activeEmail?.toLowerCase() || proof.generation !== activeGeneration || !proof.authValid)) requestOfficialRefresh();
+      if (changed && probeCurrent() && (proof.email.toLowerCase() !== activeEmail?.toLowerCase() || proof.generation !== activeGeneration || !proof.authValid)) requestOfficialRefresh();
     }).catch(error => {
-      if (error instanceof LiveError && ['HUB_AUTH_INVALID', 'HUB_EMAIL_MISSING', 'HUB_CHANGED_DURING_QUERY', 'OFFICIAL_HUB_NOT_READY', 'OFFICIAL_HUB_API_UNAVAILABLE'].includes(error.code)) {
+      if (error instanceof LiveError && ['HUB_AUTH_INVALID', 'HUB_EMAIL_MISSING', 'HUB_CHANGED_DURING_QUERY', 'OFFICIAL_HUB_NOT_READY', 'OFFICIAL_HUB_API_UNAVAILABLE', 'HUB_RPC_FAILED', 'HUB_RPC_TIMEOUT'].includes(error.code)) {
+        if (!probeCurrent()) return;
+        if (['HUB_RPC_FAILED', 'HUB_RPC_TIMEOUT', 'OFFICIAL_HUB_NOT_READY', 'OFFICIAL_HUB_API_UNAVAILABLE', 'HUB_CHANGED_DURING_QUERY'].includes(error.code)) { clearActiveIdentity(); identityStatus = liveErrorMessage(error.code); dependencies.changed?.(); }
         const candidate = `error:${error.code}`, changed = candidate !== probedIdentity; probedIdentity = candidate;
         // Repeated cached proof/errors cannot renew a failed server-verification
         // budget forever. A changed candidate or explicit recheck can resume it.
@@ -1126,11 +1449,14 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
   /** Prepare visible consent before acquiring the mutation lock. No backend is
    * stopped here; the exact confirmed process set is consumed inside the lock. */
   async function prepareBackendAction(action: string, argument: unknown, operationHeld = false): Promise<PreparedBackendAction | null | undefined> {
+    if (action === 'switch' && storageMode === 'wsl-file') throw new LiveError('OFFLINE_SWITCH_REQUIRED');
     const journal = await service!.journal();
     if (action !== 'restore' && (journal || await locks.hasRecovery())) throw new LiveError('RECOVERY_PENDING');
     if (action === 'restore' && (!journal || journal.phase === 'restored')) return;
     const account = action === 'switch' ? await selectSwitchAccount(argument) : undefined;
     if (action === 'switch' && !account) return null;
+    // Refuse before asking to stop peers/images for an operation that cannot write.
+    if (!dependencies.lifecycle) await assertOfficialCredentialWriteBarrier(context);
     if (action === 'login' && items().length >= 50) throw new LiveError('SAVED_ACCOUNT_LIMIT');
     const images = snapshotImageOperations();
     if (images.ids.length && !images.canCancel) throw new LiveError('ACCOUNT_SWITCH_IMAGE_RUNNING');
@@ -1158,7 +1484,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       if (account && processErrors.has(debugErrorCode(error))) blockedSwitch = { id: account.id, fingerprint: JSON.stringify(account) };
       throw error;
     }
-    const scope = [tr('officialProcess.scopeCurrent', { p0: scanned?.current ? ` (PID ${scanned.current.pid})` : '' })];
+    const scope = [tr('liveUi.writeWindow'), tr('officialProcess.scopeCurrent', { p0: scanned?.current ? ` (PID ${scanned.current.pid})` : '' })];
     const related = scanned?.processes.some(row => row.scope === 'unknown' || row.scope === 'other-window');
     if (scanned?.processes.length) scope.push(tr(related ? 'officialProcess.scopeRelated' : 'officialProcess.scopeDetached', { p0: scanned.processes.map(row => `PID ${row.pid}${row.startedAt ? ` (${row.startedAt})` : ''}`).join(', ') }));
     if (images.ids.length) scope.push(tr('officialProcess.scopeImages', { p0: images.ids.length }));
@@ -1171,6 +1497,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     return { action, ...(account ? { argument: account.id, fingerprint: JSON.stringify(account) } : {}), ...(backend ? { backend } : {}), ...(scanned ? { scan: scanned } : {}), ...(hubGeneration ? { hubGeneration } : {}), ...(hubExtension ? { hubExtension } : {}), ...(hubProcess ? { hubProcess } : {}), images };
   }
   async function consumePreparedBackend(action: string, running = true, login = false): Promise<LoginLifecycle> {
+    if (!dependencies.lifecycle) await assertOfficialCredentialWriteBarrier(context);
     const prepared = preparedBackendAction;
     if (!prepared || prepared.action !== action) return resolveLifecycle(running, login);
     if (prepared.fingerprint && JSON.stringify(items().find(item => item.id === prepared.argument)) !== prepared.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
@@ -1191,7 +1518,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       const controller = new AbortController(); processAbort = controller;
       try {
         status = tr('officialProcess.endingBatch', { p0: conflicts.length }); dependencies.changed?.();
-        await processRecovery.endMany(conflicts.map(row => row.id), controller.signal);
+        await processRecovery.endMany(conflicts.map(row => row.id), controller.signal, prepared.hubProcess);
         if (disposed || controller.signal.aborted) throw new LiveError('OFFICIAL_PROCESS_END_CANCELLED');
         const scanned = await scanProcesses(false);
         if (!scanned?.canContinue || scanned.processes.length || scanned.current && scanned.current.credentialScopeVerified !== true) { processConflicts = scanned; throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); }
@@ -1254,7 +1581,20 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       try {
         assertNativeHost(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName);
         await recoveryReady; await recoveryRefresh; if (disposed) return; if (setupError) throw setupError;
+        if (hubRecovery.pending && name !== 'processScan') throw new LiveError('HUB_RECOVERY_PENDING');
         if (officialActivationPending) throw new LiveError('OFFICIAL_HUB_NOT_READY');
+        if (name === 'switch' && storageMode === 'wsl-file' && !offlinePending && vscode.extensions.getExtension<OfficialApi>(OFFICIAL_ID)?.packageJSON?.version === '1.9.0') {
+          releaseAccountChange = enterAccountChange();
+          const prepared = await offlineUi.prepareAutomatic(argument);
+          diagnostic?.end(prepared ? 'partial' : 'cancelled');
+          return;
+        }
+        if ((name === 'switch' || name === 'verify' || name === 'restore') && storageMode === 'wsl-file' && !offlinePending) {
+          releaseAccountChange = enterAccountChange();
+          completed = await automaticComponentSwitch(argument, name);
+          diagnostic?.end(completed ? 'completed' : 'cancelled');
+          return;
+        }
         if (['switch', 'login', 'restore'].includes(name)) {
           const prepared = await prepareBackendAction(name, argument);
           if (prepared === null) return;
@@ -1285,12 +1625,16 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
       catch (e) {
         if ((['processEnd', 'processEndAll'].includes(name) || processErrors.has(debugErrorCode(e))) && !disposed) { try { await scanProcesses(); } catch { /* Keep the primary transaction/termination failure. */ } }
         await rememberFailure(e);
-        const debugData = debugErrorData(e); diagnostic?.end(debugFailureOutcome(debugData.code), debugData);
+        const debugData: Record<string, unknown> = { ...debugErrorData(e), switchStage: operationStage }; diagnostic?.end(debugFailureOutcome(debugData.code), debugData);
         const code = e instanceof LiveError ? e.code : 'LOCAL_OPERATION_FAILED';
         errorMessage = e instanceof LockConflictError ? lockConflictMessage(e.activity) : name === 'import' && code === 'ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN' ? tr('liveUi.importUnknown') : liveErrorMessage(code, nativeHostStatus(context, vscode.workspace.isTrusted, vscode.env.uiKind === vscode.UIKind.Desktop, vscode.env.remoteName));
         if (name === 'import' && ['ACCOUNT_QUOTA_REFRESH_PENDING', 'ACCOUNT_QUOTA_SECURE_SAVE_FAILED', 'ACCOUNT_QUOTA_REFRESH_SAVE_FAILED'].includes(code)) errorMessage += ' ' + tr('liveUi.importRetry');
         const retainedFailure = readLastAccountFailure(operationFailure);
-        if (retainedFailure && name !== 'quota') errorMessage += `（${retainedFailure.code}）`;
+        if (retainedFailure && name === 'switch') {
+          const stage = retainedFailure.stage;
+          const key = stage === 'stop' ? 'ui.stage.stop' : ['credential-write', 'credential-readback', 'journal-installed', 'backup'].includes(stage) ? 'ui.stage.write' : stage === 'restore' ? 'ui.stage.restore' : stage === 'cleanup' ? 'ui.stage.cleanup' : ['verify', 'reconnect', 'resume'].includes(stage) ? 'ui.stage.verify' : 'ui.stage.prepare';
+          errorMessage = tr('ui.failureStage', { stage: tr(key), reason: errorMessage });
+        }
         if (name === 'quota') {
           // Read-only queries report locally, never as modal/toast/editor notifications.
           // Invalid/unbound caller-supplied ids must not redirect errors to a different card.
@@ -1434,6 +1778,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (!preparedBackendAction && await vscode.window.showWarningMessage(tr("liveUi.f3effd4a3f", { p0: hostLabel(context, vscode.env.remoteName) }), { modal: true }, consent) !== consent) return;
     const backend = await consumePreparedBackend('login', true, true), transactionId = randomUUID();
     if (backend.restartMode === 'unavailable') throw new LiveError('OFFICIAL_COMPONENT_RESTART_UNAVAILABLE');
+    await checkWriteAdmission(backend);
     await locks.beginRecovery(transactionId);
     let prepared = false, account: SavedLogin | undefined;
     try {
@@ -1569,6 +1914,8 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     }
   });
   const switchAccount = async (argument: unknown, alreadyConfirmed = false, fingerprint?: string): Promise<boolean | void> => {
+    // Inline replacement/removal must not bypass the explicit offline workflow.
+    if (storageMode === 'wsl-file') throw new LiveError('OFFLINE_SWITCH_REQUIRED');
     if (!alreadyConfirmed) blockedSwitch = undefined;
     const direct = accountArgument(argument, items());
     const selected = direct ? { account: direct } : await vscode.window.showQuickPick(items().map(account => ({ label: displayAccount(account), description: displayEmail(account.expectedEmail, items()), detail: tr("liveUi.3e646493ab", { p0: account.capturedAt, p1: account.migrationState === 'pending' ? tr("liveUi.8f858aa51c") : account.migrationState === 'verified' ? tr('workbenchView.77a1864d31') : account.identitySource === 'hub' ? tr("liveUi.ca7dd652b2") : tr("liveUi.905e17f65c") }), account })), { title: tr("liveUi.13e45587a6") });
@@ -1585,6 +1932,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (fingerprint && JSON.stringify(items().find(item => item.id === selected.account.id)) !== fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     blockedSwitch = undefined; processConflicts = undefined;
     if (backend.restartMode === 'unavailable') throw new LiveError('OFFICIAL_COMPONENT_RESTART_UNAVAILABLE');
+    await checkWriteAdmission(backend);
     const transactionId = randomUUID();
     await locks.beginRecovery(transactionId);
     try {
@@ -1661,12 +2009,81 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     }
   };
   register('switch', argument => switchAccount(argument));
+  context.subscriptions.push(vscode.commands.registerCommand('antigravityAccounts.live.hubRecoverCancel', () => hubRecovery.cancel()));
+  const recoverComponent = async (argument: unknown, restart: boolean): Promise<boolean | void> => {
+    if (argument !== undefined || !processRecovery) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    const official = officialExtensionForHost(context), pinned = pinOfficialExtension(official);
+    // These two reviewed contracts keep reconnect/stop local to this host's
+    // manager instance. Unknown versions require a new lifecycle review.
+    if (!['1.8.0', '1.9.0'].includes(pinned.version) || !official.isActive || !canRestartOfficialComponent(await vscode.commands.getCommands(true))) throw new LiveError('OFFICIAL_COMPONENT_RESTART_UNAVAILABLE');
+    await assertOfficialEntrypoint(official);
+    const before = await scanProcesses();
+    if (!before || !canRecoverWithPeers(before) || before.currentCount !== (restart ? 1 : 0)) throw new LiveError('HUB_RECOVERY_PROCESS_BLOCKED');
+    const expectedCurrent = processRecovery.currentProcessIdentity?.();
+    if (restart && (!before.current?.credentialScopeVerified || !expectedCurrent || !processRecovery.assertCurrentProcess)) throw new LiveError('OFFICIAL_HUB_PROCESS_UNVERIFIED');
+    const expectedPeerIdentity = processRecovery.recoveryPeerIdentity?.();
+    if (before.processes.length && expectedPeerIdentity === undefined) throw new LiveError('HUB_RECOVERY_PROCESS_BLOCKED');
+    const expectedGeneration = hasOfficialHubApi(official.exports) ? generation(official.exports) : 'stopped';
+    const stop = restart ? loadedDeactivator(officialEntryPath(official), localRequire.cache, { waitForSettlement: true }) : undefined;
+    if (restart && !stop) throw new LiveError('OFFICIAL_LIFECYCLE_NOT_LOADED');
+    const consent = tr(restart ? 'officialProcess.restart' : 'officialProcess.recover');
+    if (await vscode.window.showWarningMessage(tr(restart ? 'officialProcess.restartConsent' : 'officialProcess.recoverConsent'), { modal: true }, consent) !== consent || disposed) return;
+    ++identityRevision; identityAbort?.abort(); clearActiveIdentity();
+    status = tr('officialProcess.recovering'); dependencies.changed?.();
+    const recovering = hubRecovery.run({
+      api: () => official.exports,
+      assertCurrent: () => { if (disposed || !official.isActive || !matchesOfficialExtension(pinned, officialExtensionForHost(context))) throw new LiveError('HUB_CHANGED_DURING_OPERATION'); },
+      scan: () => processRecovery.scan(), identity: () => processRecovery.currentProcessIdentity?.(),
+      peerIdentity: () => processRecovery.recoveryPeerIdentity?.() ?? '', expectedPeerIdentity, expectedGeneration,
+      ...(restart ? { expectedCurrent: expectedCurrent!, stop: async () => {
+        await processRecovery.assertCurrentProcess!(expectedCurrent!);
+        if (!hasOfficialHubApi(official.exports) || generation(official.exports) !== expectedGeneration || !matchesOfficialExtension(pinned, officialExtensionForHost(context))) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+        await stop!();
+      } } : {}),
+      execute: command => vscode.commands.executeCommand(command),
+      proof: async () => {
+        const hub = await resolveOfficialReadOnlyHub(context);
+        try { return await hub.freshProof!(); }
+        catch (error) {
+          if (!(error instanceof LiveError) || error.code !== 'HUB_AUTH_INVALID') throw error;
+          const proof = await querySignedOutHub(official.exports);
+          return { ...proof, signedOut: true };
+        }
+      },
+    }, fn => locks.withOperation(async () => {
+      if (await service!.journal()) throw new LiveError('RECOVERY_PENDING');
+      if (await locks.hasRecovery()) {
+        const marker = await locks.inspectRecovery();
+        const owner = createHash('sha256').update(context.globalStorageUri.toString()).digest('hex');
+        if (marker.owner?.schema !== 4 || marker.owner.owner !== owner) throw new LiveError('RECOVERY_PENDING');
+        await locks.assertOfflineRecovery(marker.owner.id);
+      }
+      // Component-only recovery holds the same mutex as the standalone writer.
+      // It neither clears the offline fence nor writes account credentials.
+      const release = enterAccountChange();
+      try { await fn(); } finally { release(); }
+    }));
+    dependencies.changed?.();
+    const result = await recovering;
+    processConflicts = await scanProcesses();
+    status = tr(result === 'signed-out' ? 'officialProcess.recoveredSignedOut' : 'officialProcess.recovered'); errorMessage = undefined;
+    identityNeedsRefresh = true; identityAttempts = 0; identityDeadline = Date.now() + 90_000;
+    return true;
+  };
+  register('hubRecover', argument => recoverComponent(argument, false), true);
+  register('hubRestart', argument => recoverComponent(argument, true), true);
   register('processScan', async argument => {
     if (argument !== undefined) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    if (hubRecovery.pending) {
+      const result = await hubRecovery.observe();
+      status = tr(result === 'signed-out' ? 'officialProcess.recoveredSignedOut' : 'officialProcess.recovered');
+      identityNeedsRefresh = true; identityAttempts = 0; identityDeadline = Date.now() + 90_000;
+    }
     const scanned = await scanProcesses();
     if (scanned) { status = scanned.canContinue ? tr('officialProcess.ready') : tr('officialProcess.blocked'); return true; }
   }, true);
   const continueSwitch = async (confirmed = false): Promise<boolean | void> => {
+    if (storageMode === 'wsl-file') throw new LiveError('OFFLINE_SWITCH_REQUIRED');
     const intent = blockedSwitch;
     if (!intent || JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     if (disposed) return;
@@ -1685,24 +2102,29 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     return continueSwitch();
   });
   const endProcesses = async (argument: unknown, all = false): Promise<boolean | void> => {
+    if (blockedSwitch && storageMode === 'wsl-file') throw new LiveError('OFFLINE_SWITCH_REQUIRED');
     const selected = all && argument === undefined ? processConflicts?.processes.filter(row => row.canEnd) : typeof argument === 'string' ? processConflicts?.processes.filter(row => row.id === argument && row.canEnd) : undefined;
     if (!selected?.length || selected.some(row => row.credentialScopeVerified !== true) || !processRecovery || selected.length > 1 && !processRecovery.endMany) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     const intent = blockedSwitch;
+    if (intent && !dependencies.lifecycle) await assertOfficialCredentialWriteBarrier(context);
+    if (intent && (!processConflicts?.current || processConflicts.current.credentialScopeVerified !== true)) throw new LiveError('OFFICIAL_HUB_PROCESS_UNVERIFIED');
     if (intent && JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
+    const pinnedCurrent = intent ? processRecovery.currentProcessIdentity?.() : undefined;
+    if (intent && processRecovery.currentProcessIdentity && !pinnedCurrent) throw new LiveError('OFFICIAL_HUB_PROCESS_UNVERIFIED');
     const targetEmail = intent ? items().find(item => item.id === intent.id)!.expectedEmail : undefined;
     const consent = tr(selected.length > 1 ? 'officialProcess.batchEnd' : selected[0]!.endMode === 'force' ? 'officialProcess.forceConfirm' : 'officialProcess.endConfirm');
     const related = selected.some(row => row.scope === 'unknown' || row.scope === 'other-window');
     const scopes = [tr(related ? 'officialProcess.scopeRelated' : 'officialProcess.scopeDetached', { p0: selected.map(row => `PID ${row.pid} (${row.startedAt ?? tr('officialProcess.unknownTime')})`).join(', ') })];
     if (intent) scopes.push(tr('officialProcess.scopeCurrent', { p0: processConflicts?.current ? ` (PID ${processConflicts.current.pid})` : '' }));
     const risk = tr(selected.every(row => row.endMode === 'force') ? 'officialProcess.forceRisk' : 'officialProcess.termRisk') + (related ? tr('officialProcess.relatedRisk') : '');
-    const message = tr('officialProcess.operationConsent', { p0: targetEmail ? tr('officialProcess.switchAction', { p0: displayEmail(targetEmail, items()), p1: '' }) : tr('officialProcess.endOnly'), p1: scopes.join('\n'), p2: risk });
+    const message = tr(intent ? 'officialProcess.operationConsent' : 'officialProcess.endOnlyConsent', { p0: targetEmail ? tr('officialProcess.switchAction', { p0: displayEmail(targetEmail, items()), p1: '' }) : tr('officialProcess.endOnly'), p1: scopes.join('\n'), p2: risk });
     if (await vscode.window.showWarningMessage(message, { modal: true }, consent) !== consent || disposed) return;
     if (blockedSwitch !== intent) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     if (intent && JSON.stringify(items().find(item => item.id === intent.id)) !== intent.fingerprint) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     const controller = new AbortController(); processAbort = controller;
     try {
       status = tr('officialProcess.endingBatch', { p0: selected.length }); dependencies.changed?.();
-      if (processRecovery.endMany) await processRecovery.endMany(selected.map(row => row.id), controller.signal);
+      if (processRecovery.endMany) await processRecovery.endMany(selected.map(row => row.id), controller.signal, pinnedCurrent);
       else await processRecovery.end(selected[0]!.id, controller.signal);
       if (disposed || controller.signal.aborted) return;
       const scanned = await scanProcesses();
@@ -1807,6 +2229,7 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     if (!preparedBackendAction && await vscode.window.showWarningMessage(tr("liveUi.ccb82e51cc", { p0: fileOnly ? tr("liveUi.5ad013a479") : tr("liveUi.33f439cf93") }), { modal: true }, restoreConsent) !== restoreConsent) return;
     activeEmail = undefined; activeVerifiedAt = undefined; activeGeneration = undefined;
     const backend = await consumePreparedBackend('restore', false);
+    await checkWriteAdmission(backend);
     await service!.restore(deferred(backend));
     if (backend.restartMode === 'component') return await reconcileLogin();
     return true;
@@ -1864,6 +2287,15 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     await fs.writeFile(filename, acceptanceReport(context.globalState.get('live-switch.acceptance.v1', []), items().length, process.platform, context.extension?.packageJSON?.version), { flag: 'wx', mode: 0o600 });
     status = tr("liveUi.67fe612fc5");
   });
+  const offlineUi = registerOfflineUi(context, {
+    stage: stage => { operationStage = stage; debugSpan?.event('preparing', { switchStage: stage }); },
+    owner: createHash('sha256').update(context.globalStorageUri.toString()).digest('hex'),
+    accounts: () => items().map(account => ({ id: account.id, label: displayAccount(account) })),
+    account: async id => { await serviceReady; if (!service) throw new LiveError('HOST_IDENTITY_UNAVAILABLE'); return service.account(id); },
+    official: () => officialExtensionForHost(context),
+    proof: async () => (await resolveOfficialReadOnlyHub(context)).freshProof!(),
+    changed: () => { ++identityRevision; identityAbort?.abort(); clearActiveIdentity(); identityNeedsRefresh = true; identityAttempts = 0; identityDeadline = Date.now() + 90_000; void refresh(); dependencies.changed?.(); },
+  });
   // Legacy command aliases the same safe automatic reconciliation used on startup.
   // There is no user-facing override for active, foreign or uncertain ownership.
   register('unlock', async () => {
@@ -1878,5 +2310,5 @@ export function registerLiveUi(context: vscode.ExtensionContext, dependencies: L
     const accounts = items().map(account => ({ ...account, ...(service?.hostIsCurrent ? { hostCurrent: service.hostIsCurrent(account) } : {}) }));
     const currentId = verifiedCurrentAccountId(accounts, activeEmail, pending && !identityVerifiedDuringRecovery);
     return accounts.map(account => ({ ...account, ...(account.id === currentId ? { active: true, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}), ...(projectedQuota(account) ? { quota: projectedQuota(account)! } : {}) }));
-  }, getState: () => ({ initializing: !!recoveryRefresh || officialActivationPending || identityChecking || identityCaptureHoldingLock, accountStorageReady: !!service || !!setupError, ...(lastKnownAccountId() ? { lastKnownAccountId: lastKnownAccountId()! } : {}), identityChecking, identityVerifiedDuringRecovery, ...(currentSaveProjection() ? { currentLoginSave: currentSaveProjection()! } : {}), status: !busy && recoveryPhase === 'none' && identityStatus ? localizeMessage(identityStatus) : localizeMessage(status), busy, pending, recoveryPhase, ...(errorMessage ? { error: localizeMessage(errorMessage) } : {}), ...(lastFailure ? { lastFailure } : {}), environment: environmentStatus(), official: officialAvailability(context), ...(storageMode ? { storageMode } : {}), ...(currentQuota ? { currentQuota } : {}), ...(activeEmail ? { activeEmail, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}), ...(processConflicts ? { processConflicts } : {}), ...(blockedSwitch && items().some(item => item.id === blockedSwitch!.id && JSON.stringify(item) === blockedSwitch!.fingerprint) ? { processSwitchTarget: items().find(item => item.id === blockedSwitch!.id)!.expectedEmail } : {}) }) };
+  }, getState: () => ({ componentRestoration, offlinePending, ...(offlineUi.getStatus() ? { offlineStatus: offlineUi.getStatus()! } : {}), hubRecovering: hubRecovery.pending, initializing: !!recoveryRefresh || officialActivationPending || identityChecking || identityCaptureHoldingLock, accountStorageReady: !!service || !!setupError, ...(lastKnownAccountId() ? { lastKnownAccountId: lastKnownAccountId()! } : {}), identityChecking, identityVerifiedDuringRecovery, ...(currentSaveProjection() ? { currentLoginSave: currentSaveProjection()! } : {}), status: !busy && recoveryPhase === 'none' && identityStatus ? localizeMessage(identityStatus) : localizeMessage(status), busy, pending, recoveryPhase, ...(errorMessage ? { error: localizeMessage(errorMessage) } : {}), ...(lastFailure ? { lastFailure } : {}), environment: environmentStatus(), official: officialAvailability(context), ...(storageMode ? { storageMode } : {}), ...(currentQuota ? { currentQuota } : {}), ...(activeEmail ? { activeEmail, ...(activeVerifiedAt ? { activeVerifiedAt } : {}) } : {}), ...(processConflicts ? { processConflicts } : {}), ...(blockedSwitch && items().some(item => item.id === blockedSwitch!.id && JSON.stringify(item) === blockedSwitch!.fingerprint) ? { processSwitchTarget: items().find(item => item.id === blockedSwitch!.id)!.expectedEmail } : {}) }) };
 }

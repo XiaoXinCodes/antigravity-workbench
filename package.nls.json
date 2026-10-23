@@ -52,5 +52,11 @@
   "configuration.hideIdentity": "Replace account names and emails with consistent aliases in the interface, notifications, quick picks and status bar for screenshots or screen sharing.",
   "command.quota.history": "Quota observations",
   "command.observations.open": "Model and token records",
-  "command.workbench.open": "Open Workbench in Editor"
+  "command.workbench.open": "Open Workbench in Editor",
+  "command.live.hubRestart": "Restart current backend (interrupts its tasks)",
+  "command.live.hubRecover": "Recover this window’s missing backend",
+  "command.live.offlinePrepare": "Prepare offline switch",
+  "command.live.offlineContinue": "Continue offline switch",
+  "command.live.offlineComplete": "Complete offline switch",
+  "command.live.offlineKeepCurrent": "Keep current login and end offline transaction"
 }

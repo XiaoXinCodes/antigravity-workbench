@@ -103,7 +103,7 @@ test('uncertain refresh after restart cannot re-exchange old grant or install or
   const f=fixture({exchange:async()=>{throw new LiveError('ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN');}}),a=f.seed('a',true);
   await assert.rejects(f.run([entry('a',true)],{replace:{'a@example.test':a.id}}),/ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN/);assert.ok(f.data.has(QUOTA_UNKNOWN_PREFIX+a.id));
   await assert.rejects(f.run([entry('a',true)],{replace:{'a@example.test':a.id}}),/ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN/);assert.equal(f.exchanges(),1);assert.equal(await f.service.savedLoginUsable(a),false);
-  await assert.rejects(f.service.install(a.id,{}),/ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN/);assert.equal(f.official(),0);
+  await assert.rejects(f.service.install(a.id,{assertCredentialWriteSafe:async()=>{}}),/ACCOUNT_QUOTA_REFRESH_OUTCOME_UNKNOWN/);assert.equal(f.official(),0);
 });
 test('every SecretStorage get/store/delete and index step failing before or after operation remains recoverable',async()=>{
   const baseline=fixture(),a=baseline.seed('a'),b=baseline.seed('b');baseline.events.length=0;await baseline.run([entry('a'),entry('c')],{replace:{'a@example.test':a.id}});

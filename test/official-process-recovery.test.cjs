@@ -17,6 +17,40 @@ test('verified scan reports the current Hub separately without exposing its capa
   assert.equal(state.processes[0].scope, 'current-window');
   assert.doesNotMatch(JSON.stringify(state), /csrf|synthetic-capability|commandHash|bootId|startTicks/);
 });
+for (const platform of ['linux', 'win32']) test(`${platform}: four unverified rows are blockers, not evidence of four other windows`, async () => {
+  const f = fixture({ platform });
+  f.setRows(Array.from({ length: 4 }, (_, index) => row(710 + index, 'unverified', {
+    canEnd: false, credentialScopeReason: 'process-identity-unverified'
+  })));
+  const state = await f.recovery.scan();
+  assert.equal(state.currentCount, 0);
+  assert.equal(state.current, undefined);
+  assert.equal(state.totalCount, 4);
+  assert.equal(state.canContinue, false);
+  assert.equal(state.limitation, 'ownership');
+  assert.ok(state.processes.every(row => row.owner === 'unknown' && !row.canEnd));
+  assert.equal(f.recovery.currentProcessIdentity(), undefined);
+  await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
+  assert.ok(f.calls.every(call => call.operation === 'scan'));
+});
+for (const platform of ['linux', 'win32']) test(`${platform}: stale valid exports never become ready merely because all observed processes exited`, async () => {
+  const f = fixture({ platform });
+  const make = platform === 'win32' ? windowsRow : row;
+  f.setRows([710, 711, 712].map(pid => make(pid, 'unowned-hub', { scope: 'other-window' })));
+  const initial = await f.recovery.scan();
+  assert.equal(initial.currentCount, 0);
+  assert.equal(initial.canContinue, false);
+  f.setRows([]); // Synthetic exit; no real process is scanned or terminated.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const state = await f.recovery.scan();
+    assert.equal(state.totalCount, 0);
+    assert.equal(state.currentCount, 0);
+    assert.equal(state.canContinue, false);
+  }
+  f.setApi(undefined);
+  assert.equal((await f.recovery.scan()).canContinue, true);
+  assert.ok(f.calls.every(call => call.operation === 'scan'));
+});
 test('host-only current identity detects same-capability PID birth replacement and clears on invalidation', async () => {
   const f = fixture({ platform: 'win32' });
   f.setRows([windowsRow(709, 'current-hub')]); await f.recovery.scan();
@@ -441,5 +475,23 @@ test('project association admits only bounded basenames and never augments termi
   assert.deepEqual(state.processes[0].projects,projects[0]==='space project=one'?projects:[]);
   assert.equal(state.processes[0].canEnd,true);await f.recovery.end(state.processes[0].id,new AbortController().signal);
   assert.equal(Object.hasOwn(f.calls[1].target,'projects'),false);
+ }
+});
+for (const platform of ['linux', 'win32']) test(`${platform}: current Hub disappearing or changing birth after consent prevents ending confirmed peers`, async () => {
+  for (const replacement of ['gone', 'reused']) {
+    const f = fixture({ platform }), make = platform === 'win32' ? windowsRow : row;
+    f.setRows([make(709, 'current-hub'), make(710)]);
+    const state = await f.recovery.scan(), current = f.recovery.currentProcessIdentity();
+    f.setRows([...(replacement === 'gone' ? [] : [make(709, 'current-hub', { startTicks: '999999' })]), make(710)]);
+    await assert.rejects(f.recovery.endMany([state.processes[0].id], new AbortController().signal, current), /OFFICIAL_HUB_PROCESS_UNVERIFIED/);
+    assert.ok(f.calls.every(call => call.operation === 'scan'));
+  }
+});
+test('full recovery peer proof changes on birth, command, host or credential scope and stays out of UI state',async()=>{
+ const f=fixture();const base=row(710,'unowned-hub',{scope:'other-window'});
+ f.setRows([base]);const state=await f.recovery.scan(),proof=f.recovery.recoveryPeerIdentity();
+ assert.doesNotMatch(JSON.stringify(state),/startTicks|commandHash|bootId/);
+ for(const change of [{startTicks:'999'},{commandHash:'b'.repeat(64)},{parentPid:999},{bootId:'22222222-2222-4222-8222-222222222222'},{credentialScopeVerified:false}]){
+  f.setRows([{...base,...change}]);await f.recovery.scan();assert.notEqual(f.recovery.recoveryPeerIdentity(),proof);
  }
 });

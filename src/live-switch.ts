@@ -19,7 +19,7 @@ export interface VerificationState { state: 'pending' | 'retry' | 'verified'; at
 export interface Journal { schema: 1; id: string; revision?: number; writeId?: string; phase: 'authorizing' | 'prepared' | 'installed' | 'restored'; operation?: 'login'; backup: TokenSlots; loginCurrent?: TokenSlots; target: SavedLogin; oldGeneration: string; hostId?: string; loginMode?: 'save-only'; original?: { email: string | null }; restoreGeneration?: string; verification?: VerificationState }
 export interface HubProof { email: string; generation: string; observedAt: string; authValid: boolean; quotaSource?: 'server'; buckets: { bucketId?: string; groupId?: string; window?: string; label: string; remaining: number | null; resetAt: string | null; remainingAmount?: string; disabled?: boolean }[] }
 export interface SignedOutProof { generation: string; authValid: false }
-export interface Lifecycle { stop(): Promise<void>; reload(): Promise<void>; proof(signal?: AbortSignal): Promise<HubProof>; signedOutProof?(signal?: AbortSignal): Promise<SignedOutProof>; generation: string; restartMode?: 'component' | 'unavailable' }
+export interface Lifecycle { credentialAdmissionNeedsDrain?: boolean; assertCredentialWriteSafe?(signal?: AbortSignal): Promise<void>; stop(): Promise<void>; reload(): Promise<void>; proof(signal?: AbortSignal): Promise<HubProof>; signedOutProof?(signal?: AbortSignal): Promise<SignedOutProof>; generation: string; restartMode?: 'component' | 'unavailable' }
 export interface VerificationGuard { id: string; phase: Journal['phase']; assertCurrent(): void }
 export interface RecoveryFinalizer {
   prepare(id: string, binding: string): Promise<string>;
@@ -33,6 +33,13 @@ export const ACCOUNT_PREFIX = 'live-switch.account.v1.';
 export const QUOTA_REFRESH_PREFIX = 'live-switch.quota-refresh.v1.';
 export const QUOTA_PENDING_PREFIX = 'live-switch.quota-pending.v1.';
 export const QUOTA_UNKNOWN_PREFIX = 'live-switch.quota-unknown.v1.';
+/** A stopped process is not a startup barrier. Production adapters must reject
+ * unless they can exclude future starts throughout the entire write transaction.
+ * Missing adapters fail closed; isolated test adapters may model that guarantee. */
+export async function assertCredentialWriteSafe(lifecycle: Lifecycle, signal?: AbortSignal): Promise<void> {
+  if (typeof lifecycle.assertCredentialWriteSafe !== 'function') throw new LiveError('OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE');
+  await lifecycle.assertCredentialWriteSafe(signal);
+}
 export type LiveInstallStage = 'preflight' | 'stop' | 'backup' | 'credential-write' | 'credential-readback' | 'journal-installed' | 'reconnect';
 // Verification errors cross the UI/persistence boundary. Never store an adapter's
 // arbitrary message/code, even if it happens to be wrapped in our Error class.
@@ -73,7 +80,7 @@ function targetForScope(target: TokenSlots, backup: TokenSlots): TokenSlots {
 }
 function validHostId(value: unknown): value is string { return typeof value === 'string' && value.length > 0 && value.trim() === value; }
 function validEmail(value: unknown): value is string { return typeof value === 'string' && !/[\u202a-\u202e\u2066-\u2069]/u.test(value) && /^[^\s@\x00-\x1f\x7f<>]{1,128}@[^\s@\x00-\x1f\x7f<>]{1,128}$/.test(value); }
-function sameStorageIdentity(expected: TokenSlots, current: TokenSlots): boolean {
+export function sameStorageIdentity(expected: TokenSlots, current: TokenSlots): boolean {
   if (expected.keyringState !== current.keyringState) return false;
   return (['keyring', 'file'] as const).every(slot => {
     const before = expected[slot], after = current[slot];
@@ -367,6 +374,7 @@ export class LiveSwitchService {
     return { email: proof.email.toLowerCase() };
   }
   async prepareLogin(lifecycle: Lifecycle, transactionId = randomUUID()): Promise<void> {
+    await assertCredentialWriteSafe(lifecycle);
     if (await this.hasCompletion()) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
     if (await this.vault.get(ACCOUNT_PREFIX + transactionId)) throw new LiveError('ACCOUNT_ID_COLLISION');
@@ -407,6 +415,7 @@ export class LiveSwitchService {
     if (!index.read().some(account => account.id === saved.id)) throw new LiveError('LOGIN_INDEX_NOT_VERIFIED');
   }
   async completeLogin(id: string, lifecycle: Lifecycle): Promise<void> {
+    await assertCredentialWriteSafe(lifecycle);
     const journal = await this.journal();
     if (journal?.operation !== 'login' || journal.phase !== 'authorizing') throw new LiveError('NO_LOGIN_TO_INSTALL');
     const { slots: _slots, ...saved } = await this.account(id); void _slots;
@@ -544,6 +553,41 @@ export class LiveSwitchService {
     return current ? parse(current, this.recoveryKey) : previous;
   }
   async journal(): Promise<Journal | null> { return (await this.recoveryRecord())?.journal ?? null; }
+  /** Explicit recovery choice only: preserve the current verified login without
+   * writing credential slots. Archive the original encrypted journal before
+   * changing its active verification target. Never delete the archive during
+   * ordinary completion. Caller owns the same operation/recovery scope. */
+  async retainCurrentLogin(lifecycle: Lifecycle, transactionId: string, guard?: VerificationGuard): Promise<void> {
+    if (await this.hasCompletion()) throw new LiveError('RECOVERY_CLEANUP_PENDING');
+    const record = await this.recoveryRecord();
+    if (!record || record.journal.id !== transactionId || record.journal.operation === 'login') throw new LiveError('RECOVERY_CHANGED');
+    const journal = record.journal, snapshot = this.snapshots.get(journal)!;
+    await this.assertVerification(journal, guard);
+    const before = await this.slots.read(journal.backup);
+    const proof = await lifecycle.proof();
+    if (!proof.authValid || proof.quotaSource !== 'server' || !validEmail(proof.email) || proof.generation !== lifecycle.generation ||
+        proof.generation === journal.oldGeneration || proof.generation === 'stopped') throw new LiveError('HUB_IDENTITY_NOT_VERIFIED');
+    validateSlots(before); assertSlotIdentity(before, proof.email);
+    if (!equalSlots(before, await this.slots.read(journal.backup))) throw new LiveError('EXTERNAL_CHANGE');
+    await this.assertVerification(journal, guard);
+    const archiveKey = `${record.key}.retained.${transactionId}`;
+    const retained = await this.recoveryStore.read(archiveKey);
+    if (retained) {
+      const previous = parseJournal(retained);
+      this.assertHost(previous, 'RECOVERY');
+      if (previous.id !== transactionId) throw new LiveError('RECOVERY_CHANGED');
+    } else await this.recoveryStore.write(archiveKey, undefined, snapshot.raw);
+    // Even an ambiguous archive write must not erase the active original copy.
+    if (await this.recoveryStore.read(archiveKey) !== (retained ?? snapshot.raw)) throw new LiveError('RECOVERY_SAVE_NOT_VERIFIED');
+    await this.assertVerification(journal, guard);
+    const afterProof = await lifecycle.proof();
+    if (!afterProof.authValid || afterProof.quotaSource !== 'server' || afterProof.generation !== proof.generation || afterProof.generation !== lifecycle.generation ||
+        afterProof.email.toLowerCase() !== proof.email.toLowerCase() || !equalSlots(before, await this.slots.read(journal.backup))) throw new LiveError('EXTERNAL_CHANGE');
+    await this.assertVerification(journal, guard);
+    journal.phase = 'restored'; journal.backup = before; journal.original = { email: proof.email };
+    journal.restoreGeneration = journal.oldGeneration; journal.verification = { state: 'pending', attempts: 0 };
+    await this.saveJournal(journal);
+  }
   private async assertJournalSnapshot(journal: Journal): Promise<void> {
     const snapshot = this.snapshots.get(journal), current = await this.recoveryRecord();
     const observed = current && this.snapshots.get(current.journal);
@@ -566,7 +610,8 @@ export class LiveSwitchService {
     await this.recoveryStore.write(key, previous?.raw, raw);
     this.snapshots.set(j, { key, raw });
   }
-  async install(id: string, lifecycle: Lifecycle, transactionId = randomUUID(), stage?: (value: LiveInstallStage) => void): Promise<void> {
+  async install(id: string, lifecycle: Lifecycle, transactionId: string = randomUUID(), stage?: (value: LiveInstallStage) => void): Promise<void> {
+    await assertCredentialWriteSafe(lifecycle);
     stage?.('preflight');
     if (await this.hasCompletion()) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (await this.journal()) throw new LiveError('RECOVERY_PENDING');
@@ -593,7 +638,7 @@ export class LiveSwitchService {
     stage?.('backup');
     await this.saveJournal(journal);
     stage?.('credential-write');
-    try { await this.slots.write(targetSlots, backup); }
+    try { await assertCredentialWriteSafe(lifecycle); await this.slots.write(targetSlots, backup); }
     catch (error) {
       // A killed helper can leave an in-flight operation in the OS keyring service.
       if (error instanceof LiveError && error.code === 'NATIVE_HELPER_TIMEOUT_OR_LIMIT') throw new LiveError('SWITCH_TIMEOUT_RECOVERY_REQUIRED');
@@ -602,6 +647,7 @@ export class LiveSwitchService {
       try {
         const current = await this.slots.read(backup);
         if (![backup.keyring, targetSlots.keyring].includes(current.keyring) || ![backup.file, targetSlots.file].includes(current.file)) throw new LiveError('EXTERNAL_CHANGE');
+        await assertCredentialWriteSafe(lifecycle);
         await this.slots.write(backup, current);
         if (!equalSlots(backup, await this.slots.read(backup))) throw new LiveError('RECOVERY_RESTORE_NOT_VERIFIED');
         journal.phase = 'restored'; await this.saveJournal(journal);
@@ -894,6 +940,7 @@ export class LiveSwitchService {
     if (!index.read().some(item => item.id === account.id && item.migrationState === 'verified' && item.identitySource === 'hub')) throw new LiveError('MIGRATION_INDEX_CHANGED');
   }
   async restore(lifecycle: Lifecycle, options: { reload?: boolean; guardInstalled?: boolean; expectedTransactionId?: string; expectedCurrent?: TokenSlots } = {}): Promise<void> {
+    await assertCredentialWriteSafe(lifecycle);
     if (await this.hasCompletion()) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     const j = await this.journal(); if (!j) throw new LiveError('NO_RECOVERY_BACKUP');
     if (options.expectedTransactionId !== undefined && j.id !== options.expectedTransactionId) throw new LiveError('RECOVERY_CHANGED');
@@ -920,6 +967,7 @@ export class LiveSwitchService {
     if (options.expectedCurrent && !equalSlots(options.expectedCurrent, current)) throw new LiveError('EXTERNAL_CHANGE');
     if (expectedCurrent && !equalSlots(current, expectedCurrent)) throw new LiveError('EXTERNAL_CHANGE');
     await this.assertJournalSnapshot(j);
+    await assertCredentialWriteSafe(lifecycle);
     await this.slots.write(j.backup, current);
     // Do not report a completed recovery until its original scope is read back.
     // Unobserved keyrings remain unobserved, never interpreted as empty.

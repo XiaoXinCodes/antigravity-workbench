@@ -65,6 +65,7 @@ function fixture(t, options = {}) {
   };
   const backend = {
     get generation() { return generation; }, restartMode: 'component',
+    async assertCredentialWriteSafe() {},
     async stop() { record('stop-hub'); running = false; },
     async reload() { record('reload-hub'); running = true; ++serial; official.exports = {...official.exports, csrfToken: `synthetic-csrf-${serial}`}; generation = load('live-hub').generation(official.exports); ui.afterReload?.(); },
     async proof() { if (!running) throw new LiveError('OFFICIAL_HUB_NOT_READY'); record('proof', currentEmail); if (ui.proofFailure) throw ui.proofFailure; return proof(); },
@@ -81,7 +82,7 @@ function fixture(t, options = {}) {
     async endMany(ids, signal) { record('end-many', [...ids]); if (ids.some(id => !selections.has(id)) || rows.some(row => !ids.includes(row.id))) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); if (ui.endMany) return ui.endMany(ids, signal); rows = []; return ids.map(() => 'exited'); },
     invalidate() { selections.clear(); }
   };
-  const controller = api.registerLiveUi(context, { service, locks, lifecycle: async() => {
+  const controller = api.registerLiveUi(context, { storageMode:options.storageMode, service, locks, lifecycle: async() => {
     record('resolve-lifecycle'); if (rows.length) throw new LiveError('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN');
     return running ? backend : {...backend, generation:'stopped'};
   }, currentIdentity: async() => proof(), currentQuota: async() => proof(), processRecovery: recovery, changed: () => record('ui-state') });
@@ -144,13 +145,13 @@ test('deleting the only current saved copy keeps the official login and the obse
 });
 
 test('same-capability current Hub replacement after detached batch completion blocks stop and credential writes', async t => {
-  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({scans,replaceCurrent})=>{if(scans===2)replaceCurrent(2002,'20002');});
+  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({replaceCurrent})=>{if(count(f,'native-helper-end')===1)replaceCurrent(2002,'20002');});
   await f.call('switch',ACCOUNT_B);assert.equal(count(f,'native-helper-end'),1);assert.equal(count(f,'stop-hub'),0);assert.equal(count(f,'credential-write'),0);
   assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);assert.match(f.warnings[0].message,/PID 1001/);
 });
 
 test('same-capability current Hub replacement during lifecycle resolution is rejected by the final scan', async t => {
-  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({scans,replaceCurrent})=>{if(scans===3)replaceCurrent(2002,'20002');});
+  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({replaceCurrent})=>{if(count(f,'resolve-lifecycle')===1)replaceCurrent(2002,'20002');});
   await f.call('switch',ACCOUNT_B);assert.equal(count(f,'native-helper-end'),1);assert.equal(count(f,'resolve-lifecycle'),1);
   assert.equal(count(f,'stop-hub'),0);assert.equal(count(f,'credential-write'),0);assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);
 });
@@ -166,4 +167,20 @@ test('cancelling a hidden switch preflight keeps existing conflict buttons bound
 
 test.after(()=>{
   if(process.env.ACCOUNT_BACKEND_UI_TIMELINE){fs.mkdirSync(path.dirname(process.env.ACCOUNT_BACKEND_UI_TIMELINE),{recursive:true});fs.writeFileSync(process.env.ACCOUNT_BACKEND_UI_TIMELINE,JSON.stringify({moduleRoot:output,synthetic:true,realGoogleCalls:false,productionUi:true,productionAccountService:true,productionProcessRecovery:true,nativeProcessHelperSimulated:true,traces:trace},null,2)+'\n');}
+});
+
+test('WSL replacement deletion stops before image cancellation or peer-ending preparation', async t => {
+ const f=fixture(t,{rows:[detached(710)],storageMode:'wsl-file'});realRecovery(f);const before=f.current();
+ await f.call('remove',ACCOUNT_A);
+ for(const event of ['stop-hub','credential-write','native-helper-end','vault-delete','begin-recovery'])assert.equal(count(f,event),0,event);
+ assert.deepEqual(f.current(),before);assert.equal(f.controller.getState().processSwitchTarget,undefined);
+ assert.deepEqual(f.controller.getAccounts().map(a=>a.id),[ACCOUNT_A,ACCOUNT_B]);
+});
+test('WSL switch without cooperative capability fails without falling back to offline UI or peer termination', async t => {
+ const f=fixture(t,{rows:[detached(710)],storageMode:'wsl-file'});realRecovery(f);
+ await f.call('switch',ACCOUNT_B);
+ assert.ok(!f.events.some(e=>e.event==='command'&&e.detail==='antigravityAccounts.live.offlinePrepare'));
+ assert.ok(f.controller.getState().error);
+ for(const event of ['stop-hub','credential-write','native-helper-end','begin-recovery'])assert.equal(count(f,event),0,event);
+ assert.equal(f.warnings.length,0);
 });
