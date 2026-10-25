@@ -4,7 +4,7 @@
 
 记录本仓库正式发布版本中对用户可见的功能与修复。发布日期使用 UTC。
 
-## 0.1.18 — 待发布
+## [0.1.18](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.18) — 2026-10-25
 
 稳定多窗口切换与失败恢复，收敛实验入口。
 

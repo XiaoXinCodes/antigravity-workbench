@@ -4,7 +4,7 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
-## 0.1.18 — Unreleased
+## [0.1.18](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.18) — 2026-10-25
 
 Stabilize multi-window switching and recovery; retire experimental entry points.
 
