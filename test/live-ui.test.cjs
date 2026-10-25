@@ -392,6 +392,9 @@ test('lifecycle accepts future releases and missing version diagnostics with liv
  const contract=require('../out/official-contract'),environment=require('../out/live-environment'),fs=require('node:fs/promises'),previousContract=contract.assertOfficialEntrypoint,previousHash=environment.assertWslBackendExecutable,previousStat=fs.stat,previousAccess=fs.access;
  contract.assertOfficialEntrypoint=async()=>{};environment.assertWslBackendExecutable=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};
  let stopped=false,versionResult={code:0,stdout:'agy version 99.4.2-preview',stderr:''};const calls=[];
+ const locks=require('../out/live-lock'),previousProbe=locks.probeProcessIdentity;
+ locks.probeProcessIdentity=async pid=>pid===321?(stopped?{state:'dead'}:{state:'live',startIdentity:'linux:synthetic:synthetic-birth'}):previousProbe(pid);
+ t.after(()=>{locks.probeProcessIdentity=previousProbe;});
  provideNativeProcessProof(t,()=>{const current={pid:321,parentPid:process.pid,startTicks:'synthetic-birth',kind:'current-hub',taskState:'unknown'};return stopped?{processes:[]}:{processes:[current],current};});
  require.cache[main]={loaded:true,exports:{async deactivate(){stopped=true;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};f.events.push('deactivate-official')}}};
  storage.runPrivate=async(executable,args)=>{calls.push({executable,args});if(args[0]==='--version'){if(versionResult instanceof Error)throw versionResult;return versionResult}return{code:0,stdout:stopped?'':process.platform==='win32'?'"agy.exe","321"':'agy\n',stderr:''}};
