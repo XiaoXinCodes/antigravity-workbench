@@ -1,5 +1,15 @@
 const test = require('node:test'), assert = require('node:assert/strict');
-const { explainWslFileRoute, parseWslFileRoute, createWslReadGuard, readWslStartup, wslFileRouteError } = require('../out/live-wsl-proof');
+// Execute the real Linux filesystem reader with POSIX paths and a synthetic UID.
+// Native dependencies are otherwise unchanged; all filesystem reads are fixtures.
+const { createRequire } = require('node:module'), vm = require('node:vm');
+const nativePath = require('node:path'), sourceFile = require.resolve('../out/live-wsl-proof');
+const sourceRequire = createRequire(sourceFile), linuxProcess = Object.create(process);
+Object.defineProperties(linuxProcess, { platform: { value: 'linux' }, getuid: { value: () => 1000 } });
+const isolatedModule = { exports: {} };
+vm.runInThisContext(`(function(require,module,exports,__filename,__dirname,process){${require('node:fs').readFileSync(sourceFile,'utf8')}\n})`, { filename: sourceFile })(
+  id => id === 'node:path' ? nativePath.posix : sourceRequire(id), isolatedModule, isolatedModule.exports, sourceFile, nativePath.dirname(sourceFile), linuxProcess);
+const linuxProof = isolatedModule.exports;
+const { explainWslFileRoute, parseWslFileRoute, createWslReadGuard, readWslStartup, wslFileRouteError } = linuxProof;
 const { FILE_ROUTE_FAILURE_REASONS, fileRouteFailureReason } = require('../out/file-route-failure');
 const { debugErrorData, sanitizeDebugData } = require('../out/debug-events');
 const { readLastAccountFailure } = require('../out/last-account-failure');
@@ -27,7 +37,7 @@ test('host mismatch still rejects and exposes no original error',async()=>{
 });
 for (const reason of ['directory-permissions','open-log-count','log-file-metadata','inode-mismatch','read-stability']) test('reader branch '+reason+' reaches guard and persistence',async t=>{
  const fs=require('node:fs/promises'); const file='/synthetic/.gemini/antigravity/log/cli-20261001_123456.log';
- const stat={uid:process.getuid(),mode:0o700,dev:1,ino:2,size:3,isDirectory:()=>true,isFile:()=>true,isSymbolicLink:()=>false};
+ const stat={uid:1000,mode:0o700,dev:1,ino:2,size:3,isDirectory:()=>true,isFile:()=>true,isSymbolicLink:()=>false};
  t.mock.method(fs,'lstat',async p=>({...stat,...(reason==='directory-permissions'&&p==='/synthetic'?{mode:0o777}:{}),...(reason==='log-file-metadata'&&p===file?{isFile:()=>false}:{})}));
  t.mock.method(fs,'readdir',async()=>reason==='open-log-count'?[]:['1']);t.mock.method(fs,'readlink',async()=>file);
  t.mock.method(fs,'stat',async()=>({...stat,ino:reason==='inode-mismatch'?3:2}));

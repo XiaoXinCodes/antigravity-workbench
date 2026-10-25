@@ -15,12 +15,12 @@ function fixture(options={}){
  './live-environment':{EnvironmentTokenSlots:class{async read(){return state.scope;}},resolveOfficialStorageMode:async()=> 'wsl-file'},
  './native-host':{assertNativeHost(){},resolveCredentialHostId:async()=> 'b'.repeat(64)},
  './live-wsl-proof':{wslFileRouteError:require('../out/live-wsl-proof').wslFileRouteError,createWslReadGuard:()=>Object.assign(async()=>!state.badScope,{fileRouteFailureReason:'pid-marker-mismatch'})},'./official-contract':{assertOfficialWriteContract:async()=>{}},
- './offline-recovery-store':{OfflineRecoveryStore:Store},'./offline-process-census':{inspectOfflineLinuxProcesses:async({knownHosts})=>({complete:!state.incompleteCensus,unknown:!!state.unknownCensus,hosts:knownHosts,hubs:[]})}};
- const id=require.resolve('../out/offline-ui'),old=Module._load;delete require.cache[id];Module._load=function(name,...args){return mocks[name]??old.call(this,name,...args);};
+ './offline-recovery-store':{OfflineRecoveryStore:Store},'./offline-process-census':{inspectOfflineLinuxProcesses:async({knownHosts,uid,home})=>{state.censusCalls??=[];state.censusCalls.push({uid,home});return{complete:!state.incompleteCensus,unknown:!!state.unknownCensus,hosts:knownHosts,hubs:[]};}}};
+ const id=require.resolve('../out/offline-ui'),old=Module._load;delete require.cache[id];Module._load=function(name,...args){if(args[0]?.filename===id&&name==='node:path')return old.call(this,name,...args).posix;if(args[0]?.filename===id&&name==='node:os')return {...old.call(this,name,...args),homedir:()=>'/synthetic/wsl-home'};return mocks[name]??old.call(this,name,...args);};
  // This is a fully mocked WSL UI fixture, independent of the CI host OS.
  // Scope platform injection to this module; never mutate the real process.
  let register;try{const loaded=new Module(id,module);loaded.filename=id;loaded.paths=module.paths;
-  loaded._compile("const process=new Proxy(require('node:process'),{get:(target,key)=>key==='platform'?'linux':Reflect.get(target,key)});\n"+require('node:fs').readFileSync(id,'utf8'),id);
+  loaded._compile("const process=new Proxy(require('node:process'),{get:(target,key)=>key==='platform'?'linux':key==='getuid'?()=>1000:key==='execPath'?'/synthetic/bin/node':Reflect.get(target,key)});\n"+require('node:fs').readFileSync(id,'utf8'),id);
   register=loaded.exports.registerOfflineUi;
  }finally{Module._load=old;delete require.cache[id];}
  const nativeInterval=global.setInterval;if(options.manualTimer)global.setInterval=fn=>{state.poll=fn;return{unref(){}};};
@@ -197,4 +197,11 @@ test('terminal presentation cannot borrow another transaction record from a hist
  const saved=structuredClone(f.state.record);f.state.pointer['automatic-offline.last.v1'].id=require('node:crypto').randomUUID();
  const reopened=fixture({manualTimer:true,state:f.state});await pollOnce(reopened.state);
  assert.equal(reopened.controller.getStatus(),undefined);assert.equal(reopened.controller.getHistory(),undefined);assert.deepEqual(f.state.record,saved);
+});
+
+test('WSL model supplies UID and POSIX home/command paths independently of CI host',async()=>{
+ const f=fixture();await f.run('offlinePrepare');assert.deepEqual(f.state.errors,[]);
+ assert.deepEqual(f.state.censusCalls,[{uid:1000,home:'/synthetic/wsl-home'}]);
+ assert.match(f.state.documents[0],/\/synthetic\/bin\/node/);
+ assert.match(f.state.documents[0],/\/out\/offline-cli\.js/);
 });
