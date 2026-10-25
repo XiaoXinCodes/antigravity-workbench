@@ -5,7 +5,7 @@ const locksModule=require('../out/live-lock'),storage=require('../out/live-stora
 const scope='b'.repeat(64),owner='a'.repeat(64),fingerprint='c'.repeat(64);
 async function until(fn){for(let i=0;i<1000;i++){if(await fn())return;await new Promise(r=>setTimeout(r,10));}throw Error('FIXTURE_TIMEOUT');}
 async function fixture(t,cancel){
- const home=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'product-orchestration-'));t.after(async()=>{for(const r of roles){r.active=false;for(const d of r.context?.subscriptions??[])d.dispose();}await new Promise(resolve=>setTimeout(resolve,200));await fs.rm(home,{recursive:true,force:true,maxRetries:5,retryDelay:100});});const file=path.join(home,'.gemini','jetski-standalone-oauth-token');await fs.mkdir(path.dirname(file),{mode:0o700});const original=JSON.stringify({token:{refresh_token:'synthetic-original'}}),target=JSON.stringify({token:{refresh_token:'synthetic-target'}});await fs.writeFile(file,original,{mode:0o600});
+ const home=await fs.mkdtemp(path.join(await fs.realpath(__dirname),'product-orchestration-'));t.after(async()=>{for(const r of roles){r.active=false;for(const d of r.context?.subscriptions??[])d.dispose();}await new Promise(resolve=>setTimeout(resolve,200));await fs.rm(home,{recursive:true,force:true,maxRetries:5,retryDelay:100});});const file=path.join(home,'.gemini','jetski-standalone-oauth-token');await fs.mkdir(path.dirname(file),{mode:0o700});const original=JSON.stringify({token:{refresh_token:'synthetic-original'}}),target=JSON.stringify({token:{refresh_token:'synthetic-target'}});await fs.writeFile(file,original,{mode:0o600});
  await new PrivateState(path.join(home,'.gemini','antigravity-workbench-window-platform'),v=>v,()=>({})).transaction(s=>Object.assign(s,{schema:1,test:'isolated-windows-wsl-v1',fingerprint,authority:'wsl+synthetic',executable:'/synthetic/Code.exe'}));
  const roles=[],births=new Map(),events=[],pointers=new Map();let helperDone,helperError,readyResolve,helperRunning=false;
  function role(pid,workspace){const r={pid,workspace,birth:`linux:11111111-1111-4111-8111-111111111111:${pid}`,timers:[],active:true,commands:new Map()};roles.push(r);births.set(pid,r.birth);return r;}
@@ -34,9 +34,33 @@ async function fixture(t,cancel){
  const pump=setInterval(()=>{for(const r of roles)if(r.active)for(const timer of r.timers)if(timer.ms===500)timer.cb();else if(r.pid>=812000&&helperRunning){events.push('poll-during-helper');timer.cb();}},20);t.after(()=>clearInterval(pump));await until(async()=>{const c=new(first.api.req('./window-runtime-channel').WindowRuntimeChannel)(home);return(await c.roster(await census(),scope)).complete;});first.api.ui();
  return{home,file,original,target,events,first,locks:new locksModule.LiveLocks(path.join(home,'.gemini'),owner),prepare:()=>first.controller.prepareAutomatic('target'),done:async()=>{await helperDone;return helperError;},poll:()=>{for(const r of roles)if(r.active&&r.controller)for(const timer of r.timers)if(timer.ms!==500)timer.cb();},record:async()=>{const q=pointers.get(first.pid),key=await new AutomaticOfflineKey(home,q.host,q.id).read();return new OfflineRecoveryStore(path.join(home,'.gemini','antigravity-workbench-offline',q.id),key,q.host,q.id).read();}};
 }
-for(const cancel of [false,true])test('real product orchestration '+(cancel?'partial-close cancellation and recovery':'successful two-window transaction'),async t=>{
+// These integration cases exercise actual POSIX directory fsync and concurrent
+// atomic replacement, not a simulated Windows durability implementation.
+for(const cancel of [false,true])test('real product orchestration '+(cancel?'partial-close cancellation and recovery':'successful two-window transaction'),{skip:process.platform==='win32'?'Requires POSIX durability; native Windows rejection covered below':false},async t=>{
  const f=await fixture(t,cancel);assert.equal(await f.prepare(),true);const error=await f.done();assert.equal(error?.code,cancel?'CANCELLED':undefined);assert.equal(await fs.readFile(f.file,'utf8'),cancel?f.original:f.target);assert.equal(await f.locks.hasRecovery(),true);assert.equal(f.events.filter(e=>e.startsWith('close:')).length,cancel?1:2);assert.equal(f.events.filter(e=>e.startsWith('reopen:')).length,cancel?1:2);assert.equal(f.events.filter(e=>e==='writer-fenced').length,cancel?1:2);assert.ok(f.events.includes('poll-during-helper'));
  f.poll();await until(async()=>!await f.locks.hasRecovery());assert.equal((await f.record()).phase,cancel?'restored-verified':'verified');assert.equal((await f.record()).backup.file,f.original);
 });
 
-test('peer save cancellation while initiating UI is busy retains original and settles on poll',async t=>{const f=await fixture(t,'save');await assert.rejects(f.prepare(),{code:'CANCELLED'});assert.equal(f.events.filter(e=>e.startsWith('close:')).length,0);assert.equal(await fs.readFile(f.file,'utf8'),f.original);assert.equal(await f.locks.hasRecovery(),true);f.poll();await until(async()=>!await f.locks.hasRecovery());assert.equal((await f.record()).phase,'restored-verified');});
+test('peer save cancellation while initiating UI is busy retains original and settles on poll',{skip:process.platform==='win32'?'Requires POSIX durability; native Windows rejection covered below':false},async t=>{const f=await fixture(t,'save');await assert.rejects(f.prepare(),{code:'CANCELLED'});assert.equal(f.events.filter(e=>e.startsWith('close:')).length,0);assert.equal(await fs.readFile(f.file,'utf8'),f.original);assert.equal(await f.locks.hasRecovery(),true);f.poll();await until(async()=>!await f.locks.hasRecovery());assert.equal((await f.record()).phase,'restored-verified');});
+
+test('native Windows refuses offline durability while retaining recovery material and original file',{skip:process.platform!=='win32'},async t=>{
+ const home=await fs.mkdtemp(path.join(await fs.realpath(__dirname),'native-windows-durability-'));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const id=require('node:crypto').randomUUID(),file=path.join(home,'.gemini','jetski-standalone-oauth-token');
+ const original=JSON.stringify({token:{refresh_token:'synthetic-original'}}),target=JSON.stringify({token:{refresh_token:'synthetic-target'}});
+ await fs.mkdir(path.dirname(file));await fs.writeFile(file,original);
+ const record={schema:1,hostId:scope,id,phase:'prepared',backup:{keyring:null,file:original},target:{keyring:null,file:target},expectedEmail:'synthetic@example.test'};
+ const store=new OfflineRecoveryStore(path.join(home,'recovery'),'synthetic-password',scope,id);
+ await assert.rejects(store.save(record,undefined),{code:'OFFLINE_DURABILITY_UNSUPPORTED'});
+ // Save writes its encrypted envelope before discovering unsupported directory
+ // durability. Never delete it or reinterpret the rejection as a committed switch.
+ assert.deepEqual(await store.read(),record);
+ assert.equal(await fs.readFile(file,'utf8'),original);
+ const key=new AutomaticOfflineKey(home,scope,id);
+ await assert.rejects(key.create(),error=>['EPERM','EACCES','EISDIR','EINVAL','EBADF'].includes(error.code));
+ const retained=await key.read();assert.match(retained,/^[a-f0-9]{64}$/);
+ await assert.rejects(key.create(),{code:'OFFLINE_RECOVERY_REQUIRED'});
+ assert.equal(await key.read(),retained);assert.deepEqual(await store.read(),record);
+ assert.equal(await fs.readFile(file,'utf8'),original);
+ assert.equal((await new locksModule.LiveLocks(path.join(home,'.gemini'),owner).inspectRecovery()).state,'absent');
+});

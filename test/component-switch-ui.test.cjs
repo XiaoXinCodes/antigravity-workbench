@@ -114,12 +114,16 @@ async function fixture(t, options = {}) {
     await locks.withOperation(async()=>{
       seededId=require('node:crypto').randomUUID();await locks.beginRecovery(seededId);
       if(options.deferSeedRefresh){
+        // Drain before installing the gate: a coalesced refresh may already
+        // have passed inspectOperation and can never satisfy a new gate.
+        await controller.refresh();
         const inspect=locks.inspectOperation.bind(locks);let sampled;
         const captured=new Promise(resolve=>{sampled=resolve;});
         const released=new Promise(resolve=>{releaseOldSnapshot=resolve;});
-        locks.inspectOperation=async()=>{const value=await inspect();locks.inspectOperation=inspect;sampled();await released;return value;};
+        locks.inspectOperation=async()=>{locks.inspectOperation=inspect;const value=await inspect();sampled();await released;return value;};
         oldRefresh=controller.refresh().then(()=>{events.push('old-refresh:'+controller.getState().recoveryPhase);});
-        await captured;
+        try { await Promise.race([captured,oldRefresh.then(()=>{throw Error('SYNTHETIC_REFRESH_GATE_NOT_REACHED');})]); }
+        catch(error){locks.inspectOperation=inspect;releaseOldSnapshot();throw error;}
       }
       seededGroup=new ComponentCoordination({census:components.census,assertOperation:()=>locks.assertOperationHeld(),participant:host=>components.mailbox.participant(host)});
       const driver=new ComponentSwitch({service,group:seededGroup,host:hosts[0],local,readFileRoute:components.readFileRoute,readCurrent:slots.read,assertOperation:()=>locks.assertOperationHeld(),index:{read:()=>state.get('live-switch.accounts.v1'),write:async rows=>state.set('live-switch.accounts.v1',rows)},finalizer:{prepare:(id,b)=>locks.prepareCompletion(id,b),pending:()=>locks.pendingCompletion(),identity:id=>locks.completionIdentity(id),clear:(id,m)=>locks.clearCompletedRecovery(id,m)}});

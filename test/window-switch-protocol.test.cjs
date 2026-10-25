@@ -131,7 +131,11 @@ test('durable descriptors survive fresh journal instance; stale CAS and descript
   const altered = structuredClone(original); altered.windows[0].profile = 'different-profile';
   await assert.rejects(second.save(altered, original), { code: 'WINDOW_JOURNAL_CHANGED' });
   const next = { ...original, phase: 'closing', closeRequested: ['w1'] }; await second.save(next, original);
-  assert.deepEqual(await first.read(), next); assert.equal((await fs.stat(path.join(dir, 'state', 'state.json'))).mode & 0o077, 0);
+  assert.deepEqual(await first.read(), next);
+  const savedFile = await fs.stat(path.join(dir, 'state', 'state.json'));
+  assert.equal(savedFile.isFile(), true);
+  // Node Windows mode bits are synthesized, not POSIX access permissions.
+  if (process.platform !== 'win32') assert.equal(savedFile.mode & 0o077, 0);
 });
 test('journal rejects raw commands, tokens, URI secrets, old schemas and fabricated reopen receipts', async () => {
   const { validateWindowSwitchRecord } = require('../out/window-switch-journal');
