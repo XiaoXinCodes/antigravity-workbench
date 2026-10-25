@@ -610,6 +610,40 @@ test('failed switch keeps accounts before collapsed diagnostics and scopes login
  assert.doesNotMatch(html,/UNCLASSIFIED_ERROR/);
 });
 
-test('live error presentation preserves pending verification and rollback actions',()=>{const html=renderWorkbench(state({pending:true,recoveryPhase:'installed',status:'failure',error:'failure'}),'nonce');assert.match(html,/data-command="live.verify"/);assert.match(html,/data-command="live.restore"/);assert.match(html,/id="workbench-warning"/);});
+test('live error presentation preserves pending verification and rollback actions',()=>{const html=renderWorkbench(state({pending:true,recoveryPhase:'installed',status:'failure',error:'failure'}),'nonce');assert.match(html,/data-command="live.verify"/);assert.match(html,/data-command="live.restore"/);assert.doesNotMatch(html,/id="workbench-warning"/);assert.match(html,/id="workbench-status"/);});
 
 test('account switch action precedes quota details',()=>{const html=renderWorkbench(state({accounts:[account]}),'nonce');assert.ok(html.indexOf('class="account-actions"')<html.indexOf('class="account-quota"'));});
+test('historical offline settlement cannot replace newer success or an active transaction',()=>{
+ for(const observedAt of ['2020-01-01T00:00:00.000Z','2099-01-01T00:00:00.000Z']){
+  const history={message:'OLD_ORIGINAL_VERIFIED',observedAt};
+  const html=renderWorkbench(state({status:'NEW_SWITCH_VERIFIED',offlineHistory:history}),'nonce');
+  assert.doesNotMatch(html,/id="offline-result"/);assert.match(html,/<details id="offline-history"><summary>/);assert.match(html,/NEW_SWITCH_VERIFIED/);assert.match(html,/OLD_ORIGINAL_VERIFIED/);
+  const active=renderWorkbench(state({pending:true,recoveryPhase:'installed',status:'CURRENT_PENDING_VERIFY',offlineHistory:history,offlineStatus:'ACTIVE_OFFLINE_RECOVERY'}),'nonce');
+  assert.match(active,/id="offline-result"[^>]*>ACTIVE_OFFLINE_RECOVERY/);assert.match(active,/CURRENT_PENDING_VERIFY/);
+  assert.match(active,/data-command="live.restore" class="secondary"/);
+ }
+});
+test('component restoration without current identity never presents verified cleanup status', () => {
+ const html=renderWorkbench(state({pending:true,recoveryPhase:'cleanup',componentRestoration:true,status:'仍有窗口的后台需要恢复。'}),'nonce');
+ const current=html.match(/<p id="current-status"[\s\S]*?<\/p>/)[0];
+ assert.doesNotMatch(current,/登录已核验/);assert.match(current,/后台需要恢复/);
+});
+test('peer restoration takes precedence over a freshly verified current-window login', () => {
+ const html=renderWorkbench(state({pending:true,recoveryPhase:'cleanup',componentRestoration:true,activeEmail:'example@example.test',identityVerifiedDuringRecovery:true,status:'恢复中'}),'nonce');
+ const current=html.match(/<p id="current-status"[\s\S]*?<\/p>/)[0];
+ assert.match(current,/后台需要恢复/);assert.doesNotMatch(current,/class="current-status verified"|登录已核验/);
+});
+test('switch progress stays beside its account button with honest counts, never stale or on another account',()=>{
+ const other={...account,id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',label:'Other'};
+ for(const stage of ['prepare','confirm','stop','write','resume','verify','cleanup']){
+  const html=renderWorkbench(state({accounts:[account,other],busy:true,switchProgress:{accountId:account.id,stage,completed:1,total:2}}),'nonce');
+  const cards=html.match(/<article class="account[\s\S]*?<\/article>/g);
+  assert.match(cards[0],/class="switch-progress" role="status"/);assert.doesNotMatch(cards[1],/class="switch-progress"/);
+  assert.equal(cards[0].includes('本阶段已处理 1 / 2'),['resume','verify'].includes(stage));
+  assert.doesNotMatch(cards[0],/aria-valuenow/);
+ }
+ for(const extra of [{busy:false},{busy:true,switchProgress:{accountId:'unknown',stage:'resume'} }]){
+  assert.doesNotMatch(renderWorkbench(state({accounts:[account],switchProgress:{accountId:account.id,stage:'resume'},...extra}),'nonce'),/class="switch-progress" role=/);
+ }
+ const html=renderWorkbench(state({accounts:[account],busy:true,switchProgress:{accountId:account.id,stage:'resume',completed:4,total:2}}),'nonce');assert.doesNotMatch(html,/本阶段已处理 4 \/ 2/);
+});

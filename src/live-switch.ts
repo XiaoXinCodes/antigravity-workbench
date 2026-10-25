@@ -1,3 +1,4 @@
+import { ComponentRestoreFailure } from './component-coordination';
 /* eslint-disable no-control-regex -- Reject control characters in recovered identity metadata. */
 import { t as tr } from './i18n';
 import { validQuotaDisplayId } from './quota-observation';
@@ -27,7 +28,9 @@ export interface RecoveryFinalizer {
   identity(id: string): Promise<string | null>;
   clear(id: string, identity: string): Promise<void>;
 }
-interface Completion { schema: 1; id: string; hostId?: string; key: string; hash: string; marker: string; deleted: boolean }
+export interface AccountResult { schema: 1; id: string; targetId: string; hostId?: string; verifiedAt: string; committedAt?: string; account: 'verified' | 'committed'; components: 'pending' | 'complete' }
+interface AccountResultRecord { summary: AccountResult; journalRaw: string; expected: TokenSlots; expectedEmail: string }
+interface Completion { accountResult?: true; schema: 1; id: string; hostId?: string; key: string; hash: string; marker: string; deleted: boolean }
 export const JOURNAL_KEY = 'live-switch.recovery.v1';
 export const ACCOUNT_PREFIX = 'live-switch.account.v1.';
 export const QUOTA_REFRESH_PREFIX = 'live-switch.quota-refresh.v1.';
@@ -44,6 +47,7 @@ export type LiveInstallStage = 'preflight' | 'stop' | 'backup' | 'credential-wri
 // Verification errors cross the UI/persistence boundary. Never store an adapter's
 // arbitrary message/code, even if it happens to be wrapped in our Error class.
 const VERIFICATION_ERRORS = new Set([
+  'COMPONENT_RESTORE_FAILED',
   'RECOVERY_VERIFICATION_TIMEOUT', 'RECOVERY_VERIFICATION_STALE',
   'HUB_IDENTITY_NOT_VERIFIED', 'HUB_SIGNED_OUT_NOT_VERIFIED', 'VERIFICATION_STORAGE_MISMATCH',
   'HUB_AUTH_INVALID', 'HUB_EMAIL_MISSING', 'HUB_CHANGED_DURING_QUERY', 'HUB_RPC_FAILED', 'HUB_RPC_TIMEOUT',
@@ -638,8 +642,18 @@ export class LiveSwitchService {
     stage?.('backup');
     await this.saveJournal(journal);
     stage?.('credential-write');
-    try { await assertCredentialWriteSafe(lifecycle); await this.slots.write(targetSlots, backup); }
+    let writeAttempted = false;
+    try { await assertCredentialWriteSafe(lifecycle); writeAttempted = true; await this.slots.write(targetSlots, backup); }
     catch (error) {
+      // A changed recovery configuration can revoke admission after the clean
+      // stop. If this transaction never dispatched a write and the original is
+      // unchanged, recovery needs only restart + fresh verification, not a
+      // credential rollback that would require the now-revoked write permission.
+      if (!writeAttempted) {
+        if (!equalSlots(backup, await this.slots.read(backup))) throw new LiveError('EXTERNAL_CHANGE');
+        journal.phase = 'restored'; await this.saveJournal(journal);
+        throw error;
+      }
       // A killed helper can leave an in-flight operation in the OS keyring service.
       if (error instanceof LiveError && error.code === 'NATIVE_HELPER_TIMEOUT_OR_LIMIT') throw new LiveError('SWITCH_TIMEOUT_RECOVERY_REQUIRED');
       // Do not race a still-running native operation: adapters resolve only on process close.
@@ -761,6 +775,7 @@ export class LiveSwitchService {
       await this.assertVerification(journal, guard);
       const code = error instanceof LiveError && VERIFICATION_ERRORS.has(error.code) ? error.code : 'VERIFICATION_RETRY_REQUIRED';
       journal.verification = { ...attempt, state: 'retry', checkedAt: new Date().toISOString(), code }; await this.saveJournal(journal);
+      if (error instanceof ComponentRestoreFailure) throw error;
       throw new LiveError(code);
     }
   }
@@ -798,6 +813,74 @@ export class LiveSwitchService {
     if (await this.vault.get(key) !== raw) throw new LiveError('SECURE_SAVE_NOT_VERIFIED');
     if (!sameStorageIdentity(current, await this.slots.read(expected))) throw new LiveError('VERIFICATION_STORAGE_MISMATCH');
   }
+  private resultKey(id: string): string {
+    if (typeof id !== 'string' || !id || id.length > 256) throw new LiveError('RECOVERY_RECORD_INVALID');
+    return `${this.recoveryKey}.account-result.${createHash('sha256').update(id).digest('hex')}`;
+  }
+  private get resultPointerKey(): string { return `${this.recoveryKey}.account-result.latest`; }
+  private async resultRecord(id: string): Promise<{ raw: string; value: AccountResultRecord } | null> {
+    const key=this.resultKey(id);await this.recoveryStore.settle(key);const raw=await this.recoveryStore.read(key);if(raw===undefined)return null;
+    try {
+      const value=JSON.parse(raw) as AccountResultRecord, a=value.summary;
+      if(!value || Object.keys(value).some(k=>!['summary','journalRaw','expected','expectedEmail'].includes(k)) || !a || Object.keys(a).some(k=>!['schema','id','targetId','hostId','verifiedAt','committedAt','account','components'].includes(k)) ||
+        a.schema!==1 || a.id!==id || typeof a.targetId!=='string' || !a.targetId || !Number.isFinite(Date.parse(a.verifiedAt)) || !['verified','committed'].includes(a.account) || !['pending','complete'].includes(a.components) ||
+        (a.account==='committed')!==(typeof a.committedAt==='string') || a.committedAt!==undefined&&!Number.isFinite(Date.parse(a.committedAt)) || a.components==='complete'&&a.account!=='committed' || !validEmail(value.expectedEmail))throw 0;
+      this.assertHost(a,'RECOVERY');const j=parseJournal(value.journalRaw);this.assertHost(j,'RECOVERY');
+      if(j.id!==id || j.target.id!==a.targetId || j.phase!=='installed' || j.operation!==undefined || j.verification?.state!=='verified')throw 0;
+      validateSlots(value.expected);validateSlotScope(value.expected);assertSlotIdentity(value.expected,value.expectedEmail);
+      if(j.backup.keyringState!==value.expected.keyringState || j.target.expectedEmail.toLowerCase()!==value.expectedEmail.toLowerCase())throw 0;
+      return {raw,value};
+    } catch {throw new LiveError('RECOVERY_RECORD_INVALID');}
+  }
+  async accountResult(transactionId?: string): Promise<AccountResult | null> {
+    if(transactionId!==undefined)return structuredClone((await this.resultRecord(transactionId))?.value.summary??null);
+    await this.recoveryStore.settle(this.resultPointerKey);const raw=await this.recoveryStore.read(this.resultPointerKey);if(raw===undefined)return null;
+    let id:string;try{const p=JSON.parse(raw);if(Object.keys(p).length!==1||typeof p.id!=='string')throw 0;id=p.id;}catch{throw new LiveError('RECOVERY_RECORD_INVALID');}
+    const result=await this.resultRecord(id);if(!result)throw new LiveError('RECOVERY_RECORD_INVALID');return structuredClone(result.value.summary);
+  }
+  private async recordAccountVerified(journal: Journal, proof: HubProof): Promise<void> {
+    const snapshot=this.snapshots.get(journal);if(!snapshot)throw new LiveError('RECOVERY_CHANGED');
+    const expected=await this.slots.read(journal.backup);validateSlots(expected);assertSlotIdentity(expected,proof.email);
+    const target=targetForScope((await this.account(journal.target.id)).slots,journal.backup);
+    if(!sameStorageIdentity(target,expected))throw new LiveError('VERIFICATION_STORAGE_MISMATCH');
+    await this.assertVerification(journal);
+    const existing=await this.resultRecord(journal.id);
+    if(existing){
+      const old=parseJournal(existing.value.journalRaw);
+      if(existing.value.summary.targetId!==journal.target.id || existing.value.expectedEmail.toLowerCase()!==proof.email.toLowerCase() || !sameStorageIdentity(existing.value.expected,expected) || JSON.stringify(old.backup)!==JSON.stringify(journal.backup))throw new LiveError('RECOVERY_CHANGED');
+      // A fresh retry can update the exact verified journal receipt, never its original backup.
+      if(existing.value.summary.account==='committed')throw new LiveError('RECOVERY_CHANGED');
+      await this.recoveryStore.write(this.resultKey(journal.id),existing.raw,JSON.stringify({...existing.value,journalRaw:snapshot.raw,expected}));
+    }else{
+      const value:AccountResultRecord={summary:{schema:1,id:journal.id,targetId:journal.target.id,...this.hostBinding(),verifiedAt:new Date().toISOString(),account:'verified',components:'pending'},journalRaw:snapshot.raw,expected,expectedEmail:proof.email.toLowerCase()};
+      await this.recoveryStore.write(this.resultKey(journal.id),undefined,JSON.stringify(value));
+    }
+    const before=await this.recoveryStore.read(this.resultPointerKey);await this.recoveryStore.write(this.resultPointerKey,before,JSON.stringify({id:journal.id}));
+  }
+  private async commitAccountResult(id:string, journalHash:string):Promise<void>{
+    const record=await this.resultRecord(id);if(!record || createHash('sha256').update(record.value.journalRaw).digest('hex')!==journalHash)throw new LiveError('RECOVERY_CHANGED');
+    if(record.value.summary.account==='committed')return;
+    await this.recoveryStore.write(this.resultKey(id),record.raw,JSON.stringify({...record.value,summary:{...record.value.summary,account:'committed',committedAt:new Date().toISOString()}}));
+  }
+  async markComponentsComplete(id:string):Promise<void>{
+    const record=await this.resultRecord(id);if(!record||record.value.summary.account!=='committed')throw new LiveError('RECOVERY_CHANGED');
+    const active=await this.journal();if(active&&active.id!==id)throw new LiveError('RECOVERY_PENDING');
+    if(record.value.summary.components==='complete')return;
+    await this.recoveryStore.write(this.resultKey(id),record.raw,JSON.stringify({...record.value,summary:{...record.value.summary,components:'complete'}}));
+  }
+  /** No-write recovery: exact archived storage identity + NEW authenticated RPC.
+   * No absence inference, component restart, rollback or credential mutation. */
+  async verifyCommitted(lifecycle:Lifecycle,id:string):Promise<HubProof>{
+    const record=await this.resultRecord(id);if(!record||record.value.summary.account!=='committed')throw new LiveError('NO_RECOVERY_BACKUP');
+    const check=async():Promise<void>=>{const active=await this.journal();if(active&&active.id!==id)throw new LiveError('RECOVERY_PENDING');if((await this.resultRecord(id))?.raw!==record.raw)throw new LiveError('RECOVERY_CHANGED');};
+    await check();const before=await this.slots.read(record.value.expected);
+    if(!sameStorageIdentity(record.value.expected,before))throw new LiveError('VERIFICATION_STORAGE_MISMATCH');
+    const proof=await lifecycle.proof();
+    if(!proof.authValid||proof.quotaSource!=='server'||!validEmail(proof.email)||proof.email.toLowerCase()!==record.value.expectedEmail||proof.generation!==lifecycle.generation)throw new LiveError('HUB_IDENTITY_NOT_VERIFIED');
+    validateSlots(before);assertSlotIdentity(before,proof.email);await check();const after=await this.slots.read(record.value.expected);
+    if(!sameStorageIdentity(before,after)||!sameStorageIdentity(record.value.expected,after))throw new LiveError('VERIFICATION_STORAGE_MISMATCH');
+    validateSlots(after);assertSlotIdentity(after,proof.email);await check();return proof;
+  }
   private get completionKey(): string { return `${this.recoveryKey}.completion`; }
   private async completion(): Promise<{ raw: string; value: Completion } | null> {
     await this.recoveryStore.settle(this.completionKey);
@@ -811,10 +894,10 @@ export class LiveSwitchService {
       value = JSON.parse(raw) as Completion;
       if (value.schema !== 1 || typeof value.id !== 'string' || !value.id ||
           ![JOURNAL_KEY, this.recoveryKey].includes(value.key) || !/^[a-f0-9]{64}$/.test(value.hash) ||
-          typeof value.marker !== 'string' || !value.marker || typeof value.deleted !== 'boolean') throw 0;
+          value.accountResult !== undefined && value.accountResult !== true || typeof value.marker !== 'string' || !value.marker || typeof value.deleted !== 'boolean') throw 0;
       const marker = JSON.parse(value.marker);
       if (marker?.owner?.schema !== 3 || marker.owner.id !== value.id || JSON.stringify(JSON.parse(marker.raw)) !== JSON.stringify(marker.owner) ||
-          marker.owner.completion !== JSON.stringify({ id: value.id, ...this.hostBinding(), key: value.key, hash: value.hash })) throw 0;
+          marker.owner.completion !== JSON.stringify({ id: value.id, ...this.hostBinding(), key: value.key, hash: value.hash, ...(value.accountResult ? { accountResult: true } : {}) })) throw 0;
     } catch { throw new LiveError('RECOVERY_RECORD_INVALID'); }
     this.assertHost(value, 'RECOVERY');
     return value;
@@ -835,14 +918,14 @@ export class LiveSwitchService {
     if (!receipt) {
       const marker = await finalizer.pending();
       if (!marker) return false;
-      let binding: Pick<Completion, 'id' | 'hostId' | 'key' | 'hash'>;
+      let binding: Pick<Completion, 'id' | 'hostId' | 'key' | 'hash' | 'accountResult'>;
       try {
         const snapshot = JSON.parse(marker);
         binding = JSON.parse(snapshot.owner.completion);
         if (snapshot.owner.schema !== 3 || snapshot.owner.id !== binding.id ||
             JSON.stringify(JSON.parse(snapshot.raw)) !== JSON.stringify(snapshot.owner) ||
             typeof binding.id !== 'string' || !binding.id || ![JOURNAL_KEY, this.recoveryKey].includes(binding.key) ||
-            !/^[a-f0-9]{64}$/.test(binding.hash)) throw 0;
+            !/^[a-f0-9]{64}$/.test(binding.hash) || binding.accountResult !== undefined && binding.accountResult !== true) throw 0;
       }
       catch { throw new LiveError('RECOVERY_RECORD_INVALID'); }
       this.assertHost(binding, 'RECOVERY');
@@ -870,7 +953,10 @@ export class LiveSwitchService {
       raw = JSON.stringify({ ...value, deleted: true });
       await this.recoveryStore.write(this.completionKey, receipt.raw, raw);
     }
+    if(value.accountResult && this.recoveryStore.pending(this.resultKey(value.id)))await this.recoveryStore.retryFencedPending(this.resultKey(value.id));
+    if(value.accountResult){const outcome=await this.resultRecord(value.id);if(!outcome||createHash('sha256').update(outcome.value.journalRaw).digest('hex')!==value.hash)throw new LiveError('RECOVERY_CHANGED');}
     await finalizer.clear(value.id, value.marker);
+    if(value.accountResult)await this.commitAccountResult(value.id,value.hash);
     await this.recoveryStore.remove(this.completionKey, raw);
     return true;
   }
@@ -889,10 +975,12 @@ export class LiveSwitchService {
       const current = await this.journal();
       if (!current || current.id !== journal.id || current.phase !== journal.phase || current.verification?.state !== 'verified') throw new LiveError('RECOVERY_CHANGED');
       await this.assertVerification(journal, guard);
+      const accountResult=current.phase==='installed'&&current.operation===undefined;
+      if(accountResult)await this.recordAccountVerified(current,proof!);
       if (finalizer) {
         const snapshot = this.snapshots.get(current)!;
         const binding = { id: current.id, ...this.hostBinding(), key: snapshot.key,
-          hash: createHash('sha256').update(snapshot.raw).digest('hex') };
+          hash: createHash('sha256').update(snapshot.raw).digest('hex'), ...(accountResult ? {accountResult:true as const}: {}) };
         committing = true;
         const marker = await finalizer.prepare(current.id, JSON.stringify(binding));
         const receipt: Completion = { schema: 1, ...binding, marker, deleted: false };
@@ -901,7 +989,11 @@ export class LiveSwitchService {
         committing = true;
         await this.recoveryStore.write(this.completionKey, undefined, JSON.stringify(receipt));
         await this.resumeCompletion(finalizer);
-      } else await this.finish(guard, current);
+      } else {
+        const hash=createHash('sha256').update(this.snapshots.get(current)!.raw).digest('hex');
+        await this.finish(guard,current);committing=true;
+        if(accountResult)await this.commitAccountResult(current.id,hash);
+      }
       return proof;
     } catch (error) {
       if (committing) throw new LiveError('RECOVERY_CLEANUP_PENDING');
@@ -912,6 +1004,7 @@ export class LiveSwitchService {
         pending.verification = { state: 'retry', attempts: pending.verification?.attempts ?? 1, checkedAt: new Date().toISOString(), code };
         await this.saveJournal(pending);
       }
+      if (error instanceof ComponentRestoreFailure) throw error;
       throw new LiveError(code);
     }
   }

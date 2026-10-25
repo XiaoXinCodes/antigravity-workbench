@@ -58,5 +58,7 @@
   "command.live.offlinePrepare": "Prepare offline switch",
   "command.live.offlineContinue": "Continue offline switch",
   "command.live.offlineComplete": "Complete offline switch",
-  "command.live.offlineKeepCurrent": "Keep current login and end offline transaction"
+  "command.live.offlineKeepCurrent": "Keep current login and end offline transaction",
+  "command.importWindowAcceptance": "Import window capability acceptance",
+  "command.recoverHosts": "Recover installed account: restart extension hosts and verify"
 }

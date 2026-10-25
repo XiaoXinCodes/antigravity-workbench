@@ -1,4 +1,5 @@
 import type { OFFLINE_PREPARE_STAGES } from './last-account-failure';
+import { automaticWindowContext, assertSingleWindow, prepareWindowReopen, saveAutomaticWindow, closeAutomaticWindow, completeWindowReopenIfPresent, assertNoPendingWindowAttempt, hasAutomaticWindowAttempt } from './automatic-window-entry';
 import * as vscode from 'vscode';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -8,7 +9,7 @@ import { classifyOfflineSettlement, isNewOfflineHost } from './offline-settlemen
 import { randomUUID } from 'node:crypto';
 import { t as tr } from './i18n';
 import { displayEmail } from './identity-presentation';
-import { LiveError, assertSlotIdentity, equalSlots } from './live-storage';
+import { LiveError, assertSlotIdentity, equalSlots, validateSlots } from './live-storage';
 import { EnvironmentTokenSlots, resolveOfficialStorageMode } from './live-environment';
 import { LiveLocks, probeProcessIdentity } from './live-lock';
 import { assertNativeHost, resolveCredentialHostId } from './native-host';
@@ -30,16 +31,23 @@ export interface OfflineUiDependencies {
   changed(): void;
 }
 const quote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
-export function registerOfflineUi(context: vscode.ExtensionContext, dependencies: OfflineUiDependencies): { prepareAutomatic(argument?: unknown): Promise<boolean>; getStatus(): string | undefined } {
+export function registerOfflineUi(context: vscode.ExtensionContext, dependencies: OfflineUiDependencies): { prepareAutomatic(argument?: unknown): Promise<boolean>; getStatus(): string | undefined; getHistory(): { message: string; observedAt: string } | undefined } {
   let busy = false;
   const pointerKey = 'automatic-offline.last.v1';
   let visibleCode: string | undefined;
+  let historical = false;
+  let visibleTransaction: string | undefined;
+  let observedAt = new Date().toISOString();
   const statusText = (): string | undefined => {
     if (!visibleCode) return undefined;
-    const keys = { WAITING_FOR_CLOSE: 'offline.visibleWaiting', PREPARED: 'offline.visibleWaiting', REJOINING: 'offline.visibleJoining', VERIFYING: 'offline.visibleVerifying', VERIFIED_TARGET: 'offline.visibleTarget', VERIFIED_ORIGINAL: 'offline.visibleOriginal', KEPT_CURRENT: 'offline.keptCurrent' } as const;
+    const keys = { CLOSING_WINDOW: 'offline.visibleClosingWindow', WAITING_FOR_CLOSE: 'offline.visibleWaiting', PREPARED: 'offline.visibleWaiting', REJOINING: 'offline.visibleJoining', VERIFYING: 'offline.visibleVerifying', VERIFIED_TARGET: 'offline.visibleTarget', VERIFIED_ORIGINAL: 'offline.visibleOriginal', KEPT_CURRENT: 'offline.keptCurrent' } as const;
     return Object.hasOwn(keys, visibleCode) ? tr(keys[visibleCode as keyof typeof keys]) : tr('offline.visibleAttention', { code: visibleCode });
   };
-  const showStatus = (code: string): void => { if (visibleCode !== code) { visibleCode = code; dependencies.changed(); } };
+  const showStatus = (code: string, settled = false, transaction?: string): void => {
+    if (visibleCode !== code || historical !== settled || visibleTransaction !== transaction) {
+      visibleCode = code; historical = settled; visibleTransaction = transaction; observedAt = new Date().toISOString(); dependencies.changed();
+    }
+  };
   const remember = async (host: string, id: string): Promise<void> => { await context.globalState.update(pointerKey, { host, id }); };
   const locks = new LiveLocks(path.join(os.homedir(), '.gemini'), dependencies.owner);
   const binding = async (): Promise<string> => {
@@ -69,10 +77,10 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
     if (marker.owner?.schema !== 4 || marker.owner.owner !== dependencies.owner) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
     return await automaticKey(host, marker.owner.id) ?? await password();
   };
-  const launch = async (host: string, id: string, action: 'install' | 'restore', attempt: string): Promise<void> => {
+  const launch = async (host: string, id: string, action: 'install' | 'restore', attempt: string, closingWindow = false): Promise<void> => {
     await launchAutomaticOfflineHelper(path.join(context.extensionPath, 'out', 'offline-automatic-helper.js'), id, host, context.extension.extensionKind, vscode.env.remoteName ?? 'local', action, attempt);
-    await remember(host, id); showStatus('WAITING_FOR_CLOSE');
-    void vscode.window.showInformationMessage(tr('offline.autoReady'));
+    await remember(host, id); showStatus(closingWindow ? 'CLOSING_WINDOW' : 'WAITING_FOR_CLOSE');
+    if (!closingWindow) void vscode.window.showInformationMessage(tr('offline.autoReady'));
   };
   let joiningAttempt: { id: string; attempt: string | undefined } | undefined;
   const runs = new Map<string, (argument?: unknown) => Promise<void>>();
@@ -96,9 +104,12 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
     if (argument !== undefined && (typeof argument !== 'string' || !accounts.some(a => a.id === argument))) throw new LiveError('OFFLINE_ARGUMENT_INVALID');
     const selected = argument === undefined ? await vscode.window.showQuickPick(accounts, { title: tr('offline.select') }) : accounts.find(a => a.id === argument);
     if (!selected) return false;
+    const automaticWindow = automatic ? await automaticWindowContext() : undefined;
     dependencies.stage?.('confirm');
     const consent = tr('offline.prepare');
-    if (await vscode.window.showWarningMessage(tr(automatic ? 'offline.autoWarning' : 'offline.warning'), { modal: true }, consent) !== consent) return false;
+    if (await vscode.window.showWarningMessage(tr(automatic ? 'offline.autoWindowWarning' : 'offline.warning'), { modal: true }, consent) !== consent) return false;
+    if (automaticWindow) automaticWindow.sessionInterruptionConfirmed = true;
+    if (automaticWindow && !await saveAutomaticWindow(automaticWindow)) return false;
     let secret: string | undefined;
     if (!automatic) {
     secret = await password(); if (secret === undefined) return false;
@@ -125,21 +136,34 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
       const knownHosts = [{ pid: process.pid, startIdentity: self.startIdentity }];
       const census = await inspectOfflineLinuxProcesses({ uid: process.getuid!(), home: os.homedir(), knownHosts, scope: 'file-only' });
       if (!census.complete || census.unknown) throw new LiveError('OFFLINE_CENSUS_UNVERIFIED');
+      if (automaticWindow) await assertSingleWindow(automaticWindow, census, host);
       dependencies.stage?.('scope');
       const after = await dependencies.proof();
       if (!after.authValid || after.quotaSource !== 'server' || after.email !== before.email || after.generation !== before.generation || !await guard() || !equalSlots(await slots.read(), backup)) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
-      const record: OfflineJournal = { schema: 1, hostId: host, id: randomUUID(), phase: 'prepared', backup, target: target.slots, expectedEmail: target.expectedEmail,
-        execution: { owner: dependencies.owner, extensionKind: context.extension.extensionKind, ...(vscode.env.remoteName ? { remoteName: vscode.env.remoteName } : {}), knownHosts, initialHosts: census.hosts, participants: [...census.hosts, ...census.hubs] } };
+      // Saved accounts can predate file-scope tracking or come from native import.
+      // Validate the complete saved identity before projecting its file slot;
+      // never discard an ambiguous keyring identity or downgrade a native backup.
+      validateSlots(target.slots); assertSlotIdentity(target.slots, target.expectedEmail);
+      if (backup.keyringState !== 'unobserved' || target.slots.file === null) throw new LiveError('OFFLINE_SCOPE_UNVERIFIED');
+      const targetSlots = { keyring: null, file: target.slots.file, keyringState: 'unobserved' as const };
+      const record: OfflineJournal = { schema: 1, hostId: host, id: randomUUID(), phase: 'prepared', backup, target: targetSlots, expectedEmail: target.expectedEmail,
+        execution: { owner: dependencies.owner, extensionKind: context.extension.extensionKind, ...(vscode.env.remoteName ? { remoteName: vscode.env.remoteName } : {}), knownHosts: automaticWindow ? census.hosts : knownHosts, initialHosts: census.hosts, participants: [...census.hosts, ...census.hubs], ...(automaticWindow ? { windowAutomation: 'group-window-v1' as const } : {}) } };
       record.originalEmail = before.email;
       validateOfflineJournal(record, host);
-      if (backup.keyringState !== 'unobserved' || target.slots.keyringState !== 'unobserved') throw new LiveError('OFFLINE_SCOPE_UNVERIFIED');
       dependencies.stage?.('prepare');
       if (automatic) { secret = await new AutomaticOfflineKey(os.homedir(), host, record.id).create(); attempt = await new AutomaticOfflineControl(os.homedir(), record.id).reset(); }
       await store(secret!, host, record.id).save(record, undefined);
       await locks.beginOfflineRecovery(record.id); id = record.id;
+      if (automaticWindow) {
+        try { await prepareWindowReopen(automaticWindow, attempt!, record.id); }
+        catch (error) { await new AutomaticOfflineControl(os.homedir(), record.id).cancel({ attempt: attempt! }); throw error; }
+      }
     });
     dependencies.stage?.('helper');
-    if (automatic) await launch(host, id!, 'install', attempt!); else await instructions(host, id!);
+    if (automatic) {
+      try { await launch(host, id!, 'install', attempt!, !!automaticWindow); if (automaticWindow) await closeAutomaticWindow(automaticWindow, attempt!, id!); }
+      catch (error) { await new AutomaticOfflineControl(os.homedir(), id!).cancel({ attempt: attempt! }); throw error; }
+    } else await instructions(host, id!);
     return true;
   };
   register('offlinePrepare', async argument => { await prepare(argument); });
@@ -185,9 +209,12 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
       // occurs here; the exact marker is cleared only after fresh identity proof.
       if (record.phase !== 'kept-current' || record.keptEmail !== proof.email) await journal.save({ ...record, phase: 'kept-current', keptEmail: proof.email }, record);
       await verify();
-      if (await automaticKey(host, id)) { await new AutomaticOfflineControl(os.homedir(), id).status('KEPT_CURRENT'); await remember(host, id); await verify(); }
+      if (await automaticKey(host, id)) {
+        await new AutomaticOfflineControl(os.homedir(), id).status('KEPT_CURRENT'); await remember(host, id); await verify();
+        await completeWindowReopenIfPresent((await new AutomaticOfflineControl(os.homedir(), id).read()).attempt);
+      }
       await locks.clearOfflineRecovery(id);
-      showStatus('KEPT_CURRENT');
+      showStatus('KEPT_CURRENT', true, id);
       return true;
     });
     if (settled) void vscode.window.showInformationMessage(tr('offline.keptCurrent'));
@@ -223,7 +250,8 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
         await new AutomaticOfflineControl(os.homedir(), record.id).status(code); await remember(host, record.id);
         await locks.assertOfflineRecovery(record.id);
         if (!sameStorageIdentity(await slots.read(), expected) || !await guard()) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
-        await locks.clearOfflineRecovery(record.id); showStatus(code);
+        await completeWindowReopenIfPresent((await new AutomaticOfflineControl(os.homedir(), record.id).read()).attempt);
+        await locks.clearOfflineRecovery(record.id); showStatus(code, true, record.id);
       } else await locks.clearOfflineRecovery(record.id);
     });
     void vscode.window.showInformationMessage(statusText() ?? tr('offline.complete'));
@@ -236,14 +264,27 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
   });
   const retry = async (restore: boolean): Promise<void> => {
     const host = await binding();
+    const previous = await locks.inspectRecovery();
+    if (previous.owner?.schema !== 4 || previous.owner.owner !== dependencies.owner) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
+    const previousKey = await automaticKey(host, previous.owner.id);
+    if (!previousKey) throw new LiveError('OFFLINE_AUTOMATIC_KEY_MISSING');
+    const previousAttempt = (await new AutomaticOfflineControl(os.homedir(), previous.owner.id).read()).attempt;
+    let windowRetry = await hasAutomaticWindowAttempt(previousAttempt);
+    if (!windowRetry && previous.owner?.schema === 4) {
+      windowRetry = ['single-window-v1', 'group-window-v1'].includes((await store(previousKey, host, previous.owner.id).read())?.execution?.windowAutomation ?? '');
+    }
+    const automaticWindow = windowRetry ? await automaticWindowContext() : undefined;
     const consent = tr('offline.prepare');
-    if (await vscode.window.showWarningMessage(tr('offline.autoWarning'), { modal: true }, consent) !== consent) return;
+    if (await vscode.window.showWarningMessage(tr(automaticWindow ? 'offline.autoWindowWarning' : 'offline.autoWarning'), { modal: true }, consent) !== consent) return;
+    if (automaticWindow) automaticWindow.sessionInterruptionConfirmed = true;
+    if (automaticWindow && !await saveAutomaticWindow(automaticWindow)) return;
     let id: string | undefined, attempt: string | undefined;
     dependencies.stage?.('lock');
     await locks.withOperation(async () => {
       const marker = await locks.inspectRecovery();
       if (marker.owner?.schema !== 4 || marker.owner.owner !== dependencies.owner) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
       id = marker.owner.id; await locks.assertOfflineRecovery(id);
+      if (previous.owner?.id !== id || (await new AutomaticOfflineControl(os.homedir(), id).read()).attempt !== previousAttempt) throw new LiveError('OFFLINE_ATTEMPT_CHANGED');
       const key = await automaticKey(host, id); if (!key) throw new LiveError('OFFLINE_AUTOMATIC_KEY_MISSING');
       const journal = store(key, host, id), record = await journal.read();
       if (!record?.execution || record.execution.owner !== dependencies.owner) throw new LiveError('OFFLINE_RECOVERY_INVALID');
@@ -254,11 +295,28 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
         const knownHosts = [{ pid: process.pid, startIdentity: self.startIdentity }];
         const census = await inspectOfflineLinuxProcesses({ uid: process.getuid!(), home: os.homedir(), knownHosts, scope: 'file-only' });
         if (!census.complete || census.unknown) throw new LiveError('OFFLINE_CENSUS_UNVERIFIED');
-        await journal.save({ ...record, execution: { ...record.execution, knownHosts, initialHosts: census.hosts, participants: [...census.hosts, ...census.hubs] } }, record);
+        if (automaticWindow) await assertSingleWindow(automaticWindow, census, host);
+        await journal.save({ ...record, execution: { ...record.execution, knownHosts: automaticWindow ? census.hosts : knownHosts, initialHosts: census.hosts, participants: [...census.hosts, ...census.hubs] } }, record);
       }
-      attempt = await new AutomaticOfflineControl(os.homedir(), id).reset();
+      // Settle the window subtransaction only after recovery preconditions.
+      // Failed target authentication does not bar restoring the original backup.
+      await assertNoPendingWindowAttempt((await new AutomaticOfflineControl(os.homedir(), id).read()).attempt);
+      const control = new AutomaticOfflineControl(os.homedir(), id);
+      try {
+        attempt = await control.reset();
+        if (automaticWindow) await prepareWindowReopen(automaticWindow, attempt, id!);
+      } catch (error) {
+        // Still under the shared credential lock: reconcile a lost reset/save
+        // ACK, so no new epoch waits forever for a helper that was never started.
+        const current = await control.read();
+        if (current.attempt && current.attempt !== previousAttempt) await control.cancel({ attempt: current.attempt });
+        throw error;
+      }
     });
-    await launch(host, id!, restore ? 'restore' : 'install', attempt!);
+    try {
+      await launch(host, id!, restore ? 'restore' : 'install', attempt!, !!automaticWindow);
+      if (automaticWindow) await closeAutomaticWindow(automaticWindow, attempt!, id!);
+    } catch (error) { await new AutomaticOfflineControl(os.homedir(), id!).cancel({ attempt: attempt! }); throw error; }
   };
   register('offlineAutomaticRetry', () => retry(false));
   register('offlineAutomaticRestore', () => retry(true));
@@ -272,10 +330,11 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
         const key = await automaticKey(pointer.host, pointer.id); if (!key) return;
         const record = await store(key, pointer.host, pointer.id).read();
         const result = await new AutomaticOfflineControl(os.homedir(), pointer.id).read();
-        if (record?.execution?.owner === dependencies.owner && ['verified', 'restored-verified', 'kept-current'].includes(record.phase) && ['VERIFIED_TARGET', 'VERIFIED_ORIGINAL', 'KEPT_CURRENT'].includes(result.status)) showStatus(result.status);
+        if ((await locks.inspectRecovery()).state === 'absent' && record?.id === pointer.id && record.execution?.owner === dependencies.owner && ({ verified: 'VERIFIED_TARGET', 'restored-verified': 'VERIFIED_ORIGINAL', 'kept-current': 'KEPT_CURRENT' } as Record<string, string>)[record.phase] === result.status) showStatus(result.status, true, record.id);
       }
       return;
     }
+    showStatus('REJOINING');
     const host = await binding(), id = marker.owner.id, key = await automaticKey(host, id); if (!key) return;
     await remember(host, id);
     const control = new AutomaticOfflineControl(os.homedir(), id), state = await control.read();
@@ -305,7 +364,9 @@ export function registerOfflineUi(context: vscode.ExtensionContext, dependencies
     }).finally(() => { busy = false; });
   }, 2000);
   timer.unref(); context.subscriptions.push({ dispose: () => clearInterval(timer) });
-  return { getStatus: statusText, prepareAutomatic: async argument => {
+  return { getStatus: () => historical ? undefined : statusText(),
+    getHistory: () => historical && statusText() ? { message: statusText()!, observedAt } : undefined,
+    prepareAutomatic: async argument => {
     if (busy) throw new LiveError('OFFLINE_OPERATION_BUSY');
     busy = true;
     try { return await prepare(argument, true); } finally { busy = false; dependencies.changed(); }

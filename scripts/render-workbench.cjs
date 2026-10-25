@@ -55,8 +55,10 @@ states['cards-loading'] = { ...states.cards, busy: true, status: '正在查询�
 states['quota-units'] = { ...base, accounts: [{ ...account, quota: { phase: 'ready', snapshot: { source: 'server', email: account.expectedEmail, observedAt: '2026-10-01T03:00:00.000Z', buckets: [{label:'已用完',remaining:0,resetAt:null},{label:'积分',remaining:null,remainingAmount:'200',resetAt:null},{label:'未提供额度',remaining:null,resetAt:null},{label:'暂停使用',remaining:1,disabled:true,resetAt:null}] } } }] };
 states['locations-wsl'] = { ...base, locations: { host: 'WSL · Linux', extensionPath: '/home/synthetic/.vscode-server/extensions/xiaoxincodes.antigravity-account-manager-0.15.3', credentialPath: '/home/synthetic/.gemini/jetski-standalone-oauth-token', imageOutputPath: '/home/synthetic/project/generated-images', canOpenExtension: false } };
 states['locations-local'] = { ...native, locations: { host: '本机 Windows', extensionPath: 'C:\\\\Users\\\\synthetic\\\\.vscode\\\\extensions\\\\xiaoxincodes.antigravity-account-manager-0.15.3', credentialPath: 'C:\\\\Users\\\\synthetic\\\\.gemini\\\\jetski-standalone-oauth-token', canOpenExtension: true } };
+for(const lang of ['zh','en']) states['switch-progress-'+lang] = {...base,busy:true,status:lang==='en'?'Switch in progress':'正在切换',accounts:[account,longAccount,{...account,id:'c',label:'备用 C'},{...account,id:'d',label:'备用 D'}],switchProgress:{accountId:account.id,stage:'resume',completed:1,total:2}};
 const outputs = {};
 for (const [name, state] of Object.entries(states)) {
+  require('../out/i18n').setLanguage(name.endsWith('-en')?'en':'zh-CN');
   const output = path.join(directory, `workbench-${name}.html`);
   let html = renderWorkbench(state, 'visual-review').replace('const api=acquireVsCodeApi();', 'window.__fixture={messages:[]};const api={getState:()=>JSON.parse(sessionStorage.getItem("fixtureState")||"null"),setState:state=>sessionStorage.setItem("fixtureState",JSON.stringify(state)),postMessage:message=>window.__fixture.messages.push(message)};').replace('<main>', '<main><p class="subtitle">合成数据 · UI 验证，非真实账户或余额</p>');
   if (name.startsWith('locations-')) html = html.replace('const expanded=previous.expanded||{};', 'const expanded={...(previous.expanded||{}),"host-details":true};');
@@ -77,6 +79,7 @@ for (const [name, guard] of [['image-guard-name', {version:1,reason:'IMAGE_NAME'
 // CSS-pixel sizes cover sidebar widths, a wide pane, short windows, and the
 // reflow equivalent of a 320px sidebar viewed at 200% browser zoom.
 const reviews = [
+  ...['zh','en'].flatMap(lang=>[240,320,800].map(width=>({state:'switch-progress-'+lang,width,height:1000,name:`workbench-switch-progress-${lang}-${width}`}))),
   { state: 'locations-wsl', width: 320, height: 1800, name: 'workbench-locations-wsl-320' },
   { state: 'locations-local', width: 410, height: 1700, name: 'workbench-locations-local-410' },
   { state: 'locations-wsl', width: 160, height: 1800, name: 'workbench-locations-wsl-160' },
@@ -325,4 +328,4 @@ async function inspectLayouts(cases, screenshots) {
   }
 }
 const all = process.argv.includes('--all-screenshots'), screenshot = process.argv.includes('--screenshot');
-if (all || screenshot || process.argv.includes('--measure')) inspectLayouts(screenshot && !all ? reviews.slice(0, 1) : reviews, all || screenshot).catch(error => { console.error(error.message); process.exitCode = 1; });
+if (all || screenshot || process.argv.includes('--measure')) inspectLayouts(process.argv.includes('--progress-only') ? reviews.filter(r=>r.state.startsWith('switch-progress-')) : screenshot && !all ? reviews.slice(0, 1) : reviews, all || screenshot).catch(error => { console.error(error.message); process.exitCode = 1; });

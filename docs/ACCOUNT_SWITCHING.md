@@ -1,43 +1,19 @@
-# 切换与恢复
+# 切换与恢复 / Switching and recovery
 
-在账号卡片点击“切换”，由 Workbench 核验适配范围并显示所需中断。官方 1.8.0 的已适配 WSL 组件协作路径可在保留窗口时切换。官方 1.9.0 的本候选采用下述关窗路径：**每次切号需要关闭相关窗口，不只是安装后的重启**。两条路径均以重新取得的服务端身份为成功依据。
+在目标账号卡片点击“切换”，确认任务中断范围后，由 Workbench 核验同一登录范围内的相关后台、等待退出、写入一次、恢复后台并重新核验身份。普通切换不要求恢复密码、外部终端或关闭整个 VS Code。操作期间不要在其他窗口并行切号、重新登录或手动重连后台。
 
-## 官方 1.9.0：WSL 关窗后切换
+进度直接显示在目标账号按钮附近。窗口数量只表示当前恢复或核验阶段已处理的数量，不等于整次切换成功；最终结果以新取得的服务端身份和事务提交为准。
 
-仅适用于源码指纹匹配的官方 1.9.0、已核验的 WSL 文件登录存储与当前登录。原生 Windows/macOS 登录存储不使用此适配。
+账号已提交但后台收尾未完成时，工作台分别显示两种状态，不自动写回旧账号。按提示重试恢复；只有明确安装或提交证据才提供宿主重启恢复。该退路需要用户确认，可能中断同窗口其他扩展、调试或任务；不修改 VS Code 的登录、profile 或同步配置。
 
-1. 选择账号，确认保存文件与任务中断提示。Workbench 自动准备备份和后台执行器，不要求密码或复制终端命令。
-2. 收到“已准备好，可以关窗”后，保存并关闭使用同一 WSL 登录的所有 VS Code 窗口，包括没有 Hub 的窗口。执行器最多等候五分钟，核验相关宿主与 Hub 实际退出后才写入。
-3. 关闭后正常重开，无需猜等待秒数。Workbench 与执行器按本次尝试编号协调，等待实际写者结束，自动核验已写入的目标，或在原凭据未变时自动保留原登录并结束未完成事务。工作台持续显示实际结果；官方启动抢跑仍可能让切换未完成，但不会把原登录保留误报成切换成功。普通 Reload Window 不保证完成目标切换。
+未知新凭据不会被自动覆盖，唯一备份不会因超时删除。历史离线事务继续提供其原有读取、取消和恢复入口；它们不是新切换的默认流程，不要手动删锁或恢复材料。
 
-出现待完成状态时，打开“管理待完成切换”，可取消后台等待、重新准备关窗切换、恢复原登录备份，或在核验后明确保留当前登录。未知新凭据不会被自动覆盖；取消、超时、启动失败均不会删除唯一备份。恢复密钥自动保存在仅系统当前用户可访问的本地文件，与备份一起保留；这不是抵御同一系统用户读取的独立加密保险库。旧的密码保护事务继续使用原恢复入口。
+兼容性以实际接口、配置、宿主与进程归属为准，不按官方版本号一律准入或拒绝。官方自身启动失败、无法确认存储范围或外部并发登录仍可能中断操作。当前有效自动恢复配置开启时，不应假定停止会取消所有在途恢复；按具体提示处理，Workbench 不会静默更改官方配置。
 
-请完成相关窗口关闭后再重开，不要同时另起切号或修改官方登录存储。新实例会触发写入前复查；重开会请求取消未完成等待并核对已落盘结果。未知新凭据继续保留，需明确确认如何处理。关闭所有窗口期间没有外部通知，完成结果在重开后持续可见。真实 Windows 客户端＋WSL 关闭行为和官方 RPC 仍需隔离之外的用户验收。
+## English
 
-## 切换前
+Select an account and confirm the interruption scope. Workbench checks related backends, waits for their exit, writes once, restores backends and freshly verifies identity. The normal route requires no recovery password, external terminal or closing all VS Code windows. Do not switch, sign in or manually reconnect concurrently from other windows.
 
-- 账号必须保存于当前宿主；导入时自动核验候选身份和额度，切换仍会核验官方登录。
-- 确认框列出本窗口后台、经核验同一登录范围的相关后台与本插件图片任务。相关后台可能来自其他窗口或归属未知；确认可能中断所列范围中的任务，取消则保留当前状态。
-- 其他账号变更正在进行时，等待其结束或取消。本插件图片任务可在明确确认后取消，等待释放再继续；插件不会并行写入同一登录状态。
+Progress appears beside the selected account. Window counts refer only to the current step. Account commit and incomplete backend cleanup are reported separately. Explicit host restart recovery requires installed/committed evidence and user confirmation; other extensions, debug sessions or tasks in that window may be interrupted. VS Code login, profile and sync configuration are not changed.
 
-正常流程处理明确确认的范围。窗口归属未知时仍如实显示，不假定后台空闲；无法核验进程身份或登录范围、确认后范围变化时会阻止操作并显示异常详情，不按进程名批量结束。官方停止钩子超过等待期限时显示错误，实际钩子尚未结束时禁止重复停止或重启。
-
-切换期间保留原登录备份。成功后账号卡片显示“当前 / 使用中”；仍在核验、失败或超时不会被当成完成。
-
-## 工作台提示如何处理
-
-| 状态 | 下一步 |
-| --- | --- |
-| 正在切换或自动核验 | 等待本次操作完成，不重复点击 |
-| 可“重新检查登录” | 确认官方组件可用后点击，继续核验当前未完成操作 |
-| 提供恢复入口 | 按提示恢复切换前登录，再等待原身份核验 |
-| 另一个窗口或进程正在操作 | 先结束冲突操作；身份不明时不会强行抢占 |
-| 当前凭据或后台发生变化 | 停止追加变更，保留状态并收集错误码 |
-
-恢复只处理与当前未完成操作匹配的状态。无法确认存储、后台或身份时会停止，保留必要备份；不要手动删除锁文件或反复覆盖登录文件。
-
-## 数据范围
-
-切换针对官方登录状态，不用于删除官方会话、图片或项目历史。Workbench 的已保存账号副本仍留在列表中，除非用户明确“移除”。跨宿主使用账号应走加密迁移流程。
-
-[账号管理](INDEPENDENT_ACCOUNTS.md) · [加密迁移](ACCOUNT_MIGRATION.md) · [故障排查](TROUBLESHOOTING.md) · [验证范围](VALIDATION_0.1.9.md)
+Unknown external credentials are not overwritten. Timeouts do not delete the only backup. Older offline transactions retain their original cancellation/recovery routes but are not the default for new switches. Compatibility depends on actual capabilities, configuration and ownership, not a version-number allowlist. Official startup or storage-scope verification can still fail; no unconditional success is promised.

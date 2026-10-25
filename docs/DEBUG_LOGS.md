@@ -25,3 +25,9 @@
 
 
 从命令面板打开“Antigravity Workbench: 高级排障…”，选择“诊断图片目录（不生图）”即可运行，无需先开启调试模式或打开工作台。命令主动显示工作台，在专门按需显示的图片目录诊断区域内显示查询中、目录对照或失败结果。查询最多等待 60 秒；未完成的取消不会允许重复请求。关闭工作台不会触发重试，重新打开可查看本窗口保留的结果。若工作台无法显示，查询不会开始，只显示一次安全的错误提示。该命令不生成图片，不自动打开日志文件，不开启日志记录。
+
+## 切换耗时 / Switch timing
+
+阶段和匿名参与者等待耗时仅在主动开启调试时记录；默认不开启，不影响账号卡片的实时进度。记录使用单调时钟，等待类型区分后台就绪回执与身份核验回执，不含账号、PID、路径、凭据。并发等待不能相加当作总耗时。关闭调试不会删除旧恢复证据。
+
+Stage and anonymous participant wait timings are collected only with explicit debug recording enabled. Normal inline progress remains available with debug off. Samples contain no account, PID, path or credential; concurrent waits must not be summed as elapsed wall time.

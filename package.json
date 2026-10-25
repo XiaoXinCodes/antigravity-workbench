@@ -2,7 +2,7 @@
   "name": "antigravity-account-manager",
   "displayName": "Antigravity Workbench",
   "description": "Manage multiple Google Antigravity accounts, track Gemini quota, migrate accounts securely, and create images in VS Code.",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "publisher": "xiaoxincodes",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -68,6 +68,12 @@
       ]
     },
     "commands": [
+      {
+        "command": "antigravityAccounts.importWindowAcceptance",
+        "title": "%command.importWindowAcceptance%",
+        "category": "Antigravity Workbench",
+        "enablement": "isWorkspaceTrusted"
+      },
       {
         "command": "antigravityAccounts.debug.catalog",
         "title": "%command.debug.catalog%",
@@ -371,6 +377,11 @@
         "command": "antigravityAccounts.live.offlineKeepCurrent",
         "title": "%command.live.offlineKeepCurrent%",
         "category": "Antigravity Workbench"
+      },
+      {
+        "command": "antigravityAccounts.live.recoverHosts",
+        "title": "%command.recoverHosts%",
+        "category": "Antigravity Workbench"
       }
     ],
     "menus": {
@@ -541,12 +552,12 @@
     "compile": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",
     "lint": "eslint src test scripts",
-    "test": "npm run compile && node --require ./test/helpers/offline-only.cjs --test test/offline-automatic.test.cjs test/offline-automatic-closed-loop.test.cjs test/official-1.9-pause-boundary.test.cjs test/component-switch-ui.test.cjs test/component-switch.test.cjs test/component-coordination.test.cjs test/component-own-lifecycle.test.cjs test/component-mailbox.test.cjs test/official-write-admission.test.cjs test/cooperative-pause-contract.test.cjs test/offline-cli.test.cjs test/offline-ui.test.cjs test/offline-session.test.cjs test/offline-switch.test.cjs test/offline-recovery-envelope.test.cjs test/offline-recovery-store.test.cjs test/offline-process-census.test.cjs test/offline-native-slots.test.cjs test/offline-closed-loop.test.cjs test/core.test.cjs test/files-bridge.test.cjs test/quota-query.test.cjs test/quota-ui.test.cjs test/switch-transaction.test.cjs test/live-switch.test.cjs test/file-route-failure.test.cjs test/live-environment.test.cjs test/native-host.test.cjs test/account-identity-interaction.test.cjs test/account-removal-backend.test.cjs test/backend-operation-ui.test.cjs test/live-ui.test.cjs test/live-hub-quota.test.cjs test/direct-login.test.cjs test/image-files.test.cjs test/image-service.test.cjs test/image-ui.test.cjs test/direct-image.test.cjs test/direct-image-protocol.test.cjs test/direct-image-response.test.cjs test/image-error-evidence.test.cjs test/image-error-message.test.cjs test/direct-image-acceptance.test.cjs test/recent-image-failure.test.cjs test/workbench-view.test.cjs test/workbench-locations.test.cjs test/account-migration.test.cjs test/account-export.test.cjs test/account-import.test.cjs test/account-import-verified.test.cjs test/migration-ui.test.cjs test/live-lock.test.cjs test/account-quota.test.cjs test/account-quota-transport.test.cjs test/acceptance-report.test.cjs test/account-refresh-store.test.cjs test/account-quota-refresh.test.cjs test/account-quota-client.test.cjs test/debug-events.test.cjs test/debug-log-store.test.cjs test/debug-ui.test.cjs test/official-restart.test.cjs test/missing-hub-recovery.test.cjs test/bounded-official-stop.test.cjs test/official-process.test.cjs test/official-process-recovery.test.cjs test/official-process-helper.test.cjs test/image-operation-record.test.cjs test/direct-image-state.test.cjs test/direct-image-operation.test.cjs test/recovery-verification.test.cjs test/recovery-store.test.cjs test/saved-image-account.test.cjs test/image-catalog-diagnostic.test.cjs test/saved-image-models.test.cjs test/image-account-selection.test.cjs test/saved-image-integration.test.cjs test/image-session-store.test.cjs test/image-session-ui.test.cjs test/image-iteration.test.cjs test/image-iteration-ui.test.cjs test/image-project-actions.test.cjs test/image-session-compatibility.test.cjs test/image-quota.test.cjs test/i18n.test.cjs test/quota-presentation.test.cjs test/quota-display.test.cjs test/quota-batch.test.cjs test/quota-preferences.test.cjs test/automation-core.test.cjs test/wake-model-catalog.test.cjs test/wake-accounts-integration.test.cjs test/quota-history-core.test.cjs test/advanced-wake.test.cjs test/passive-identity.test.cjs test/model-catalog.test.cjs test/shared-account-catalog.test.cjs test/model-directory-ready.test.cjs test/current-image-catalog.test.cjs test/request-observation.test.cjs test/local-generation-schema.test.cjs test/local-generation-db-metadata.test.cjs test/local-generation-stats.test.cjs test/local-generation-export.test.cjs test/local-generation-stats-ui.test.cjs test/workbench-navigation.test.cjs test/workbench-support-ui.test.cjs test/workbench-host.test.cjs",
+    "test": "npm run compile && node --require ./test/helpers/offline-only.cjs --test test/component-route-repair.test.cjs test/component-parallel-verification.test.cjs test/account-commit-result.test.cjs test/component-host-recovery.test.cjs test/component-host-recovery-integration.test.cjs test/component-host-recovery-ui.test.cjs test/component-readonly-lifecycle.test.cjs test/offline-automatic.test.cjs test/offline-automatic-closed-loop.test.cjs test/official-1.9-pause-boundary.test.cjs test/component-switch-ui.test.cjs test/component-scope.test.cjs test/component-switch.test.cjs test/component-coordination.test.cjs test/component-own-lifecycle.test.cjs test/component-mailbox.test.cjs test/official-write-admission.test.cjs test/official-recovery-policy.test.cjs test/official-lifecycle-practical.test.cjs test/official-1.9-default-recovery.test.cjs test/cooperative-pause-contract.test.cjs test/offline-cli.test.cjs test/offline-ui.test.cjs test/offline-session.test.cjs test/offline-switch.test.cjs test/offline-recovery-envelope.test.cjs test/offline-recovery-store.test.cjs test/offline-process-census.test.cjs test/offline-native-slots.test.cjs test/offline-closed-loop.test.cjs test/core.test.cjs test/files-bridge.test.cjs test/quota-query.test.cjs test/quota-ui.test.cjs test/switch-transaction.test.cjs test/live-switch.test.cjs test/file-route-failure.test.cjs test/live-environment.test.cjs test/native-host.test.cjs test/account-identity-interaction.test.cjs test/account-removal-backend.test.cjs test/backend-operation-ui.test.cjs test/live-ui.test.cjs test/live-hub-quota.test.cjs test/direct-login.test.cjs test/image-files.test.cjs test/image-service.test.cjs test/image-ui.test.cjs test/direct-image.test.cjs test/direct-image-protocol.test.cjs test/direct-image-response.test.cjs test/image-error-evidence.test.cjs test/image-error-message.test.cjs test/direct-image-acceptance.test.cjs test/recent-image-failure.test.cjs test/workbench-view.test.cjs test/workbench-locations.test.cjs test/account-migration.test.cjs test/account-export.test.cjs test/account-import.test.cjs test/account-import-verified.test.cjs test/migration-ui.test.cjs test/live-lock.test.cjs test/account-quota.test.cjs test/account-quota-transport.test.cjs test/acceptance-report.test.cjs test/account-refresh-store.test.cjs test/account-quota-refresh.test.cjs test/account-quota-client.test.cjs test/debug-events.test.cjs test/debug-log-store.test.cjs test/debug-ui.test.cjs test/official-restart.test.cjs test/official-view-restart-semantics.test.cjs test/missing-hub-recovery.test.cjs test/bounded-official-stop.test.cjs test/official-process.test.cjs test/official-process-recovery.test.cjs test/official-process-helper.test.cjs test/image-operation-record.test.cjs test/direct-image-state.test.cjs test/direct-image-operation.test.cjs test/recovery-verification.test.cjs test/recovery-store.test.cjs test/saved-image-account.test.cjs test/image-catalog-diagnostic.test.cjs test/saved-image-models.test.cjs test/image-account-selection.test.cjs test/saved-image-integration.test.cjs test/image-session-store.test.cjs test/image-session-ui.test.cjs test/image-iteration.test.cjs test/image-iteration-ui.test.cjs test/image-project-actions.test.cjs test/image-session-compatibility.test.cjs test/image-quota.test.cjs test/i18n.test.cjs test/quota-presentation.test.cjs test/quota-display.test.cjs test/quota-batch.test.cjs test/quota-preferences.test.cjs test/automation-core.test.cjs test/wake-model-catalog.test.cjs test/wake-accounts-integration.test.cjs test/quota-history-core.test.cjs test/advanced-wake.test.cjs test/passive-identity.test.cjs test/model-catalog.test.cjs test/shared-account-catalog.test.cjs test/model-directory-ready.test.cjs test/current-image-catalog.test.cjs test/request-observation.test.cjs test/local-generation-schema.test.cjs test/local-generation-db-metadata.test.cjs test/local-generation-stats.test.cjs test/local-generation-export.test.cjs test/local-generation-stats-ui.test.cjs test/workbench-navigation.test.cjs test/workbench-support-ui.test.cjs test/workbench-host.test.cjs",
     "test:metadata": "node --require ./test/helpers/offline-only.cjs --test test/local-generation-db-metadata.test.cjs",
     "check:models": "node scripts/check-model-hardcoding.cjs",
-    "check": "npm run check:models && npm run typecheck && npm run lint && npm test",
+    "check": "npm run check:models && npm run typecheck && npm run lint && npm test && npm run test:windows-automation",
     "vscode:prepublish": "npm run clean && npm run compile",
-    "package": "node -e \"require('node:fs').mkdirSync('artifacts',{recursive:true})\" && vsce package --no-dependencies --no-rewrite-relative-links --out artifacts/antigravity-workbench-0.1.17.vsix && python scripts/prepare-vsix.py artifacts/antigravity-workbench-0.1.17.vsix",
+    "package": "node -e \"require('node:fs').mkdirSync('artifacts',{recursive:true})\" && vsce package --no-dependencies --no-rewrite-relative-links --out artifacts/antigravity-workbench-0.1.18.vsix && python scripts/prepare-vsix.py artifacts/antigravity-workbench-0.1.18.vsix",
     "test:host": "npm run compile && node scripts/test-host.cjs",
     "acceptance:offline": "npm run compile && node --require ./test/helpers/offline-only.cjs test/direct-image-acceptance.test.cjs && node --require ./test/helpers/offline-only.cjs test/direct-image.test.cjs",
     "test:quota-host": "npm run compile && node scripts/test-quota-host.cjs",
@@ -555,7 +566,8 @@
     "test:advanced-host": "npm run compile && node scripts/test-advanced-host.cjs",
     "test:language-host": "npm run compile && node scripts/test-language-host.cjs",
     "test:observations-host": "npm run compile && node scripts/test-observation-host.cjs",
-    "test:design-host": "npm run compile && node scripts/test-design-host.cjs"
+    "test:design-host": "npm run compile && node scripts/test-design-host.cjs",
+    "test:windows-automation": "node --require ./test/helpers/offline-only.cjs --test test/window-switch-protocol.test.cjs test/vscode-window-participant.test.cjs test/wsl-window-launcher.test.cjs test/wsl-window-layout.test.cjs test/wsl-workspace.test.cjs test/automatic-window-binding.test.cjs test/window-runtime-channel.test.cjs test/window-group-reopen.test.cjs test/window-runtime-driver.test.cjs test/window-helper-integration.test.cjs test/window-runtime-recovery.test.cjs test/window-runtime-actor.test.cjs test/window-platform-acceptance.test.cjs test/window-product-orchestration.test.cjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

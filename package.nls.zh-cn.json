@@ -58,5 +58,7 @@
   "command.live.offlinePrepare": "准备关闭后切号",
   "command.live.offlineContinue": "继续关闭后切号",
   "command.live.offlineComplete": "完成关闭后切号",
-  "command.live.offlineKeepCurrent": "保留当前登录并结束离线事务"
+  "command.live.offlineKeepCurrent": "保留当前登录并结束离线事务",
+  "command.importWindowAcceptance": "导入窗口能力验收",
+  "command.recoverHosts": "恢复已写入账号：重启扩展宿主并核验"
 }

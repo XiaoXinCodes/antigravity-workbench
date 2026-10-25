@@ -141,7 +141,7 @@ function target(value: unknown, platform: NodeJS.Platform): Target {
   const projects = Array.isArray(row.projects) && row.projects.length <= 16 && row.projects.every(name => typeof name === 'string' && name.length > 0 && name.length <= 128 && !/[/\\\p{Cc}\p{Cf}]/u.test(name) && name !== '.' && name !== '..') ? row.projects as string[] : [];
   return { projects, pid: row.pid, parentPid: row.parentPid,
     ...(typeof row.startTicks === 'string' ? { startTicks: row.startTicks } : {}), ...(typeof row.bootId === 'string' ? { bootId: row.bootId } : {}), ...(typeof row.commandHash === 'string' ? { commandHash: row.commandHash } : {}), ...(platform === 'win32' ? { platform: 'win32' } : {}),
-    kind: row.kind as Target['kind'], scope, ...(scopeReason ? { scopeReason } : {}), credentialScopeVerified, ...(credentialScopeReason ? { credentialScopeReason } : {}), parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub' && credentialScopeVerified, ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
+    kind: row.kind as Target['kind'], scope, ...(scopeReason ? { scopeReason } : {}), credentialScopeVerified, ...(credentialScopeReason ? { credentialScopeReason } : {}), parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub' && credentialScopeVerified && scope !== 'unknown', ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
 }
 /** Selection IDs and complete process proof live only in the host. No UI message
  * can choose a PID, command, path or signal. Every scan invalidates old IDs. */
@@ -196,7 +196,7 @@ export class OfficialProcessRecovery {
         if (!Array.isArray(value.processes) || value.processes.length > 1024) throw new LiveError('PROCESS_CHECK_FAILED');
         rows = value.processes.map(row => target(row, this.platform));
         if (value.supported !== true) limitation = this.platform === 'win32' ? 'windows-helper' : 'helper';
-        else if (rows.some(row => row.kind === 'unverified' || !row.credentialScopeVerified)) limitation = 'ownership';
+        else if (rows.some(row => row.kind === 'unverified' || row.scope === 'unknown' || !row.credentialScopeVerified)) limitation = 'ownership';
         else if (rows.some(row => row.kind === 'unowned-hub' && !row.canEnd)) limitation = 'end-permission';
         if (value.supported !== true) rows = rows.map(row => ({ ...row, canEnd: false }));
       } catch (error) {
@@ -225,7 +225,7 @@ export class OfficialProcessRecovery {
     const processes: ProcessConflict[] = rows.length ? rows.map(row => {
       const id = randomUUID(); if (row.canEnd) { const { projects: _projects, ...proof } = row; void _projects; this.targets.set(id, proof); }
       return { id, projects: row.projects ?? [], pid: row.pid, parentPid: row.parentPid, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
-        owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' ? 'unknown' : row.scope === 'detached' ? 'detached' : 'other',
+        owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' || row.scope === 'unknown' ? 'unknown' : row.scope === 'detached' ? 'detached' : 'other',
         scope: row.scope, ...(row.scopeReason ? { scopeReason: row.scopeReason } : {}), credentialScopeVerified: row.credentialScopeVerified, ...(row.credentialScopeReason ? { credentialScopeReason: row.credentialScopeReason } : {}), parentState: row.parentState, taskState: 'unknown', canEnd: row.canEnd, ...(this.platform === 'win32' && row.canEnd ? { endMode: 'force' as const } : {}) };
     }) : fallback;
     this.recoveryPeers = JSON.stringify(rows.filter(row => row.scope === 'other-window').map(row => ({

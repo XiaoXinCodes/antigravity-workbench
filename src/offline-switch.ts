@@ -9,7 +9,7 @@ export interface OfflineJournal {
   backup: TokenSlots; target: TokenSlots; expectedEmail: string;
   originalEmail?: string;
   keptEmail?: string;
-  execution?: { owner: string; extensionKind: 1 | 2; remoteName?: string; knownHosts: OfflineProcess[]; initialHosts?: OfflineProcess[]; participants: OfflineProcess[] };
+  execution?: { owner: string; extensionKind: 1 | 2; remoteName?: string; knownHosts: OfflineProcess[]; initialHosts?: OfflineProcess[]; participants: OfflineProcess[]; windowAutomation?: 'single-window-v1' | 'group-window-v1' };
 }
 export interface OfflineRuntime {
   hostId: string;
@@ -54,6 +54,7 @@ export function validateOfflineJournal(record: OfflineJournal, hostId: string): 
     if (record.originalEmail) assertSlotIdentity(record.backup, record.originalEmail);
     if (record.execution) {
       const e = record.execution;
+      if (e.windowAutomation !== undefined && !['single-window-v1', 'group-window-v1'].includes(e.windowAutomation)) throw 0;
       if (!/^[a-f0-9]{64}$/.test(e.owner) || ![1, 2].includes(e.extensionKind) || e.remoteName !== undefined && e.remoteName !== 'wsl' ||
           !Array.isArray(e.knownHosts) || !e.knownHosts.length || !Array.isArray(e.participants) || e.initialHosts !== undefined && (!Array.isArray(e.initialHosts) || !e.initialHosts.length) ||
           [...e.knownHosts, ...(e.initialHosts ?? []), ...e.participants].some(p => !Number.isSafeInteger(p.pid) || p.pid < 1 || typeof p.startIdentity !== 'string' || !/^linux:[a-f0-9-]{36}:[0-9]+$/.test(p.startIdentity))) throw 0;

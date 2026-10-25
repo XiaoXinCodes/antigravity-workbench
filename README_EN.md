@@ -18,6 +18,8 @@ Spend less time moving between views: compare model quotas across accounts, choo
 
 Add accounts through browser sign-in or save your current login. Switch, refresh and manage accounts on their cards. Compare the same model's remaining quota and reset time, search and sort accounts, or favorite frequently used models. Move saved accounts between devices with encrypted import and export.
 
+Switching shows the current step beside the selected account. Account commit and backend recovery are reported separately. The normal route requires no recovery password, external terminal or closing all windows. Optional host restart recovery requires confirmation and can affect other extensions in that window.
+
 [Accounts and switching](docs/GETTING_STARTED.en.md#accounts) · [Encrypted migration](docs/ACCOUNT_MIGRATION.md) · [Quota workflows](docs/QUOTA_WORKFLOWS.md)
 
 ### Image Studio: from a prompt to a project asset

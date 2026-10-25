@@ -21,18 +21,18 @@ function fixture(t, options = {}) {
   const { LiveError } = load('live-storage');
   const { LiveSwitchService, ACCOUNT_PREFIX } = load('live-switch');
   const events = [], warnings = [], notifications = [], commands = new Map(), state = new Map(), data = new Map();
-  const ui = { consent: true, inputs: ['synthetic-password-long', 'synthetic-password-long'], open: undefined, folder: [fileUri('/synthetic-export')], filename: 'accounts.agwenc' };
+  const ui = { config: {}, consent: true, inputs: ['synthetic-password-long', 'synthetic-password-long'], open: undefined, folder: [fileUri('/synthetic-export')], filename: 'accounts.agwenc' };
   let rows = options.rows || [], running = true, serial = 0, currentEmail = 'a@example.test', currentSlots;
   let generation = 'synthetic-generation-0';
   const token = email => JSON.stringify({ token: { refresh_token: `synthetic-refresh-${email}`, access_token: `synthetic-access-${email}`, expiry: '2099-01-01T00:00:00Z', token_type: 'Bearer' }, id_token: `e30.${Buffer.from(JSON.stringify({email})).toString('base64url')}.synthetic` });
   currentSlots = { keyring: token(currentEmail), file: token(currentEmail) };
   const record = (event, detail) => { const entry = { step: events.length, event, ...(detail === undefined ? {} : {detail}) }; events.push(entry); return entry; };
   const proof = () => ({ email: currentEmail, generation, authValid: true, observedAt: new Date().toISOString(), quotaSource: 'server', buckets: [] });
-  const official = { id: 'google.google-antigravity', extensionKind: 1, extensionUri: fileUri('/synthetic-official-extension'), extensionPath: '/synthetic-official-extension', packageJSON: { version: '1.6.0', main: './extension.js' }, isActive: true, exports: { port: 34567, csrfToken: 'synthetic-official-csrf' } };
+  const official = { id: 'google.google-antigravity', extensionKind: options.wsl ? 2 : 1, extensionUri: fileUri('/synthetic-official-extension'), extensionPath: '/synthetic-official-extension', packageJSON: { version: options.officialVersion || '1.6.0', main: './extension.js' }, isActive: true, exports: { port: 34567, csrfToken: 'synthetic-official-csrf' } };
   const vscode = {
     UIKind: { Desktop: 1 }, ExtensionKind: { UI: 1, Workspace: 2 }, ProgressLocation: { Notification: 1 }, Uri: { file: fileUri },
-    env: { uiKind: 1 }, extensions: { getExtension: id => id === official.id ? official : undefined },
-    workspace: { isTrusted: true, getConfiguration: () => ({ get: () => undefined }) },
+    env: { uiKind: 1, ...(options.wsl ? {remoteName:'wsl'} : {}) }, extensions: { getExtension: id => id === official.id ? official : undefined },
+    workspace: { isTrusted: true, getConfiguration: () => ({ get: key => ui.config[key] }) },
     commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, getCommands: async () => ui.commandList || [], executeCommand: async name => { record('command', name); return ui.execute?.(name); } },
     window: {
       onDidChangeWindowState: () => ({ dispose() {} }),
@@ -50,10 +50,13 @@ function fixture(t, options = {}) {
     async writeMigrationArchive() { record('write-export'); }
   };
   const entry = path.join(output, 'live-ui.js'), originalLoad = Module._load;
-  Module._load = function(name, ...args) { return name === 'vscode' ? vscode : name === './account-migration' && args[0]?.filename === entry ? codec : originalLoad.call(this, name, ...args); };
+  Module._load = function(name, ...args) {
+    if(options.forbidWindowPath && name === './offline-ui') return {registerOfflineUi:()=>({getStatus:()=>undefined,getHistory:()=>undefined,prepareAutomatic:async()=>{record('forbidden-offline-prepare');throw Error('OFFLINE_PATH_FORBIDDEN');}})};
+    if(options.forbidWindowPath && ['automatic-window-entry','window-runtime-channel','window-group-reopen','wsl-window-launcher'].some(part=>name.endsWith('/'+part))) throw Error('WINDOW_PATH_FORBIDDEN');
+    return name === 'vscode' ? vscode : name === './account-migration' && args[0]?.filename === entry ? codec : originalLoad.call(this, name, ...args); };
   let api; try { delete require.cache[entry]; api = require(entry); } finally { Module._load = originalLoad; }
   const vault = { get: async key => data.get(key), store: async(key, value) => { data.set(key, value); record('vault-write', key); }, delete: async key => { data.delete(key); record('vault-delete', key); } };
-  const context = { extension: { extensionKind: 1 }, extensionUri: fileUri('/synthetic-workbench'), globalStorageUri: fileUri('/synthetic-storage'), globalState: { get: (key, fallback) => state.has(key) ? state.get(key) : fallback, update: async(key, value) => { state.set(key, value); record('state-write', key); } }, secrets: vault, subscriptions: [] };
+  const context = { extension: { extensionKind: options.wsl ? 2 : 1 }, extensionUri: fileUri('/synthetic-workbench'), globalStorageUri: fileUri('/synthetic-storage'), globalState: { get: (key, fallback) => state.has(key) ? state.get(key) : fallback, update: async(key, value) => { state.set(key, value); record('state-write', key); } }, secrets: vault, subscriptions: [] };
   const accounts = [ACCOUNT_A, ACCOUNT_B].map((id, n) => ({ id, label: n ? 'B' : 'A', expectedEmail: n ? 'b@example.test' : 'a@example.test', capturedAt: '2026-10-01T00:00:00.000Z', identitySource: 'hub', hostId: HOST }));
   state.set(INDEX, accounts);
   for (const account of accounts) data.set(ACCOUNT_PREFIX + account.id, JSON.stringify({...account, slots: { keyring: token(account.expectedEmail), file: token(account.expectedEmail) }}));
@@ -68,11 +71,11 @@ function fixture(t, options = {}) {
     async inspectOperationActivity() { record('inspect-lock'); return activity || { state: 'absent', kind: 'unknown', scope: 'unknown' }; },
     async isOperationCurrent(expected) { return activity === expected; },
     async withOperation(fn) { if (activity) throw new LiveError('LIVE_OPERATION_OR_RECOVERY_LOCKED'); record('lock'); try { return await fn(); } finally { record('unlock'); } },
-    async hasRecovery() { return false; }, async beginRecovery() { record('begin-recovery'); }, async clearRecovery() { record('clear-recovery'); }, async assertRecovery() {}
+    async hasRecovery() { return !!ui.offlineMarker; }, async inspectRecovery(){return ui.offlineMarker ? {state:'active',owner:ui.offlineMarker}:{state:'absent'};}, async beginRecovery() { record('begin-recovery'); }, async clearRecovery() { record('clear-recovery'); }, async assertRecovery() {}
   };
   const backend = {
     get generation() { return generation; }, restartMode: 'component',
-    async assertCredentialWriteSafe() {},
+    async assertCredentialWriteSafe() { if(ui.barrierFailure) throw ui.barrierFailure; },
     async stop() { record('stop-hub'); running = false; },
     async reload() { record('reload-hub'); running = true; generation = `synthetic-generation-${++serial}`; official.exports = {...official.exports, csrfToken: `synthetic-csrf-${serial}`}; ui.afterReload?.(); },
     async proof() { if (!running) throw new LiveError('OFFICIAL_HUB_NOT_READY'); record('proof', currentEmail); if (ui.proofFailure) throw ui.proofFailure; return proof(); },
@@ -89,7 +92,7 @@ function fixture(t, options = {}) {
     async endMany(ids, signal) { record('end-many', [...ids]); if (ids.some(id => !selections.has(id)) || rows.some(row => !ids.includes(row.id))) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); if (ui.endMany) return ui.endMany(ids, signal); rows = []; return ids.map(() => 'exited'); },
     invalidate() { selections.clear(); }
   };
-  const controller = api.registerLiveUi(context, { service, locks, ...(options.publicLifecycle ? {} : { lifecycle: async() => {
+  const controller = api.registerLiveUi(context, { service, locks, ...(options.storageMode ? {storageMode:options.storageMode}:{}), ...(options.publicLifecycle ? {} : { lifecycle: async() => {
     record('resolve-lifecycle'); if (rows.length) throw new LiveError('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN');
     return running ? backend : {...backend, generation:'stopped'};
   } }), currentIdentity: async() => ({...proof(),generation:load('live-hub').generation(official.exports)}), currentQuota: async() => proof(), processRecovery: recovery, changed: () => { record('ui-state'); ui.onChanged?.(); } });
@@ -478,10 +481,50 @@ for(const scenario of ['success','cancel','replaced','unknown-peer']) test(`rest
  if(scenario==='success'){assert.equal(f.controller.getState().error,undefined);assert.match(f.warnings.at(-1).message,/任务会中断/);}
 });
 
-for(const action of ['switch','login']) test(`public lifecycle ${action} blocks before stopping peers or starting OAuth`,async t=>{
+for(const action of ['switch','login']) test(`public lifecycle ${action} reports missing entry capability before stopping peers or starting OAuth`,async t=>{
  const f=fixture(t,{publicLifecycle:true,rows:[verifiedPeer(710),verifiedPeer(711)]});
  const before=f.current();await f.call(action,action==='switch'?ACCOUNT_B:undefined);
- assert.equal(f.controller.getState().lastFailure.code,'OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE');
+ assert.equal(f.controller.getState().lastFailure.code,'OFFICIAL_ENTRY_UNAVAILABLE');
  noBackendMutation(f);assert.equal(count(f,'oauth'),0);assert.equal(f.warnings.length,0);
  assert.equal(await f.service.journal(),null);assert.deepEqual(f.current(),before);
+});
+
+// Dispatch regression: real UI/LiveSwitchService; lifecycle/process proof/RPC and
+// native slots are synthetic. This does not certify official 1.9 stop semantics.
+for(const version of ['1.8.0','1.9.0'])test('WSL '+version+' synthetic lifecycle routes normal switch through historical transaction without window prerequisites',async t=>{
+ const f=fixture(t,{officialVersion:version,wsl:true,storageMode:'wsl-file',forbidWindowPath:true});
+ await f.call('switch',ACCOUNT_B);
+ assert.equal(count(f,'forbidden-offline-prepare'),0);assert.equal(count(f,'credential-write'),1);
+ assert.equal(f.email(),'b@example.test');assert.equal(f.controller.getState().pending,false);
+ for(const event of ['scan-processes','confirmation','stop-hub','reload-hub','proof'])assert.ok(count(f,event)>0,event);
+ order(f,'scan-processes','confirmation');order(f,'confirmation','stop-hub');order(f,'stop-hub','credential-write');order(f,'credential-write','reload-hub');
+ const reload=f.events.findIndex(e=>e.event==='reload-hub');assert.ok(f.events.slice(reload+1).some(e=>e.event==='proof'&&e.detail==='b@example.test'));
+ assert.equal(f.warnings.length,1);assert.equal(count(f,'password'),0);
+ assert.ok(!f.events.some(e=>e.event==='command'&&/close|reloadWindow|openFolder|profile|sync/i.test(e.detail)));
+ assert.equal(await f.service.journal(),null);
+});
+test('WSL 1.9 existing schema4 recovery remains protected on normal switch dispatch',async t=>{
+ const f=fixture(t,{officialVersion:'1.9.0',wsl:true,storageMode:'wsl-file',forbidWindowPath:true});
+ const marker={schema:4,id:'11111111-1111-4111-8111-111111111111',owner:require('node:crypto').createHash('sha256').update(f.context.globalStorageUri.toString()).digest('hex')};
+ f.ui.offlineMarker=marker;await f.controller.refresh();f.events.length=0;
+ await f.call('switch',ACCOUNT_B);noBackendMutation(f);assert.equal(count(f,'forbidden-offline-prepare'),0);assert.equal(count(f,'clear-recovery'),0);
+ assert.deepEqual(f.ui.offlineMarker,marker);assert.equal(f.email(),'a@example.test');assert.equal(f.controller.getState().offlinePending,true);assert.equal(f.controller.getState().pending,true);
+});
+
+test('injected 1.9 unprovable write barrier fails before stop journal or credential writes',async t=>{
+ const f=fixture(t,{officialVersion:'1.9.0',wsl:true,storageMode:'wsl-file',forbidWindowPath:true});
+ f.ui.barrierFailure=new(load('live-storage').LiveError)('OFFICIAL_CREDENTIAL_WRITE_UNSUPPORTED');
+ await f.call('switch',ACCOUNT_B);noBackendMutation(f);assert.equal(count(f,'forbidden-offline-prepare'),0);assert.equal(count(f,'clear-recovery'),0);assert.equal(await f.service.journal(),null);assert.equal(f.email(),'a@example.test');
+});
+
+// Only exact installed-source recognition is injected; the public UI pause
+// admission is real and must reject unobserved 1.9 before consent/process mutation.
+test('public WSL 1.9 with enabled auto recovery rejects before consent stop and journal',async t=>{
+ const f=fixture(t,{publicLifecycle:true,officialVersion:'1.9.0',wsl:true,storageMode:'wsl-file',forbidWindowPath:true});
+ const contract=load('official-contract'),old=contract.assertOfficialWriteContract;
+ contract.assertOfficialWriteContract=async()=> '1.9.0';
+ f.ui.config.autoRecover=true;
+ try{await f.call('switch',ACCOUNT_B);}finally{contract.assertOfficialWriteContract=old;}
+ assert.equal(f.controller.getState().lastFailure.code,'OFFICIAL_RECOVERY_ENABLED');
+ noBackendMutation(f);assert.equal(count(f,'forbidden-offline-prepare'),0);assert.equal(f.warnings.length,0);assert.equal(await f.service.journal(),null);
 });

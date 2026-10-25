@@ -1,7 +1,7 @@
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const { ComponentMailbox } = require('../../out/component-mailbox');
-const { ComponentCoordination } = require('../../out/component-coordination');
+const { ComponentCoordination, componentIdentityDigest } = require('../../out/component-coordination');
 const { LiveLocks, probeProcessIdentity } = require('../../out/live-lock');
 let child, mailbox, locks;
 async function launch() {
@@ -23,9 +23,10 @@ process.on('message', async message => {
         return {
         prepare: async () => {
           await assertOwner(); const hub = await probeProcessIdentity(child.pid);
-          receipt = { host, hub: { pid: child.pid, startIdentity: hub.startIdentity }, contract: '1.8.0' };
+          receipt = { host, hub: { pid: child.pid, startIdentity: hub.startIdentity }, contract: '1.8.0', verification: 'identity-v1' };
           return receipt;
         },
+        verify: async challenge => { await assertOwner(); const current = await probeProcessIdentity(child.pid); if(current.state !== 'alive')throw Error('child missing'); return {host,hub:{pid:child.pid,startIdentity:current.startIdentity},digest:componentIdentityDigest('synthetic@example.test',challenge)}; },
         stop: async () => { await assertOwner(); await stop(); },
         resume: async () => { await assertOwner(); if (child.exitCode !== null || child.signalCode !== null) await launch(); },
         describe: async () => {

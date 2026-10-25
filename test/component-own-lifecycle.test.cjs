@@ -77,3 +77,40 @@ test('replacement coordinator describes a late start without dispatching it twic
   await assert.rejects(f.actor.reload()); await start();
   assert.equal((await f.actor.describe()).hub.pid, 3); assert.equal(calls, 1);
 });
+test('fresh identity receipt carries only nonce-bound digest and process births', async () => {
+  const { componentIdentityDigest } = require('../out/component-coordination');
+  const f = fixture(), challenge = require('node:crypto').randomUUID();
+  assert.equal((await f.actor.prepare()).verification, 'identity-v1');
+  await f.actor.stop(); await f.actor.reload();
+  const receipt = await f.actor.verify(challenge);
+  assert.deepEqual(Object.keys(receipt).sort(), ['digest', 'host', 'hub']);
+  assert.equal(receipt.hub.pid, 3);
+  assert.equal(receipt.digest, componentIdentityDigest('SYNTHETIC@example.test', challenge));
+  assert.notEqual(receipt.digest, componentIdentityDigest('synthetic@example.test', require('node:crypto').randomUUID()));
+  const proof = f.runtime.proof;
+  f.runtime.proof = async () => ({ ...await proof(), generation: 'stale' });
+  await assert.rejects(f.actor.verify(challenge), { code: 'HUB_CHANGED_DURING_QUERY' });
+});
+test('failed observation rejoins original attempt and fresh-verifies a late ready result', async () => {
+  const { LiveError } = require('../out/live-storage');
+  const f = fixture(); await f.actor.prepare(); await f.actor.stop();
+  const start = f.runtime.restart, ready = f.runtime.ready;
+  f.runtime.ready = async () => { try { return await ready(); } catch { throw new LiveError('OFFICIAL_HUB_NOT_READY'); } };
+  f.runtime.restart = async () => { throw new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT'); };
+  let retries = 0; f.runtime.awaitRestart = async () => { retries++; await start(); };
+  await assert.rejects(f.actor.reload(), { code: 'OFFICIAL_COMPONENT_RESTART_TIMEOUT' });
+  await f.actor.reload(); assert.equal(retries, 1); assert.equal((await f.actor.proof()).generation, 'next');
+});
+test('observation retry joins startup but cannot bypass command or route failure', async () => {
+  const { LiveError } = require('../out/live-storage');
+  for (const reason of ['pending', 'alive', 'route']) {
+    const f = fixture(); await f.actor.prepare(); await f.actor.stop();
+    f.runtime.restart = async () => { throw new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT'); };
+    await assert.rejects(f.actor.reload());
+    let calls = 0;
+    f.runtime.ready = async () => { throw new LiveError(reason === 'route' ? 'WSL_FILE_ROUTE_UNVERIFIED' : 'OFFICIAL_HUB_NOT_READY'); };
+    f.runtime.stopped = async () => reason !== 'alive';
+    f.runtime.awaitRestart = async () => { calls++; throw new LiveError('COMPONENT_ACTION_PENDING'); };
+    await assert.rejects(f.actor.reload()); assert.equal(calls, reason === 'route' ? 0 : 1);
+  }
+});

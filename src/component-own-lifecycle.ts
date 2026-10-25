@@ -1,6 +1,6 @@
 import { LiveError } from './live-storage';
 import type { HubProof, Lifecycle } from './live-switch';
-import type { ComponentBirth, ComponentReceipt } from './component-coordination';
+import { componentIdentityDigest, type ComponentVerification, type ComponentBirth, type ComponentReceipt } from './component-coordination';
 
 export interface OwnComponentRuntime {
   host: ComponentBirth;
@@ -14,6 +14,8 @@ export interface OwnComponentRuntime {
   /** Checks old birth exit, exports cleared and no other Hub of this host. */
   stopped(previous: ComponentBirth): Promise<boolean>;
   restart(): Promise<void>;
+  /** Observe the already dispatched restart; must not create another setup. */
+  awaitRestart?(): Promise<void>;
   assertOwner(): Promise<void>;
 }
 const same = (a: ComponentBirth, b: ComponentBirth): boolean => a.pid === b.pid && a.startIdentity === b.startIdentity;
@@ -40,7 +42,7 @@ export class OwnComponentLifecycle implements Lifecycle {
     }
     if (this.state === 'ready') await this.assertReady();
     else if (this.state !== 'stopped' || !await this.runtime.stopped(this.birth)) throw new LiveError('COMPONENT_ACTION_PENDING');
-    return { host: this.runtime.host, hub: this.birth, contract: await this.runtime.contract(), ...(this.state === 'stopped' ? { stopped: true } : {}) };
+    return { host: this.runtime.host, hub: this.birth, contract: await this.runtime.contract(), verification: 'identity-v1', ...(this.state === 'stopped' ? { stopped: true } : {}) };
   }
   async prepare(verifyIdentity = true): Promise<ComponentReceipt> {
     if (this.state !== 'new') throw new LiveError('COMPONENT_TRANSACTION_STATE');
@@ -57,7 +59,7 @@ export class OwnComponentLifecycle implements Lifecycle {
         proof && (proof.generation !== after.generation || !proof.authValid || proof.quotaSource !== 'server')) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
     await this.runtime.assertOwner();
     this.birth = after.hub; this.expectedGeneration = after.generation; this.state = 'ready';
-    return { host: this.runtime.host, hub: after.hub, contract };
+    return { host: this.runtime.host, hub: after.hub, contract, verification: 'identity-v1' };
   }
   async proof(signal?: AbortSignal): Promise<HubProof> {
     if (this.state !== 'ready' || !this.birth) throw new LiveError('OFFICIAL_HUB_NOT_READY');
@@ -66,6 +68,11 @@ export class OwnComponentLifecycle implements Lifecycle {
     await this.assertReady();
     if (proof.generation !== this.expectedGeneration || !proof.authValid || proof.quotaSource !== 'server') throw new LiveError('HUB_CHANGED_DURING_QUERY');
     return proof;
+  }
+  async verify(challenge: string): Promise<ComponentVerification> {
+    const proof = await this.proof();
+    const digest = componentIdentityDigest(proof.email, challenge);
+    return { host: this.runtime.host, hub: { ...this.birth! }, digest };
   }
   private async assertReady(): Promise<void> {
     await this.runtime.assertOwner();
@@ -100,10 +107,16 @@ export class OwnComponentLifecycle implements Lifecycle {
     const operation = (async () => {
       await this.runtime.assertOwner();
       if (this.startDispatched) {
-        // Rejoin the already dispatched start. Never issue a second reconnect
-        // because the observation deadline expired. Exact own-route proof is
-        // still required; identity verification remains a separate fresh RPC.
-        const ready = await this.runtime.ready();
+        // Adopt late readiness or join observation of the original attempt.
+        // Command settlement is not setup settlement; never dispatch a second
+        // setup just because a deadline or first ready observation failed.
+        let ready;
+        try { ready = await this.runtime.ready(); }
+        catch (error) {
+          if (!(error instanceof LiveError) || error.code !== 'OFFICIAL_HUB_NOT_READY' || !this.runtime.awaitRestart) throw error;
+          await this.runtime.awaitRestart();
+          ready = await this.runtime.ready();
+        }
         if (same(ready.hub, this.birth!)) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
         await this.runtime.assertOwner();
         this.birth = ready.hub; this.expectedGeneration = ready.generation; this.state = 'ready';

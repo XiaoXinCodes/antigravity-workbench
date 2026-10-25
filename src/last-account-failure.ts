@@ -1,5 +1,5 @@
 import { fileRouteFailureReason, type FileRouteFailureReason } from './file-route-failure';
-import { debugErrorCode } from './debug-events';
+import { debugErrorCode, componentFailureDetails } from './debug-events';
 import type { LiveInstallStage } from './live-switch';
 
 export const LAST_ACCOUNT_FAILURE = 'live-switch.lastFailure.v1';
@@ -9,6 +9,7 @@ const STAGES = [...OFFLINE_PREPARE_STAGES, 'command', 'preflight', 'stop', 'back
 const PHASES = ['none', 'authorizing', 'prepared', 'installed', 'restored', 'unavailable'] as const;
 export type AccountFailureStage = typeof OFFLINE_PREPARE_STAGES[number] | LiveInstallStage | 'command' | 'verify' | 'resume' | 'restore' | 'cleanup';
 export interface LastAccountFailure {
+  componentFailures?: Array<{ hostPid: number; stage: string; code: string }>;
   schema: 1; at: string; action: typeof ACTIONS[number]; stage: AccountFailureStage;
   phase: typeof PHASES[number]; code: string; recoveryCode?: string; fileRouteFailureReason?: FileRouteFailureReason;
 }
@@ -26,6 +27,7 @@ export function readLastAccountFailure(value: unknown): LastAccountFailure | und
   if (own(value, 'schema') !== 1 || typeof at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u.test(at) || !Number.isFinite(Date.parse(at)) ||
       !member(action, ACTIONS) || !member(stage, STAGES) || !member(phase, PHASES) || typeof code !== 'string' || debugErrorCode({code}) !== code) return undefined;
   return { schema: 1, at, action, stage, phase, code,
+    ...(componentFailureDetails(value) ? { componentFailures: componentFailureDetails(value)! } : {}),
     ...(fileRouteFailureReason(value) ? { fileRouteFailureReason: fileRouteFailureReason(value)! } : {}),
     ...(typeof recoveryCode === 'string' && debugErrorCode({code: recoveryCode}) === recoveryCode ? {recoveryCode} : {}) };
 }

@@ -983,11 +983,11 @@ test('unavailable restore barrier preserves existing journal bytes and current c
  assert.equal(x.data.get(x.journalKey),raw);assert.equal(x.writes(),writes);assert.deepEqual(x.phases,phases);
 });
 
-test('barrier lost before write also refuses implicit rollback and preserves backup',async()=>{
+test('barrier lost before dispatch records unchanged original for read-only recovery without rollback',async()=>{
  const x=setup(),b=await saveB(x);let checks=0;
  x.backend.assertCredentialWriteSafe=async()=>{if(++checks>1)throw new LiveError('OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE')};
- await assert.rejects(x.service.install(b.id,x.backend),/SWITCH_FAILED_RECOVERY_REQUIRED/);
- assert.equal(x.writes(),0);assert.deepEqual(x.current(),A);assert.deepEqual((await x.service.journal()).backup,A);assert.ok(checks>=3);
+ await assert.rejects(x.service.install(b.id,x.backend),/OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE/);
+ assert.equal(x.writes(),0);assert.deepEqual(x.current(),A);assert.deepEqual((await x.service.journal()).backup,A);assert.equal((await x.service.journal()).phase,'restored');assert.equal(checks,2);
 });
 test('failed target write cannot invoke rollback after barrier is lost',async()=>{
  const x=setup(),b=await saveB(x);let safe=true,attempts=0;
@@ -995,4 +995,12 @@ test('failed target write cannot invoke rollback after barrier is lost',async()=
  x.slots.write=async()=>{attempts++;safe=false;throw Error('synthetic write failure')};
  await assert.rejects(x.service.install(b.id,x.backend),/SWITCH_FAILED_RECOVERY_REQUIRED/);
  assert.equal(attempts,1);assert.deepEqual((await x.service.journal()).backup,A);
+});
+test('admission loss with unknown new credentials preserves both new value and original backup',async()=>{
+ const x=setup(),b=await saveB(x);let checks=0;
+ const external={keyring:fixture('EXTERNAL'),file:fixture('EXTERNAL')};
+ x.backend.assertCredentialWriteSafe=async()=>{if(++checks>1){x.set(external);throw new LiveError('OFFICIAL_RECOVERY_CONFIGURATION_CHANGED');}};
+ await assert.rejects(x.service.install(b.id,x.backend),/EXTERNAL_CHANGE/);
+ assert.equal(x.writes(),0);assert.deepEqual(x.current(),external);
+ const journal=await x.service.journal();assert.equal(journal.phase,'prepared');assert.deepEqual(journal.backup,A);
 });
