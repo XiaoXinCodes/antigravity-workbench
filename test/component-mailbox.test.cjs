@@ -9,7 +9,9 @@ const { ComponentMailbox } = require('../out/component-mailbox');
 const { ComponentCoordination } = require('../out/component-coordination');
 const { LiveLocks, probeProcessIdentity } = require('../out/live-lock');
 const { PrivateState } = require('../out/private-state');
-test('atomic replacement between open and first stat is a changed snapshot, not unsafe storage', async () => {
+for (const nativeRename of [true, false]) test(`atomic replacement between open and first stat is a changed snapshot, not unsafe storage (${nativeRename ? 'POSIX rename' : 'synthetic unlinked descriptor'})`, {
+  skip: nativeRename && process.platform === 'win32' ? 'Windows rejects rename over the open destination with EPERM; descriptor-race model runs on every platform' : false,
+}, async () => {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'component-open-race-'));
   const store = new PrivateState(root, value => value, () => ({ revision: 1 }));
   const open = fs.open;
@@ -20,11 +22,21 @@ test('atomic replacement between open and first stat is a changed snapshot, not 
     let replaced = false;
     fs.open = async (filename, ...args) => {
       const handle = await open(filename, ...args);
-      if (filename === target && !replaced) { replaced = true; await fs.rename(replacement, target); }
+      if (filename === target && !replaced) {
+        replaced = true;
+        if (nativeRename) {
+          try { await fs.rename(replacement, target); } catch (error) { await handle.close(); throw error; }
+        } else {
+          // Model the POSIX post-rename descriptor state without relying on the
+          // host OS permitting replacement of an open file.
+          const stat = handle.stat.bind(handle);
+          handle.stat = async (...statArgs) => { const value = await stat(...statArgs); value.nlink = 0; return value; };
+        }
+      }
       return handle;
     };
     await assert.rejects(store.read(), /AUTOMATION_STORAGE_CHANGED/);
-    assert.deepEqual(await store.read(), { revision: 2 });
+    assert.deepEqual(await store.read(), { revision: nativeRename ? 2 : 1 });
     // A real extra hard link must still be rejected, never retried as a race.
     await fs.link(target, path.join(root, 'extra-link'));
     await assert.rejects(store.read(), /AUTOMATION_STORAGE_UNSAFE/);

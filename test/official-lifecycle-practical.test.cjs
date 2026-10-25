@@ -8,11 +8,15 @@ const fs = require('node:fs/promises');
 // Actual lifecycle/deactivator/restart implementation with synthetic VS Code,
 // process births and RPC. No official module, executable or account is used.
 let fixtureId = 0;
+const linuxFixtureTests = new WeakSet();
 function fixture(t, options = {}) {
   // Exercise the synthetic Linux-host model on every CI OS, without /proc reads.
-  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
-  t.after(() => Object.defineProperty(process, 'platform', platform));
+  if (!linuxFixtureTests.has(t)) {
+    linuxFixtureTests.add(t);
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    t.after(() => Object.defineProperty(process, 'platform', platform));
+  }
   const events = [], config = { autoRecover: options.autoRecover ?? false };
   let serial = 1, current = { pid: 700001, startTicks: '101', parentPid: process.pid }, port = 34567;
   let respawns = options.respawns ?? 0, duringProof, inspectHook, pinnedHook;

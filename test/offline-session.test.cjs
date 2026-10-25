@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict');
-const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+const fs=require('node:fs/promises'),path=require('node:path');
 const {randomUUID}=require('node:crypto');
 const {runOfflineFileSession}=require('../out/offline-session');
 const {OfflineRecoveryStore}=require('../out/offline-recovery-store');
@@ -7,7 +7,7 @@ const {LiveLocks}=require('../out/live-lock');
 const owner='a'.repeat(64),password='synthetic-session-password';
 const slots=value=>({keyring:null,file:JSON.stringify({token:{refresh_token:value}}),keyringState:'unobserved'});
 async function fixture(t){
- const home=await fs.mkdtemp(path.join(os.tmpdir(),'offline-session-'));t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const home=await fs.mkdtemp(path.join(await fs.realpath(__dirname),'offline-session-'));t.after(()=>fs.rm(home,{recursive:true,force:true}));
  await fs.mkdir(path.join(home,'.gemini'),{mode:0o700});
  const file=path.join(home,'.gemini','jetski-standalone-oauth-token'),record={schema:1,hostId:'fixture-host',id:randomUUID(),phase:'prepared',backup:slots('old'),target:slots('new'),expectedEmail:'fixture@example.test'};
  await fs.writeFile(file,record.backup.file,{mode:0o600});

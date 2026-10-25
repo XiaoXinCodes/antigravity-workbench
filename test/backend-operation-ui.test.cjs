@@ -10,6 +10,7 @@ const ACCOUNT_A = '00000000-0000-4000-8000-000000000001';
 const ACCOUNT_B = '00000000-0000-4000-8000-000000000002';
 const HOST = 'a'.repeat(64);
 const trace = [];
+const linuxFixtureTests = new WeakSet();
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 async function waitForStart(promise) { let timer; try { await Promise.race([promise, new Promise((_, reject) => { timer=setTimeout(()=>reject(new Error('The synthetic batch termination did not start')),2000); })]); } finally { clearTimeout(timer); } }
 const fileUri = value => ({ scheme: 'file', authority: '', query: '', fragment: '', fsPath: value, toString: () => `file://${value}` });
@@ -20,7 +21,8 @@ const detached = (pid, id = `selection-${pid}`) => ({ id, pid, parentPid: 1, sta
 function fixture(t, options = {}) {
   // WSL cases model a Linux extension host, even when this suite runs on macOS.
   // All lifecycle, storage and process dependencies below are synthetic.
-  if (options.wsl) {
+  if (options.wsl && !linuxFixtureTests.has(t)) {
+    linuxFixtureTests.add(t);
     const platform = Object.getOwnPropertyDescriptor(process, 'platform');
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
     t.after(() => Object.defineProperty(process, 'platform', platform));
