@@ -383,6 +383,10 @@ test('official remote host, custom release and invalid entrypoint reject before 
  const f=setup();await assert.rejects(f.api.resolveOfficialLifecycle(f.context,true,true),/OFFICIAL_EXTENSION_MISSING/);
 });
 test('lifecycle accepts future releases and missing version diagnostics with live capabilities',async t=>{
+ // This fixture supplies a WSL Hub snapshot, not native macOS process proof.
+ const platformDescriptor=Object.getOwnPropertyDescriptor(process,'platform');
+ Object.defineProperty(process,'platform',{value:'linux',configurable:true});
+ t.after(()=>Object.defineProperty(process,'platform',platformDescriptor));
  const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage');
  f.ui.remoteName='wsl';const main=path.join(official.extensionPath,'extension.js');const previousCache=require.cache[main],previousRun=storage.runPrivate;
  const contract=require('../out/official-contract'),environment=require('../out/live-environment'),fs=require('node:fs/promises'),previousContract=contract.assertOfficialEntrypoint,previousHash=environment.assertWslBackendExecutable,previousStat=fs.stat,previousAccess=fs.access;

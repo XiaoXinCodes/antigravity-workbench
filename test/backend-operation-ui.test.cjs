@@ -18,6 +18,13 @@ const detached = (pid, id = `selection-${pid}`) => ({ id, pid, parentPid: 1, sta
 /** VS Code APIs, Hub responses and account tokens are synthetic. The account
  * transaction and UI command implementation are the production modules. */
 function fixture(t, options = {}) {
+  // WSL cases model a Linux extension host, even when this suite runs on macOS.
+  // All lifecycle, storage and process dependencies below are synthetic.
+  if (options.wsl) {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    t.after(() => Object.defineProperty(process, 'platform', platform));
+  }
   const { LiveError } = load('live-storage');
   const { LiveSwitchService, ACCOUNT_PREFIX } = load('live-switch');
   const events = [], warnings = [], notifications = [], commands = new Map(), state = new Map(), data = new Map();

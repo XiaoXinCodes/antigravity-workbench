@@ -1,9 +1,10 @@
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),{spawn}=require('node:child_process'),{once}=require('node:events');
+// Keep private-state fixtures under the canonical, user-owned checkout, not macOS /var aliases or a foreign-owned TMPDIR.
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),{spawn}=require('node:child_process'),{once}=require('node:events');
 const {AutomaticOfflineKey,AutomaticOfflineControl}=require('../out/offline-automatic'),{OfflineRecoveryStore}=require('../out/offline-recovery-store'),{LiveLocks}=require('../out/live-lock');
 async function until(fn){for(let n=0;n<600;n++){const result=await fn();if(result)return result;await new Promise(r=>setTimeout(r,20));}throw Error('SYNTHETIC_TIMEOUT');}
 async function exists(file){try{await fs.stat(file);return true;}catch(e){if(e.code==='ENOENT')return false;throw e;}}
 for(const mode of ['close','new-instance','cancel','late-write'])test('automatic detached helper closed loop: '+mode,{skip:process.platform!=='linux'},async t=>{
- const home=await fs.mkdtemp(path.join(os.tmpdir(),'automatic-loop-'));t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const home=await fs.mkdtemp(path.join(await fs.realpath(__dirname),'automatic-loop-'));t.after(()=>fs.rm(home,{recursive:true,force:true}));
  const child=spawn(process.execPath,[path.join(__dirname,'helpers/automatic-offline-initiator.cjs')],{env:{...process.env,HOME:home,WSL_DISTRO_NAME:'SyntheticOfflineFixture'},stdio:'ignore'});
  const exited=once(child,'exit');t.after(()=>{if(child.exitCode===null)child.kill();});
  await until(()=>exists(path.join(home,'ready')));

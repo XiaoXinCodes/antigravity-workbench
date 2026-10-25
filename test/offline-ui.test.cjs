@@ -17,37 +17,42 @@ function fixture(options={}){
  './live-wsl-proof':{wslFileRouteError:require('../out/live-wsl-proof').wslFileRouteError,createWslReadGuard:()=>Object.assign(async()=>!state.badScope,{fileRouteFailureReason:'pid-marker-mismatch'})},'./official-contract':{assertOfficialWriteContract:async()=>{}},
  './offline-recovery-store':{OfflineRecoveryStore:Store},'./offline-process-census':{inspectOfflineLinuxProcesses:async({knownHosts})=>({complete:!state.incompleteCensus,unknown:!!state.unknownCensus,hosts:knownHosts,hubs:[]})}};
  const id=require.resolve('../out/offline-ui'),old=Module._load;delete require.cache[id];Module._load=function(name,...args){return mocks[name]??old.call(this,name,...args);};
- let register;try{register=require(id).registerOfflineUi;}finally{Module._load=old;delete require.cache[id];}
+ // This is a fully mocked WSL UI fixture, independent of the CI host OS.
+ // Scope platform injection to this module; never mutate the real process.
+ let register;try{const loaded=new Module(id,module);loaded.filename=id;loaded.paths=module.paths;
+  loaded._compile("const process=new Proxy(require('node:process'),{get:(target,key)=>key==='platform'?'linux':Reflect.get(target,key)});\n"+require('node:fs').readFileSync(id,'utf8'),id);
+  register=loaded.exports.registerOfflineUi;
+ }finally{Module._load=old;delete require.cache[id];}
  const nativeInterval=global.setInterval;if(options.manualTimer)global.setInterval=fn=>{state.poll=fn;return{unref(){}};};
  const controller=register({globalState:{get:key=>state.pointer?.[key],update:async(key,value)=>{state.pointer??={};state.pointer[key]=value;}},extensionPath:'/synthetic/path with quote\'/extension',extension:{extensionKind:2},subscriptions:[]},{stage:stage=>{state.stages??=[];state.stages.push(stage);},owner:'a'.repeat(64),accounts:()=>[{id:'target',label:'fixture'}],account:async()=>({slots:options.targetSlots??scope,expectedEmail:'fixture@example.test'}),official:()=>({}),proof:async()=>{state.proofs++;return {quotaSource:'server',authValid:true,...(state.proofOverride?state.proofOverride(state.proofs):proof())};},changed(){}});
  global.setInterval=nativeInterval;
  return{state,controller,run:name=>commands.get('antigravityAccounts.live.'+name)()};
 }
-test('WSL product entry prepares encrypted journal and offers external command without exposing secrets',{skip:process.platform!=='linux'},async()=>{
+test('WSL product entry prepares encrypted journal and offers external command without exposing secrets',async()=>{
  const {state,run}=fixture();await run('offlinePrepare');assert.deepEqual(state.errors,[]);assert.equal(state.record.phase,'prepared');assert.equal(state.marker.schema,4);
  assert.equal(state.documents.length,1);assert.match(state.documents[0],/offline-cli\.js/);assert.match(state.documents[0],/install/);
  assert.doesNotMatch(state.documents[0],/synthetic-ui-private|synthetic-ui-password|fixture@example.test/);
  assert.match(state.documents[0],/'\\''/);assert.equal(state.clears,0);
  await run('offlineContinue');assert.equal(state.documents.length,2);
 });
-test('cancelled product consent neither captures nor prepares offline credentials',{skip:process.platform!=='linux'},async()=>{
+test('cancelled product consent neither captures nor prepares offline credentials',async()=>{
  const {state,run}=fixture();state.confirmed=false;await run('offlinePrepare');assert.equal(state.record,undefined);assert.equal(state.marker,undefined);assert.equal(state.proofs,0);
 });
-test('completion requires installed record, exact bytes and fresh matching identity',{skip:process.platform!=='linux'},async()=>{
+test('completion requires installed record, exact bytes and fresh matching identity',async()=>{
  const {state,run}=fixture();await run('offlinePrepare');await run('offlineComplete');assert.equal(state.clears,0);assert.equal(state.record.phase,'prepared');
  state.record.phase='installed';state.proofOverride=()=>({email:'other@example.test',generation:'fixture-generation'});await run('offlineComplete');assert.equal(state.clears,0);
  state.proofOverride=undefined;await run('offlineComplete');assert.equal(state.clears,1);assert.equal(state.record.phase,'verified');
 });
-test('late generation change after durable verification retains fence for retry',{skip:process.platform!=='linux'},async()=>{
+test('late generation change after durable verification retains fence for retry',async()=>{
  const {state,run}=fixture();await run('offlinePrepare');state.record.phase='installed';state.proofs=0;
  state.proofOverride=n=>({email:'fixture@example.test',generation:n===1?'before':'after'});await run('offlineComplete');assert.equal(state.clears,0);assert.equal(state.record.phase,'verified');assert.ok(state.marker);
 });
-test('access-token refresh with the same refresh credential completes; a different refresh credential does not',{skip:process.platform!=='linux'},async()=>{
+test('access-token refresh with the same refresh credential completes; a different refresh credential does not',async()=>{
  for(const changedRefresh of [false,true]){const {state,run}=fixture();await run('offlinePrepare');state.record.phase='installed';
  state.scope={...scope,file:JSON.stringify({token:{refresh_token:changedRefresh?'unrelated':'synthetic-ui-private',access_token:'rotated'}})};
  await run('offlineComplete');assert.equal(state.clears,changedRefresh?0:1);}
 });
-test('restored bytes keep protection until the original account is freshly verified',{skip:process.platform!=='linux'},async()=>{
+test('restored bytes keep protection until the original account is freshly verified',async()=>{
  const {state,run}=fixture();await run('offlinePrepare');state.record.phase='restored';
  state.record.originalEmail='original@example.test';await run('offlineComplete');assert.equal(state.clears,0);
  state.proofOverride=()=>({email:'original@example.test',generation:'restored-hub'});await run('offlineComplete');assert.equal(state.clears,1);assert.equal(state.record.phase,'restored-verified');

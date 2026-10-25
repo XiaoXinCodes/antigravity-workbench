@@ -10,7 +10,7 @@ const { ComponentCoordination } = require('../out/component-coordination');
 const { LiveLocks, probeProcessIdentity } = require('../out/live-lock');
 const { PrivateState } = require('../out/private-state');
 test('atomic replacement between open and first stat is a changed snapshot, not unsafe storage', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'component-open-race-'));
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'component-open-race-'));
   const store = new PrivateState(root, value => value, () => ({ revision: 1 }));
   const open = fs.open;
   try {
@@ -95,8 +95,8 @@ function rpc(worker, action, fields = {}) {
     worker.on('message', reply); worker.send({ id, action, ...fields });
   });
 }
-test('three isolated hosts exchange durable stop ACKs and restore synthetic children', { timeout: 30000 }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'component-ipc-'));
+test('three isolated hosts exchange durable stop ACKs and restore synthetic children', { timeout: 30000, skip: process.platform !== 'linux' ? 'Native component IPC requires Linux /proc birth identities; synthetic IPC cases run on every platform' : false }, async () => {
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'component-ipc-'));
   const directory = path.join(root, 'participants'), owner = 'a'.repeat(64), workers = [];
   try {
     const hosts = [];
@@ -162,8 +162,8 @@ test('three isolated hosts exchange durable stop ACKs and restore synthetic chil
     await fs.rm(root, { recursive: true, force: true });
   }
 });
-test('real coordinator death and replacement host birth recover surviving stopped participants', { timeout: 30000 }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'component-crash-'));
+test('real coordinator death and replacement host birth recover surviving stopped participants', { timeout: 30000, skip: process.platform !== 'linux' ? 'Native component IPC requires Linux /proc birth identities; synthetic IPC cases run on every platform' : false }, async () => {
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'component-crash-'));
   const directory = path.join(root, 'participants'), owner = 'a'.repeat(64), workers = [], hosts = [];
   const launch = async index => {
     const worker = fork(path.join(__dirname, 'helpers/component-mailbox-worker.cjs'), [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });

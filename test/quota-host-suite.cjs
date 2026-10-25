@@ -12,6 +12,8 @@ exports.run=async()=>{
   assert.match(await read('document.body.textContent'),/99.60%/);assert.doesNotMatch(await read('document.body.textContent'),/100.00%/);checks.sharedAccuracy=true;
   await cdp.click(context,'#quota-search');assert.equal(await read('document.activeElement.id'),'quota-search');await cdp.key(context,'合','');await cdp.key(context,'成','');await until(()=>read('document.querySelector("#quota-search").value==="合成"'),'keyboard search');assert.equal(await read('document.querySelectorAll(".account:not([hidden])").length'),3);checks.keyboardSearch=true;
   await read('document.querySelector("#quota-search").select()');await cdp.key(context,'Backspace');await until(()=>read('document.querySelectorAll(".account:not([hidden])").length===4'),'clear search');
+  // Filters are collapsed in the production layout; open them through the real control before keyboard interaction.
+  await cdp.click(context,'#quota-filter-details > summary');await until(()=>read('document.querySelector("#quota-filter-details").open'),'expand quota filters');
   // Reproduce the real default and legitimate server responses without bucket IDs.
   assert.deepEqual(await read('[...document.querySelector("#quota-sort").options].filter(o=>!o.disabled).map(o=>o.value)'),['saved','high','low','updated','reset']);
   const originalQuotas=fixture.accounts.map(a=>structuredClone(a.quota)),{parseFreshQuota}=require('../out/live-hub'),now=Date.now();

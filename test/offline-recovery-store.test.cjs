@@ -1,11 +1,12 @@
+// Keep private-state fixtures under the canonical, user-owned checkout, not macOS /var aliases or a foreign-owned TMPDIR.
 const test=require('node:test'),assert=require('node:assert/strict');
-const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+const fs=require('node:fs/promises'),path=require('node:path');
 const {spawnSync}=require('node:child_process');
 const {OfflineRecoveryStore}=require('../out/offline-recovery-store');
 const token=JSON.stringify({token:{refresh_token:'synthetic-recovery-token'}});
 const record={schema:1,hostId:'synthetic-host',id:'18b6b550-6e0d-4b57-b5be-9d70810f07a9',phase:'prepared',backup:{keyring:null,file:null},target:{keyring:token,file:token},expectedEmail:'synthetic@example.test'};
 const password='synthetic recovery password';
-async function setup(t){const dir=await fs.mkdtemp(path.join(os.tmpdir(),'offline-store-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));return dir;}
+async function setup(t){const dir=await fs.mkdtemp(path.join(await fs.realpath(__dirname),'offline-store-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));return dir;}
 test('persistent encrypted journal reopens without SecretStorage and contains no token or email',{skip:process.platform==='win32'},async t=>{
  const dir=await setup(t),store=new OfflineRecoveryStore(dir,password,record.hostId,record.id);
  await store.save(record,undefined);

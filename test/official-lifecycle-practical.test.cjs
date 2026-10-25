@@ -9,6 +9,10 @@ const fs = require('node:fs/promises');
 // process births and RPC. No official module, executable or account is used.
 let fixtureId = 0;
 function fixture(t, options = {}) {
+  // Exercise the synthetic Linux-host model on every CI OS, without /proc reads.
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+  t.after(() => Object.defineProperty(process, 'platform', platform));
   const events = [], config = { autoRecover: options.autoRecover ?? false };
   let serial = 1, current = { pid: 700001, startTicks: '101', parentPid: process.pid }, port = 34567;
   let respawns = options.respawns ?? 0, duringProof, inspectHook, pinnedHook;
@@ -110,7 +114,7 @@ function fixture(t, options = {}) {
     resolve: () => resolveOfficialLifecycle(context) };
 }
 
-const linux = { skip: process.platform !== 'linux' };
+const linux = {}; // Synthetic Linux model; no native OS eligibility restriction.
 test('already-active default-disabled 1.9 uses real component stop/reconnect/fresh proof without history', linux, async t => {
   const f = fixture(t), backend = await f.resolve();
   await backend.assertCredentialWriteSafe(); await backend.stop(); await backend.assertCredentialWriteSafe();
