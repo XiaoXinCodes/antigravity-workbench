@@ -15,11 +15,51 @@ function setup(initial = A, hostId, data = new Map()) {
   const slots = { read: async () => { reads++; return structuredClone(current); }, write: async (next,expected) => { assert.deepEqual(current, expected); current = structuredClone(next); writes++; } };
   const service = new LiveSwitchService(vault, slots, hostId);
   const phases = []; let proof;
-  const backend = { generation:'old', stop:async () => { phases.push('stop'); }, reload:async () => { phases.push('reload');backend.generation='new-'+phases.filter(p=>p==='reload').length; }, proof:async () => proof||({email:(current.keyring||current.file)===fixture('A')?'a@example.test':'b@example.test',generation:backend.generation,authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]}),signedOutProof:async()=>({generation:backend.generation,authValid:false}) };
+  const backend = { generation:'old', assertCredentialWriteSafe:async()=>{}, stop:async () => { phases.push('stop'); }, reload:async () => { phases.push('reload');backend.generation='new-'+phases.filter(p=>p==='reload').length; }, proof:async () => proof||({email:(current.keyring||current.file)===fixture('A')?'a@example.test':'b@example.test',generation:backend.generation,authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]}),signedOutProof:async()=>({generation:backend.generation,authValid:false}) };
   const journalKey = hostId === undefined ? JOURNAL_KEY : `${JOURNAL_KEY}.host.${require('node:crypto').createHash('sha256').update(hostId).digest('hex')}`;
   return { service, vault, data, slots, backend, phases, journalKey, set: x => { current=structuredClone(x); }, current:() => current, writes:() => writes, reads:() => reads, proof:x => { proof=x; } };
 }
 async function saveB(x) { x.set(B); const a=await x.service.capture({label:'B',expectedEmail:'b@example.test',identitySource:'user'}); x.set(A); return a; }
+test('explicit retain-current preserves original backup and never writes unknown new credentials', async () => {
+  const x = setup(), b = await saveB(x); await x.service.install(b.id, x.backend);
+  const original = await x.service.journal(), raw = x.data.get(x.journalKey);
+  const external = { keyring: fixture('EXTERNAL'), file: fixture('EXTERNAL') };
+  x.set(external); const writes = x.writes();
+  x.proof({ email: 'external@example.test', generation: x.backend.generation, authValid: true, quotaSource: 'server', observedAt: new Date().toISOString(), buckets: [] });
+  await x.service.retainCurrentLogin(x.backend, original.id);
+  const archive = `${x.journalKey}.retained.${original.id}`;
+  assert.equal(x.data.get(archive), raw); assert.equal(x.writes(), writes); assert.deepEqual(x.current(), external);
+  assert.equal((await x.service.finishVerified(x.backend)).email, 'external@example.test');
+  assert.equal(await x.service.journal(), null); assert.equal(x.data.get(archive), raw);
+});
+test('retain-current refuses failed fresh identity and concurrent credential rotation', async () => {
+  for (const mode of ['rpc', 'rotation']) {
+    const x = setup(), b = await saveB(x); await x.service.install(b.id, x.backend);
+    const j = await x.service.journal(), raw = x.data.get(x.journalKey), writes = x.writes(), proof = x.backend.proof;
+    x.backend.proof = async () => {
+      if (mode === 'rpc') throw Error('synthetic RPC failure');
+      const result = await proof(); x.set({ keyring: fixture('rotated'), file: fixture('rotated') }); return result;
+    };
+    await assert.rejects(x.service.retainCurrentLogin(x.backend, j.id));
+    assert.equal(x.data.get(x.journalKey), raw); assert.equal(x.writes(), writes);
+  }
+});
+test('failed retain-current archive storage leaves the unique active backup intact', async () => {
+  const x = setup(), b = await saveB(x); await x.service.install(b.id, x.backend);
+  const j = await x.service.journal(), raw = x.data.get(x.journalKey), store = x.vault.store;
+  x.vault.store = async (key, value) => { if (key.includes('.retained.')) throw Error('synthetic archive failure'); return store(key, value); };
+  await assert.rejects(x.service.retainCurrentLogin(x.backend, j.id));
+  assert.equal(x.data.get(x.journalKey), raw); assert.deepEqual((await x.service.journal()).backup, A);
+});
+test('retain-current cancellation after final proof preserves active and archived backups', async () => {
+  const x = setup(), b = await saveB(x); await x.service.install(b.id, x.backend);
+  const j = await x.service.journal(), raw = x.data.get(x.journalKey), proof = x.backend.proof;
+  let calls = 0, cancelled = false;
+  x.backend.proof = async () => { const result = await proof(); if (++calls === 2) cancelled = true; return result; };
+  const guard = { id: j.id, phase: j.phase, assertCurrent() { if (cancelled) throw new LiveError('RECOVERY_VERIFICATION_STALE'); } };
+  await assert.rejects(x.service.retainCurrentLogin(x.backend, j.id, guard), /RECOVERY_VERIFICATION_STALE/);
+  assert.equal(x.data.get(x.journalKey), raw); assert.equal(x.data.get(`${x.journalKey}.retained.${j.id}`), raw);
+});
 test('verified capture is idempotent across concurrent calls and keeps the saved fingerprint',async()=>{
  const x=setup(A,'host'),rows=[]; const index={read:()=>rows,write:async next=>{rows.splice(0,rows.length,...next)}};
  const metadata={label:'A',expectedEmail:'a@example.test',identitySource:'hub'};
@@ -387,7 +427,7 @@ async function historyPreservationFixture(t) {
   const accountB = await service.capture({ label: 'B', expectedEmail: 'b@example.test', identitySource: 'user' });
   await slots.write(A, B); await unchanged('fixture account capture');
   const lifecycle = (oldGeneration, _target, newGeneration) => {
-    const life = { generation: oldGeneration, stop: async () => undefined, reload: async () => {life.generation=newGeneration},
+    const life = { generation: oldGeneration, assertCredentialWriteSafe:async()=>{}, stop:async () => undefined, reload: async () => {life.generation=newGeneration},
       proof: async () => ({ email: (await slots.read()).keyring===A.keyring?'a@example.test':'b@example.test', generation: life.generation, authValid: true, quotaSource:'server',observedAt: new Date().toISOString(), buckets: [] }),
     };return life;
   };
@@ -897,4 +937,70 @@ test('same service retries uncommitted receipt store and deletion after transien
   await x.locks.withOperation(()=>x.service.resumeCompletion(x.finalizer));
   assert.equal(await x.locks.hasRecovery(),false);assert.equal(await x.service.hasCompletion(),false);assert.equal(await x.service.journal(),null);
  });
+});
+
+// These missing-current/pre-spawn counterexamples DO NOT start from a ready
+// current Hub. Ready admission is covered separately; do not generalize these
+// into a reason to disable normal online switching.
+// Exact official contracts (Library source excerpts): 1.8 start awaits asynchronous
+// setup before assigning serverProcess; stop with no process does not drain that
+// startingPromise. 1.9 restart awaits stop then unconditionally starts; clearing
+// its recovery timer cannot cancel an already entered restart. No official code runs.
+for (const source of ['1.8-startingPromise','1.9-in-flight-restart']) {
+ test(`${source}: empty snapshots can precede a late start during credential write`,async()=>{
+  const x=setup(),b=await saveB(x);let running=false,resume;
+  const paused=new Promise(r=>{resume=r});
+  const start=async()=>{if(source==='1.8-startingPromise')await paused;running=true};
+  // For 1.9, the first stop cleared references but is still awaiting old exit;
+  // a second manual stop sees no process and returns before that await settles.
+  const restart=async()=>{await paused;await start()};
+  const pending=source==='1.8-startingPromise'?start():restart();
+  x.backend.stop=async()=>{running=false;assert.equal(running,false);assert.equal(running,false)};
+  // An explicitly safe synthetic adapter allows the existing transaction to run,
+  // demonstrating why scanning alone cannot implement that adapter's guarantee.
+  x.backend.assertCredentialWriteSafe=async()=>{};
+  const store=x.vault.store;x.vault.store=async(k,v)=>{await store(k,v);if(k===x.journalKey&&JSON.parse(v).phase==='prepared'){resume();await pending;}};
+  let overlap=false;const write=x.slots.write;x.slots.write=async(...args)=>{overlap||=running;return write(...args)};
+  await x.service.install(b.id,x.backend);assert.equal(overlap,true);
+ });
+ test(`${source}: unavailable barrier rejects before stop, journal or credentials`,async()=>{
+  const x=setup(),b=await saveB(x);x.backend.assertCredentialWriteSafe=async()=>{throw new LiveError('OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE')};
+  const before=new Map(x.data);await assert.rejects(x.service.install(b.id,x.backend),/OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE/);
+  assert.equal(x.writes(),0);assert.deepEqual(x.phases,[]);assert.deepEqual(x.data,before);
+ });
+}
+test('missing barrier fails closed; save-only login also refuses before journal creation',async()=>{
+ const x=setup(),b=await saveB(x);delete x.backend.assertCredentialWriteSafe;
+ await assert.rejects(x.service.install(b.id,x.backend),/OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE/);
+ await assert.rejects(x.service.prepareLogin(x.backend),/OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE/);
+ assert.equal(x.writes(),0);assert.equal(await x.service.journal(),null);
+});
+test('unavailable restore barrier preserves existing journal bytes and current credentials',async()=>{
+ const x=setup(),b=await saveB(x);x.backend.assertCredentialWriteSafe=async()=>{};await x.service.install(b.id,x.backend);
+ const raw=x.data.get(x.journalKey),writes=x.writes(),phases=[...x.phases];
+ x.backend.assertCredentialWriteSafe=async()=>{throw new LiveError('OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE')};
+ await assert.rejects(x.service.restore(x.backend),/OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE/);
+ assert.equal(x.data.get(x.journalKey),raw);assert.equal(x.writes(),writes);assert.deepEqual(x.phases,phases);
+});
+
+test('barrier lost before dispatch records unchanged original for read-only recovery without rollback',async()=>{
+ const x=setup(),b=await saveB(x);let checks=0;
+ x.backend.assertCredentialWriteSafe=async()=>{if(++checks>1)throw new LiveError('OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE')};
+ await assert.rejects(x.service.install(b.id,x.backend),/OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE/);
+ assert.equal(x.writes(),0);assert.deepEqual(x.current(),A);assert.deepEqual((await x.service.journal()).backup,A);assert.equal((await x.service.journal()).phase,'restored');assert.equal(checks,2);
+});
+test('failed target write cannot invoke rollback after barrier is lost',async()=>{
+ const x=setup(),b=await saveB(x);let safe=true,attempts=0;
+ x.backend.assertCredentialWriteSafe=async()=>{if(!safe)throw new LiveError('OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE')};
+ x.slots.write=async()=>{attempts++;safe=false;throw Error('synthetic write failure')};
+ await assert.rejects(x.service.install(b.id,x.backend),/SWITCH_FAILED_RECOVERY_REQUIRED/);
+ assert.equal(attempts,1);assert.deepEqual((await x.service.journal()).backup,A);
+});
+test('admission loss with unknown new credentials preserves both new value and original backup',async()=>{
+ const x=setup(),b=await saveB(x);let checks=0;
+ const external={keyring:fixture('EXTERNAL'),file:fixture('EXTERNAL')};
+ x.backend.assertCredentialWriteSafe=async()=>{if(++checks>1){x.set(external);throw new LiveError('OFFICIAL_RECOVERY_CONFIGURATION_CHANGED');}};
+ await assert.rejects(x.service.install(b.id,x.backend),/EXTERNAL_CHANGE/);
+ assert.equal(x.writes(),0);assert.deepEqual(x.current(),external);
+ const journal=await x.service.journal();assert.equal(journal.phase,'prepared');assert.deepEqual(journal.backup,A);
 });

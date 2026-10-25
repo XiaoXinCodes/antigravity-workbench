@@ -21,7 +21,7 @@ exports.run = async () => {
   console.log('Smoke checkpoint: integrated workbench view resolved');
   for (const suffix of ['openHelp', 'addAccount', 'removeAccount', 'importSnapshot', 'refresh', 'reloadSnapshots', 'openBridgeGuide', 'showCapabilities']) assert.ok(commands.includes(`antigravityAccounts.${suffix}`));
   assert.ok(!commands.some(command => command.startsWith('antigravityAccounts.codex.')), 'Removed feature commands must not be registered');
-  for (const suffix of ['login', 'capture', 'switch', 'verify', 'quota', 'quotaCancel', 'restore', 'remove', 'unlock', 'export', 'import', 'acceptance']) assert.ok(commands.includes(`antigravityAccounts.live.${suffix}`));
+  for (const suffix of ['offlinePrepare', 'offlineContinue', 'offlineComplete', 'offlineKeepCurrent', 'hubRecover', 'hubRestart', 'hubRecoverCancel', 'login', 'capture', 'switch', 'verify', 'quota', 'quotaCancel', 'restore', 'remove', 'unlock', 'export', 'import', 'acceptance']) assert.ok(commands.includes(`antigravityAccounts.live.${suffix}`));
   for (const suffix of ['open', 'cancel']) assert.ok(commands.includes(`antigravityAccounts.images.${suffix}`));
   for (const suffix of ['copyExtension', 'copyCredentials', 'copyImageOutput', 'openExtension']) assert.ok(commands.includes(`antigravityAccounts.locations.${suffix}`));
   for (const suffix of ['toggle', 'catalog', 'copyDirectory', 'openDirectory', 'preview', 'exportPreview', 'tools', 'dismissCatalog']) assert.ok(commands.includes(`antigravityAccounts.debug.${suffix}`));

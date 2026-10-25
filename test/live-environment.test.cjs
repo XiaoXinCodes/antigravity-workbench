@@ -87,7 +87,7 @@ test('WSL prepareLogin backs up both original slots even when their accounts dif
   }, 'mutation');
   const vault = { get: async key => data.get(key), store: async (key, value) => { data.set(key, value); }, delete: async key => { data.delete(key); } };
   const service = new LiveSwitchService(vault, slots, 'synthetic-wsl-file-host');
-  await service.prepareLogin({ generation: 'synthetic-hub-generation', proof:async()=>({email:'other@example.test',generation:'synthetic-hub-generation',authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]}) });
+  await service.prepareLogin({ assertCredentialWriteSafe:async()=>{}, generation: 'synthetic-hub-generation', proof:async()=>({email:'other@example.test',generation:'synthetic-hub-generation',authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]}) });
   const journal = [...data.entries()].find(([key]) => key.startsWith(JOURNAL_KEY));
   assert.ok(journal, 'host-scoped encrypted recovery must exist');
   assert.deepEqual(JSON.parse(journal[1]).backup, original);
@@ -341,7 +341,7 @@ test('file-scoped login cancellation, reload restore, import switching and histo
   const vault = { get: async k => data.get(k), store: async (k,v) => data.set(k,v), delete: async k => data.delete(k) };
   const create = () => new LiveSwitchService(vault, new EnvironmentTokenSlots(root, 'linux', { WSL_DISTRO_NAME: 'synthetic' }, { createKeyring: forbiddenKeyring, fileOnlyGuard: async () => true }, 'mutation'), 'synthetic-wsl-host');
   let service = create(), stopped = 0, reloads = 0;
-  const life = { generation: 'old', stop: async () => { stopped++; }, reload: async () => { reloads++;life.generation='new-'+reloads }, proof: async () => ({ authValid: true, generation: life.generation, email: (await fs.readFile(filename,'utf8'))===raw('A')?'a@example.test':'b@example.test',quotaSource:'server',observedAt:new Date().toISOString(),buckets:[] }) };
+  const life = { generation: 'old', assertCredentialWriteSafe:async()=>{}, stop:async () => { stopped++; }, reload: async () => { reloads++;life.generation='new-'+reloads }, proof: async () => ({ authValid: true, generation: life.generation, email: (await fs.readFile(filename,'utf8'))===raw('A')?'a@example.test':'b@example.test',quotaSource:'server',observedAt:new Date().toISOString(),buckets:[] }) };
   await service.prepareLogin(life); assert.deepEqual((await service.journal()).backup, fileScope(raw('A')));
   await fs.writeFile(filename, raw('B'), { mode: 0o600 }); await service.restore(life);
   assert.equal(await fs.readFile(filename, 'utf8'), raw('A')); assert.deepEqual((await service.journal()).backup, fileScope(raw('A'))); await service.finish();
@@ -364,7 +364,7 @@ test('file-scoped recovery can stop a hub whose startup proof disappeared, then 
   await fs.writeFile(filename,raw('A'),{mode:0o600});
   const vault={get:async k=>data.get(k),store:async(k,v)=>data.set(k,v),delete:async k=>data.delete(k)};
   const slots=new EnvironmentTokenSlots(root,'linux',{WSL_DISTRO_NAME:'synthetic'},{createKeyring:forbiddenKeyring,fileOnlyGuard:async allowStopped=>running?readable:allowStopped},'mutation');
-  const service=new LiveSwitchService(vault,slots), life={generation:'old',stop:async()=>{running=false},reload:async()=>{},proof:async()=>({authValid:true,generation:'old',email:'a@example.test',quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]})};
+  const service=new LiveSwitchService(vault,slots), life={generation:'old',assertCredentialWriteSafe:async()=>{}, stop:async()=>{running=false},reload:async()=>{},proof:async()=>({authValid:true,generation:'old',email:'a@example.test',quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]})};
   await service.prepareLogin(life); await fs.writeFile(filename,raw('B'),{mode:0o600}); readable=false;
   await service.restore(life); assert.equal(await fs.readFile(filename,'utf8'),raw('A'));assert.equal((await service.journal()).phase,'restored');
 });
@@ -373,7 +373,7 @@ test('large imported tokens use only proven WSL file scope and do not inherit na
   const vault={get:async k=>data.get(k),store:async(k,v)=>data.set(k,v),delete:async k=>data.delete(k)};
   const slots=new EnvironmentTokenSlots(root,'linux',{WSL_DISTRO_NAME:'synthetic'},{createKeyring:forbiddenKeyring,fileOnlyGuard:async()=>true},'mutation');
   const service=new LiveSwitchService(vault,slots),entries=await service.importAccounts([{label:'large',expectedEmail:'large@example.test',capturedAt:new Date().toISOString(),token}],{read:()=>index,write:async v=>{index=v}},{query:async account=>({subject:'synthetic-subject',proof:{email:account.expectedEmail,authValid:true,quotaSource:'server',generation:'synthetic',observedAt:new Date().toISOString(),buckets:[]}})});
-  await service.install(entries[0].id,{generation:'old',stop:async()=>{},reload:async()=>{},signedOutProof:async()=>({generation:'old',authValid:false})});
+  await service.install(entries[0].id,{generation:'old',assertCredentialWriteSafe:async()=>{}, stop:async()=>{},reload:async()=>{},signedOutProof:async()=>({generation:'old',authValid:false})});
   assert.deepEqual(await slots.read(),fileScope(token));
 });
 test('startup reader rejects in-place edits and inode replacement during the bounded read', {skip:process.platform==='win32'}, async t=>{
@@ -391,7 +391,7 @@ test('old full-slot journal remains strict even when the new hub is proven file-
   const old={schema:1,id:'synthetic',phase:'installed',oldGeneration:'old',target:{id:'synthetic'},backup:{keyring:raw('original-native'),file:raw('A')}};data.set(JOURNAL_KEY,JSON.stringify(old));
   const slots=new EnvironmentTokenSlots(root,'linux',{WSL_DISTRO_NAME:'synthetic'},{fileOnlyGuard:async()=>true,createKeyring:()=>({read:async()=>{throw new LiveError('KEYRING_UNAVAILABLE')},write:async()=>{throw new Error('must not write')}})},'mutation');
   const service=new LiveSwitchService(vault,slots);
-  await assert.rejects(service.restore({generation:'current',stop:async()=>{stopped++},reload:async()=>{}}),/KEYRING_UNAVAILABLE/);
+  await assert.rejects(service.restore({generation:'current',assertCredentialWriteSafe:async()=>{}, stop:async()=>{stopped++},reload:async()=>{}}),/KEYRING_UNAVAILABLE/);
   assert.equal(stopped,0);assert.deepEqual(await service.journal(),old);
 });
 test('WSL proof checks generation again after the final awaited process count',async()=>{
@@ -401,4 +401,26 @@ test('WSL proof checks generation again after the final awaited process count',a
  let stoppedApi,count=0;
  const stopped=createWslFileGuard('/synthetic','/synthetic/agy',()=>stoppedApi,async()=>{if(++count===2)stoppedApi=api;return 0;});
  assert.equal(await stopped(true),false);
+});
+test('WSL actual rename rechecks the component barrier after temporary file fsync', async t => {
+  const root = await home(t), target = path.join(root, '.gemini', 'jetski-standalone-oauth-token');
+  await fs.writeFile(target, fileA.file, { mode: 0o600 });
+  let stopped = true;
+  const slots = await createOfficialTokenSlots(root, 'linux', { WSL_DISTRO_NAME: 'synthetic' }, {
+    createKeyring: forbiddenKeyring, fileOnlyGuard: async () => stopped,
+  }, 'mutation');
+  const open = fs.open;
+  fs.open = async (filename, ...args) => {
+    const handle = await open(filename, ...args);
+    if (typeof filename === 'string' && path.basename(filename).startsWith('.agm-')) {
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => { await sync(); stopped = false; };
+    }
+    return handle;
+  };
+  try {
+    await assert.rejects(slots.write({ keyring: null, file: raw('B'), keyringState: 'unobserved' }, { ...fileA, keyringState: 'unobserved' }), /WSL_FILE_ROUTE_UNVERIFIED/);
+    assert.equal(await fs.readFile(target, 'utf8'), fileA.file);
+    assert.deepEqual((await fs.readdir(path.dirname(target))).filter(name => name.endsWith('.tmp')), []);
+  } finally { fs.open = open; }
 });

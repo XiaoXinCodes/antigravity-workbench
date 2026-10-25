@@ -1,6 +1,9 @@
 import { generation, hasOfficialHubApi, noteObservedHubRestart } from './live-hub';
 import { LiveError } from './live-storage';
 
+export const OFFICIAL_RESTART_TIMEOUT_MS = 60_000;
+export const COMPONENT_REQUEST_TIMEOUT_MS = OFFICIAL_RESTART_TIMEOUT_MS + 30_000;
+export type OfficialRestartStage = 'commands' | 'observing' | 'ready';
 export const OFFICIAL_RECONNECT = 'antigravity.reconnect';
 export const OFFICIAL_FOCUS = 'antigravity.panel.focus';
 export function canRestartOfficialComponent(commands: readonly string[]): boolean {
@@ -9,51 +12,61 @@ export function canRestartOfficialComponent(commands: readonly string[]): boolea
 interface RestartRuntime {
   api(): unknown; assertCurrent(): void; processCount(): Promise<number>;
   execute(command: string): PromiseLike<unknown>; wait?(ms: number): Promise<void>;
-  now?(): number; timeoutMs?: number;
+  observeOnly?: boolean;
+  now?(): number; timeoutMs?: number; onStage?(stage: OfficialRestartStage): void;
 }
 /** Reconnect is the official registered command. It invalidates the renderer's
- * cached server URL; focusing its view runs desktopSetup and starts the stopped
- * backend. Do not use triggerUpdate (updates software), resetConversation, private
+ * cached server URL and re-renders an already resolved view. Focus resolves a
+ * view only when needed; it is not an unconditional backend start command. Do not use triggerUpdate (updates software), resetConversation, private
  * workbench commands, activate() twice, or mutate the official workspace history.
  */
 export async function restartOfficialComponent(_previous: string, runtime: RestartRuntime): Promise<string> {
-  runtime.assertCurrent();
-  const api = runtime.api();
-  if (hasOfficialHubApi(api) || await runtime.processCount() !== 0) throw new LiveError('OFFICIAL_BACKEND_NOT_STOPPED');
-  runtime.assertCurrent();
-  // The official backend may have started while the process query was pending.
-  if (hasOfficialHubApi(runtime.api())) throw new LiveError('OFFICIAL_BACKEND_NOT_STOPPED');
-  let commandTimer: NodeJS.Timeout | undefined;
-  let commandExpired = false;
-  try {
-    await Promise.race([
-      (async () => {
-        try { await runtime.execute(OFFICIAL_RECONNECT); }
-        catch { throw new LiveError('OFFICIAL_COMPONENT_RECONNECT_FAILED'); }
-        if (commandExpired) throw new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT');
-        runtime.assertCurrent();
-        try { await runtime.execute(OFFICIAL_FOCUS); }
-        catch { throw new LiveError('OFFICIAL_COMPONENT_FOCUS_FAILED'); }
-      })(),
-      new Promise<never>((_resolve, reject) => { commandTimer = setTimeout(() => { commandExpired = true; reject(new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT')); }, runtime.timeoutMs ?? 30_000); }),
-    ]);
-  } finally { clearTimeout(commandTimer); }
-  const now = runtime.now ?? Date.now, until = now() + (runtime.timeoutMs ?? 30_000);
-  const wait = runtime.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
-  do {
+  const now = runtime.now ?? Date.now;
+  const budget = runtime.timeoutMs ?? OFFICIAL_RESTART_TIMEOUT_MS;
+  const until = now() + budget;
+  let expired = false, timer: NodeJS.Timeout | undefined;
+  const assertCurrent = (): void => {
+    if (expired || now() >= until) throw new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT');
     runtime.assertCurrent();
-    const current = runtime.api();
-    if (hasOfficialHubApi(current)) {
-      const pinned = { port: current.port, csrfToken: current.csrfToken };
-      const next = generation(pinned), count = await runtime.processCount();
-      if (count > 1) throw new LiveError('CLOSE_OTHER_AGY_PROCESSES');
-      runtime.assertCurrent();
-      const stable = runtime.api();
-      if (!hasOfficialHubApi(stable) || generation(stable) !== next) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
-      if (count === 1) return noteObservedHubRestart(pinned);
+  };
+  const work = async (): Promise<string> => {
+    assertCurrent();
+    if (!runtime.observeOnly) {
+    const api = runtime.api();
+    if (hasOfficialHubApi(api) || await runtime.processCount() !== 0) throw new LiveError('OFFICIAL_BACKEND_NOT_STOPPED');
+    assertCurrent();
+    if (hasOfficialHubApi(runtime.api())) throw new LiveError('OFFICIAL_BACKEND_NOT_STOPPED');
+    runtime.onStage?.('commands');
+    try { await runtime.execute(OFFICIAL_RECONNECT); }
+    catch { assertCurrent(); throw new LiveError('OFFICIAL_COMPONENT_RECONNECT_FAILED'); }
+    assertCurrent();
+    try { await runtime.execute(OFFICIAL_FOCUS); }
+    catch { assertCurrent(); throw new LiveError('OFFICIAL_COMPONENT_FOCUS_FAILED'); }
+    assertCurrent();
     }
-    await wait(200);
-  } while (now() < until);
-  // A command returning does not prove a new backend, identity or loaded token.
-  throw new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT');
+    runtime.onStage?.('observing');
+    const wait = runtime.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+    do {
+      assertCurrent();
+      const current = runtime.api();
+      if (hasOfficialHubApi(current)) {
+        const pinned = { port: current.port, csrfToken: current.csrfToken };
+        const next = generation(pinned), count = await runtime.processCount();
+        assertCurrent();
+        if (count > 1) throw new LiveError('CLOSE_OTHER_AGY_PROCESSES');
+        const stable = runtime.api();
+        if (!hasOfficialHubApi(stable) || generation(stable) !== next) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
+        if (count === 1) { runtime.onStage?.('ready'); return noteObservedHubRestart(pinned); }
+      }
+      await wait(Math.min(200, Math.max(0, until - now())));
+    } while (now() < until);
+    throw new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT');
+  };
+  // One budget covers preflight, both command awaits and process observation.
+  // Expiry fences every continuation; it cannot cancel official internal setup.
+  try {
+    return await Promise.race([work(), new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => { expired = true; reject(new LiveError('OFFICIAL_COMPONENT_RESTART_TIMEOUT')); }, budget);
+    })]);
+  } finally { expired = true; clearTimeout(timer); }
 }

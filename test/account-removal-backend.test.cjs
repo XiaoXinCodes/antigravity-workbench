@@ -61,10 +61,11 @@ function fixture(t, options = {}) {
     async inspectOperationActivity() { record('inspect-lock'); return activity || { state: 'absent', kind: 'unknown', scope: 'unknown' }; },
     async isOperationCurrent(expected) { return activity === expected; },
     async withOperation(fn) { if (activity) throw new LiveError('LIVE_OPERATION_OR_RECOVERY_LOCKED'); record('lock'); try { return await fn(); } finally { record('unlock'); } },
-    async hasRecovery() { return false; }, async beginRecovery() { record('begin-recovery'); }, async clearRecovery() { record('clear-recovery'); }, async assertRecovery() {}
+    async inspectRecovery() { return {state:'absent'}; }, async hasRecovery() { return false; }, async beginRecovery() { record('begin-recovery'); }, async clearRecovery() { record('clear-recovery'); }, async assertRecovery() {}
   };
   const backend = {
     get generation() { return generation; }, restartMode: 'component',
+    async assertCredentialWriteSafe() {if(ui.barrierFailure)throw ui.barrierFailure;},
     async stop() { record('stop-hub'); running = false; },
     async reload() { record('reload-hub'); running = true; ++serial; official.exports = {...official.exports, csrfToken: `synthetic-csrf-${serial}`}; generation = load('live-hub').generation(official.exports); ui.afterReload?.(); },
     async proof() { if (!running) throw new LiveError('OFFICIAL_HUB_NOT_READY'); record('proof', currentEmail); if (ui.proofFailure) throw ui.proofFailure; return proof(); },
@@ -81,12 +82,12 @@ function fixture(t, options = {}) {
     async endMany(ids, signal) { record('end-many', [...ids]); if (ids.some(id => !selections.has(id)) || rows.some(row => !ids.includes(row.id))) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE'); if (ui.endMany) return ui.endMany(ids, signal); rows = []; return ids.map(() => 'exited'); },
     invalidate() { selections.clear(); }
   };
-  const controller = api.registerLiveUi(context, { service, locks, lifecycle: async() => {
+  const controller = api.registerLiveUi(context, { storageMode:options.storageMode, service, locks, lifecycle: async() => {
     record('resolve-lifecycle'); if (rows.length) throw new LiveError('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN');
     return running ? backend : {...backend, generation:'stopped'};
   }, currentIdentity: async() => proof(), currentQuota: async() => proof(), processRecovery: recovery, changed: () => record('ui-state') });
   t.after(() => { context.subscriptions.forEach(subscription => subscription.dispose()); trace.push({ test: t.name, synthetic: true, events, warnings, final: controller.getState() }); });
-  return { accounts, events, warnings, notifications, ui, state, data, context, controller, backend, service, locks, recovery, record, current: () => structuredClone(currentSlots), email: () => currentEmail, rows: () => rows, setRows: value => { rows = value; }, activity: value => { activity = value; }, call: (name, argument) => commands.get(`antigravityAccounts.live.${name}`)(argument) };
+  return { official, accounts, events, warnings, notifications, ui, state, data, context, controller, backend, service, locks, recovery, record, current: () => structuredClone(currentSlots), email: () => currentEmail, rows: () => rows, setRows: value => { rows = value; }, activity: value => { activity = value; }, call: (name, argument) => commands.get(`antigravityAccounts.live.${name}`)(argument) };
 }
 const count = (f, name) => f.events.filter(row => row.event === name).length;
 const order = (f, before, after) => assert.ok(f.events.findIndex(row => row.event === before) < f.events.findIndex(row => row.event === after), `${before} must precede ${after}`);
@@ -144,13 +145,13 @@ test('deleting the only current saved copy keeps the official login and the obse
 });
 
 test('same-capability current Hub replacement after detached batch completion blocks stop and credential writes', async t => {
-  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({scans,replaceCurrent})=>{if(scans===2)replaceCurrent(2002,'20002');});
+  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({replaceCurrent})=>{if(count(f,'native-helper-end')===1)replaceCurrent(2002,'20002');});
   await f.call('switch',ACCOUNT_B);assert.equal(count(f,'native-helper-end'),1);assert.equal(count(f,'stop-hub'),0);assert.equal(count(f,'credential-write'),0);
   assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);assert.match(f.warnings[0].message,/PID 1001/);
 });
 
 test('same-capability current Hub replacement during lifecycle resolution is rejected by the final scan', async t => {
-  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({scans,replaceCurrent})=>{if(scans===3)replaceCurrent(2002,'20002');});
+  const f=fixture(t,{rows:[detached(710)]});realRecovery(f,({replaceCurrent})=>{if(count(f,'resolve-lifecycle')===1)replaceCurrent(2002,'20002');});
   await f.call('switch',ACCOUNT_B);assert.equal(count(f,'native-helper-end'),1);assert.equal(count(f,'resolve-lifecycle'),1);
   assert.equal(count(f,'stop-hub'),0);assert.equal(count(f,'credential-write'),0);assert.equal(f.email(),'a@example.test');assert.ok(f.controller.getState().error);
 });
@@ -166,4 +167,34 @@ test('cancelling a hidden switch preflight keeps existing conflict buttons bound
 
 test.after(()=>{
   if(process.env.ACCOUNT_BACKEND_UI_TIMELINE){fs.mkdirSync(path.dirname(process.env.ACCOUNT_BACKEND_UI_TIMELINE),{recursive:true});fs.writeFileSync(process.env.ACCOUNT_BACKEND_UI_TIMELINE,JSON.stringify({moduleRoot:output,synthetic:true,realGoogleCalls:false,productionUi:true,productionAccountService:true,productionProcessRecovery:true,nativeProcessHelperSimulated:true,traces:trace},null,2)+'\n');}
+});
+
+test('WSL replacement deletion without related peers preserves single-host CAS checks', async t => {
+ const f=fixture(t,{rows:[],storageMode:'wsl-file'});realRecovery(f);
+ await f.call('remove',ACCOUNT_A);
+ assert.equal(count(f,'credential-write'),1);assert.equal(count(f,'native-helper-end'),0);
+ assert.equal(f.email(),'b@example.test');assert.deepEqual(f.controller.getAccounts().map(a=>a.id),[ACCOUNT_B]);
+ assert.equal(f.warnings.length,2);assert.equal(await f.service.journal(),null);
+});
+test('WSL normal switch needs no cooperative capability or offline dispatch', async t => {
+ const f=fixture(t,{rows:[],storageMode:'wsl-file'});realRecovery(f);
+ await f.call('switch',ACCOUNT_B);
+ assert.ok(!f.events.some(e=>e.event==='command'&&/offline|closeWindow|reloadWindow/.test(e.detail)));
+ assert.equal(count(f,'credential-write'),1);assert.equal(count(f,'native-helper-end'),0);assert.equal(f.email(),'b@example.test');assert.equal(f.warnings.length,1);
+});
+test('WSL replacement cancellation preserves both account copies and does not stop peers',async t=>{
+ const f=fixture(t,{rows:[detached(710)],storageMode:'wsl-file'});realRecovery(f);const before=f.current();
+ let confirmations=0;f.ui.warning=(_message,action)=>++confirmations===1?action:undefined;
+ await f.call('remove',ACCOUNT_A);assert.deepEqual(f.current(),before);assert.deepEqual(f.controller.getAccounts().map(a=>a.id),[ACCOUNT_A,ACCOUNT_B]);
+ for(const event of ['credential-write','native-helper-end','stop-hub','vault-delete'])assert.equal(count(f,event),0,event);
+});
+test('unsupported 1.9 lifecycle blocks replacement credential mutation and deletion',async t=>{
+ const f=fixture(t,{storageMode:'wsl-file'});f.official.packageJSON.version='1.9.0';realRecovery(f);const before=f.current();
+ f.ui.barrierFailure=new(load('live-storage').LiveError)('OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE');
+ await f.call('remove',ACCOUNT_A);assert.deepEqual(f.current(),before);assert.deepEqual(f.controller.getAccounts().map(a=>a.id),[ACCOUNT_A,ACCOUNT_B]);
+ for(const event of ['credential-write','stop-hub','vault-delete','begin-recovery'])assert.equal(count(f,event),0,event);
+});
+
+test('WSL peer without a recovery channel is never killed to switch or remove an account',async t=>{
+ for(const action of ['switch','remove']){const f=fixture(t,{rows:[detached(710)],storageMode:'wsl-file'});realRecovery(f);const before=f.current();await f.call(action,action==='switch'?ACCOUNT_B:ACCOUNT_A);assert.equal(count(f,'native-helper-end'),0);assert.equal(count(f,'credential-write'),0);assert.deepEqual(f.current(),before);assert.deepEqual(f.controller.getAccounts().map(a=>a.id),[ACCOUNT_A,ACCOUNT_B]);}
 });

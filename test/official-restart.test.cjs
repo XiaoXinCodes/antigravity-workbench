@@ -87,3 +87,19 @@ test('account switch cannot stop a pending image confirmation or nested batch; r
  finally { release(); release(); }
  enterImageOperation('after')();
 });
+test('command delay consumes the same recovery budget rather than starting a new observation deadline',async()=>{
+ let clock=0;const phases=[],commands=[];
+ const runtime={now:()=>clock,timeoutMs:100,api:()=>undefined,processCount:async()=>0,assertCurrent:()=>{},
+ execute:async c=>{commands.push(c);clock+=40;},wait:async ms=>{clock+=ms;},onStage:s=>phases.push(s)};
+ await assert.rejects(restartOfficialComponent('stopped',runtime),{code:'OFFICIAL_COMPONENT_RESTART_TIMEOUT'});
+ assert.equal(clock,100);assert.deepEqual(phases,['commands','observing']);assert.equal(commands.length,2);
+ const {OFFICIAL_RESTART_TIMEOUT_MS,COMPONENT_REQUEST_TIMEOUT_MS}=require('../out/official-restart');
+ assert.ok(COMPONENT_REQUEST_TIMEOUT_MS>OFFICIAL_RESTART_TIMEOUT_MS);
+});
+test('timeout during observation fences late ready result without issuing a success epoch',async()=>{
+ let count=0,settle;const phases=[];
+ const runtime={timeoutMs:10,api:()=>count?api:undefined,assertCurrent:()=>{},execute:async()=>{count=1;},
+ processCount:async()=>count?new Promise(resolve=>{settle=resolve;}):0,onStage:s=>phases.push(s)};
+ const before=generation(api);await assert.rejects(restartOfficialComponent('stopped',runtime),{code:'OFFICIAL_COMPONENT_RESTART_TIMEOUT'});
+ settle(1);await new Promise(setImmediate);assert.equal(generation(api),before);assert.ok(!phases.includes('ready'));
+});

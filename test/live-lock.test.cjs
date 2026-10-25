@@ -454,3 +454,25 @@ test('claim retry retains its exact authority across consecutive release and rea
   assert.equal(await locks.hasRecovery(),false);
  }finally{fs.unlink=unlink;fs.lstat=lstat;}
 }));
+test('offline recovery fence survives owner death and cannot enter legacy cleanup',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER,options()),id=randomUUID();
+ await locks.withOperation(()=>locks.beginOfflineRecovery(id));
+ const raw=await read(dir,recovery);assert.equal(JSON.parse(raw).schema,4);
+ const reader=new LiveLocks(dir,OWNER,options(async()=>({state:'dead'}),100));
+ for(const action of [()=>reader.clearAbandonedRecovery(),()=>reader.clearRecovery(id),()=>reader.assertRecovery(id),
+  ()=>reader.withOperation(()=>reader.reconcileRecovery(null)),()=>reader.withOperation(()=>reader.prepareCompletion(id,'x'))]){
+  await assert.rejects(action(),{code:'OFFLINE_RECOVERY_REQUIRED'});assert.equal(await read(dir,recovery),raw);
+ }
+ await reader.withOperation(async()=>{await reader.assertOfflineRecovery(id);await reader.clearOfflineRecovery(id);});
+ assert.equal(await reader.hasRecovery(),false);
+}));
+test('offline fence creation and retirement require operation ownership and exact transaction',async()=>fixture(async dir=>{
+ const locks=new LiveLocks(dir,OWNER,options()),id=randomUUID();
+ await assert.rejects(locks.beginOfflineRecovery(id),{code:'LOCK_OPERATION_REQUIRED'});
+ await locks.withOperation(async()=>{
+  await locks.beginOfflineRecovery(id);
+  await assert.rejects(locks.clearOfflineRecovery(randomUUID()),{code:'RECOVERY_LOCK_OWNER_MISMATCH'});
+ });
+ await assert.rejects(locks.clearOfflineRecovery(id),{code:'LOCK_OPERATION_REQUIRED'});
+ assert.equal((await locks.inspectRecovery()).owner.id,id);
+}));

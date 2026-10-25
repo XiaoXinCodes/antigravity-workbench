@@ -52,5 +52,13 @@
   "configuration.hideIdentity": "在界面、提醒、快速选择及状态栏中，用固定别名替代账号名称和邮箱，适合截图或屏幕共享。",
   "command.quota.history": "额度观察历史",
   "command.observations.open": "模型与 Token 记录",
-  "command.workbench.open": "在编辑器打开工作台"
+  "command.workbench.open": "在编辑器打开工作台",
+  "command.live.hubRestart": "重启当前后台（会中断其任务）",
+  "command.live.hubRecover": "恢复本窗口缺失的后台",
+  "command.live.offlinePrepare": "准备关闭后切号",
+  "command.live.offlineContinue": "继续关闭后切号",
+  "command.live.offlineComplete": "完成关闭后切号",
+  "command.live.offlineKeepCurrent": "保留当前登录并结束离线事务",
+  "command.importWindowAcceptance": "导入窗口能力验收",
+  "command.recoverHosts": "恢复已写入账号：重启扩展宿主并核验"
 }

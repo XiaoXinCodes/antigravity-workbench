@@ -1,31 +1,19 @@
-# 切换与恢复
+# 切换与恢复 / Switching and recovery
 
-在账号卡片点击“切换”，确认后由 Workbench 安装目标登录、重启官方组件并自动核验服务端身份。正常完成不需要手动重载整个 VS Code 窗口，也不需要用户自行判断身份是否切换成功。
+在目标账号卡片点击“切换”，确认任务中断范围后，由 Workbench 核验同一登录范围内的相关后台、等待退出、写入一次、恢复后台并重新核验身份。普通切换不要求恢复密码、外部终端或关闭整个 VS Code。操作期间不要在其他窗口并行切号、重新登录或手动重连后台。
 
-## 切换前
+进度直接显示在目标账号按钮附近。窗口数量只表示当前恢复或核验阶段已处理的数量，不等于整次切换成功；最终结果以新取得的服务端身份和事务提交为准。
 
-- 账号必须保存于当前宿主；导入时自动核验候选身份和额度，切换仍会核验官方登录。
-- 确认框列出本窗口后台、经核验同一登录范围的相关后台与本插件图片任务。相关后台可能来自其他窗口或归属未知；确认可能中断所列范围中的任务，取消则保留当前状态。
-- 其他账号变更正在进行时，等待其结束或取消。本插件图片任务可在明确确认后取消，等待释放再继续；插件不会并行写入同一登录状态。
+账号已提交但后台收尾未完成时，工作台分别显示两种状态，不自动写回旧账号。按提示重试恢复；只有明确安装或提交证据才提供宿主重启恢复。该退路需要用户确认，可能中断同窗口其他扩展、调试或任务；不修改 VS Code 的登录、profile 或同步配置。
 
-正常流程处理明确确认的范围。窗口归属未知时仍如实显示，不假定后台空闲；无法核验进程身份或登录范围、确认后范围变化时会阻止操作并显示异常详情，不按进程名批量结束。官方停止钩子超过等待期限时显示错误，实际钩子尚未结束时禁止重复停止或重启。
+未知新凭据不会被自动覆盖，唯一备份不会因超时删除。历史离线事务继续提供其原有读取、取消和恢复入口；它们不是新切换的默认流程，不要手动删锁或恢复材料。
 
-切换期间保留原登录备份。成功后账号卡片显示“当前 / 使用中”；仍在核验、失败或超时不会被当成完成。
+兼容性以实际接口、配置、宿主与进程归属为准，不按官方版本号一律准入或拒绝。官方自身启动失败、无法确认存储范围或外部并发登录仍可能中断操作。当前有效自动恢复配置开启时，不应假定停止会取消所有在途恢复；按具体提示处理，Workbench 不会静默更改官方配置。
 
-## 工作台提示如何处理
+## English
 
-| 状态 | 下一步 |
-| --- | --- |
-| 正在切换或自动核验 | 等待本次操作完成，不重复点击 |
-| 可“重新检查登录” | 确认官方组件可用后点击，继续核验当前未完成操作 |
-| 提供恢复入口 | 按提示恢复切换前登录，再等待原身份核验 |
-| 另一个窗口或进程正在操作 | 先结束冲突操作；身份不明时不会强行抢占 |
-| 当前凭据或后台发生变化 | 停止追加变更，保留状态并收集错误码 |
+Select an account and confirm the interruption scope. Workbench checks related backends, waits for their exit, writes once, restores backends and freshly verifies identity. The normal route requires no recovery password, external terminal or closing all VS Code windows. Do not switch, sign in or manually reconnect concurrently from other windows.
 
-恢复只处理与当前未完成操作匹配的状态。无法确认存储、后台或身份时会停止，保留必要备份；不要手动删除锁文件或反复覆盖登录文件。
+Progress appears beside the selected account. Window counts refer only to the current step. Account commit and incomplete backend cleanup are reported separately. Explicit host restart recovery requires installed/committed evidence and user confirmation; other extensions, debug sessions or tasks in that window may be interrupted. VS Code login, profile and sync configuration are not changed.
 
-## 数据范围
-
-切换针对官方登录状态，不用于删除官方会话、图片或项目历史。Workbench 的已保存账号副本仍留在列表中，除非用户明确“移除”。跨宿主使用账号应走加密迁移流程。
-
-[账号管理](INDEPENDENT_ACCOUNTS.md) · [加密迁移](ACCOUNT_MIGRATION.md) · [故障排查](TROUBLESHOOTING.md) · [验证范围](VALIDATION_0.1.9.md)
+Unknown external credentials are not overwritten. Timeouts do not delete the only backup. Older offline transactions retain their original cancellation/recovery routes but are not the default for new switches. Compatibility depends on actual capabilities, configuration and ownership, not a version-number allowlist. Official startup or storage-scope verification can still fail; no unconditional success is promised.

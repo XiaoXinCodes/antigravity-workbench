@@ -6,7 +6,7 @@ import { execFile, type ExecFileOptions } from 'node:child_process';
 import { promisify } from 'node:util';
 import { LiveError } from './live-storage';
 
-export interface LockOwner { schema: 1 | 2 | 3; owner: string; id: string; pid: number; nonce?: string; startIdentity?: string | null; purpose?: 'image'; completion?: string }
+export interface LockOwner { schema: 1 | 2 | 3 | 4; owner: string; id: string; pid: number; nonce?: string; startIdentity?: string | null; purpose?: 'image'; completion?: string }
 // Only claims whose owning operation has finished may be retried in this process.
 const endedClaims = new Map<string, Snapshot>();
 const endedOperations = new Map<string, LockOwner>();
@@ -103,7 +103,7 @@ export class LiveLocks {
         raw = await handle.readFile('utf8');
       } finally { await handle.close(); }
       const item = JSON.parse(raw) as LockOwner;
-      if (!(location === this.recovery ? [1, 2, 3] : [1, 2]).includes(item.schema) || !/^[a-f0-9]{64}$/.test(item.owner) || !UUID.test(item.id) || !Number.isSafeInteger(item.pid) || item.pid < 1) throw 0;
+      if (!(location === this.recovery ? [1, 2, 3, 4] : [1, 2]).includes(item.schema) || !/^[a-f0-9]{64}$/.test(item.owner) || !UUID.test(item.id) || !Number.isSafeInteger(item.pid) || item.pid < 1) throw 0;
       if (item.schema !== 1 && (!UUID.test(item.nonce ?? '') || item.startIdentity !== null && (typeof item.startIdentity !== 'string' || item.startIdentity.length < 1 || item.startIdentity.length > 256))) throw 0;
       if (item.purpose !== undefined && item.purpose !== 'image') throw 0;
       return { owner: item, raw, dev: dir.dev, ino: dir.ino };
@@ -159,6 +159,15 @@ export class LiveLocks {
     const current = await this.inspectOperation();
     return current.state === 'active' && this.sameOwner(expected.owner, current.owner);
   }
+  /** Read-only participant authentication across profiles sharing this exact
+   * credential directory. This grants no lock acquisition/removal authority. */
+  async isSharedOperationCurrent(expected: LockInspection): Promise<boolean> {
+    if (expected.state !== 'active' || expected.owner?.purpose) return false;
+    const snapshot = await this.read(this.operation);
+    if (!this.sameOwner(expected.owner, snapshot?.owner)) return false;
+    const identity = await this.probe(snapshot!.owner.pid);
+    return identity.state === 'alive' && identity.startIdentity === snapshot!.owner.startIdentity;
+  }
   /** Recognize only this instance's currently held, fully identified operation. */
   ownsOperation(inspection: LockInspection): boolean {
     return inspection.state === 'active' && this.sameOwner(inspection.owner, this.heldOperation);
@@ -172,7 +181,7 @@ export class LiveLocks {
     throw new LiveError(current.state === 'uncertain' ? current.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN' : 'LOCK_OWNERSHIP_CHANGED');
   }
   async inspectRecovery(): Promise<LockInspection> { return this.inspect(this.recovery); }
-  private async create(location: string, id: string): Promise<LockOwner> {
+  private async create(location: string, id: string, offline = false): Promise<LockOwner> {
     if (!UUID.test(id) || !/^[a-f0-9]{64}$/.test(this.owner)) throw new LiveError('LOCK_OWNER_INVALID');
     // The first saved account can precede official backend initialization. Never
     // create recursive directories or write through a symlink parent.
@@ -186,7 +195,7 @@ export class LiveLocks {
     const dir = await fs.lstat(this.directory); if (!dir.isDirectory() || dir.isSymbolicLink()) throw new LiveError('LOCK_PARENT_UNSAFE');
     let status: ProcessIdentity;
     try { status = await this.probe(this.pid); } catch { status = { state: 'unknown' }; }
-    const owner: LockOwner = { schema: 2, owner: this.owner, id, pid: this.pid, nonce: randomUUID(), startIdentity: status.state === 'alive' ? status.startIdentity : null,
+    const owner: LockOwner = { schema: offline ? 4 : 2, owner: this.owner, id, pid: this.pid, nonce: randomUUID(), startIdentity: status.state === 'alive' ? status.startIdentity : null,
       ...(location === this.operation && this.purpose === 'image' ? { purpose: this.purpose } : {}) };
     try { await fs.mkdir(location, { mode: 0o700 }); }
     catch (error) { throw new LiveError((error as NodeJS.ErrnoException).code === 'EEXIST' ? 'LIVE_OPERATION_OR_RECOVERY_LOCKED' : 'LOCK_RECORD_UNWRITABLE'); }
@@ -317,6 +326,7 @@ export class LiveLocks {
   }
   private async recover(location: string): Promise<boolean> {
     const snapshot = await this.read(location); if (!snapshot) return false;
+    if (snapshot.owner.schema === 4) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
     if (snapshot.owner.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     const status = await this.classify(snapshot);
     if (status.state !== 'stale') throw new LockConflictError(status.reason ?? 'LOCK_PROCESS_STATUS_UNKNOWN', this.activity(status, location === this.recovery ? 'recovery' : 'operation'));
@@ -362,13 +372,38 @@ export class LiveLocks {
     catch (error) { endedOperations.set(this.operation, lock); throw error; }
   }
   async beginRecovery(id: string): Promise<void> { await this.create(this.recovery, id); }
+  /** Offline journals live outside SecretStorage. Schema 4 fences all legacy
+   * cleanup paths, including after the helper dies. Never infer completion from
+   * the absence of the old journal or from a dead PID. */
+  async beginOfflineRecovery(id: string): Promise<void> {
+    await this.assertOperationHeld();
+    await this.create(this.recovery, id, true);
+  }
+  async assertOfflineRecovery(id: string): Promise<void> {
+    await this.assertOperationHeld();
+    const snapshot = await this.read(this.recovery);
+    if (!snapshot || snapshot.owner.schema !== 4 || snapshot.owner.owner !== this.owner || snapshot.owner.id !== id)
+      throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+  }
+  /** Caller must authenticate the offline journal and complete guarded restore
+   * or fresh target verification before retiring this marker. */
+  async clearOfflineRecovery(id: string): Promise<void> {
+    await this.assertOfflineRecovery(id);
+    const snapshot = await this.read(this.recovery);
+    if (!snapshot || snapshot.owner.schema !== 4 || snapshot.owner.owner !== this.owner || snapshot.owner.id !== id)
+      throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    await this.remove(this.recovery, snapshot);
+  }
+
   async assertRecovery(id: string): Promise<void> {
     const lock = (await this.read(this.recovery))?.owner;
+    if (lock?.schema === 4) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
     if (lock?.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (!lock || lock.owner !== this.owner || lock.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
   }
   async clearRecovery(id: string): Promise<void> {
     const snapshot = await this.read(this.recovery);
+    if (snapshot?.owner.schema === 4) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
     if (snapshot?.owner.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (!snapshot || snapshot.owner.owner !== this.owner || snapshot.owner.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
     await this.remove(this.recovery, snapshot);
@@ -399,6 +434,7 @@ export class LiveLocks {
     await this.assertOperationHeld();
     const before = await this.read(this.recovery);
     if (!before || before.owner.owner !== this.owner || before.owner.id !== id) throw new LiveError('RECOVERY_LOCK_OWNER_MISMATCH');
+    if (before.owner.schema === 4) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
     if (before.owner.schema === 3) {
       if (before.owner.completion !== binding) throw new LiveError('RECOVERY_CHANGED');
       return JSON.stringify(before);
@@ -443,6 +479,7 @@ export class LiveLocks {
   async reconcileRecovery(journalId: string | null): Promise<'absent' | 'preserved' | 'created' | 'cleared'> {
     if (!this.heldOperation) throw new LiveError('LOCK_OPERATION_REQUIRED');
     const snapshot = await this.read(this.recovery);
+    if (snapshot?.owner.schema === 4) throw new LiveError('OFFLINE_RECOVERY_REQUIRED');
     if (snapshot?.owner.schema === 3) throw new LiveError('RECOVERY_CLEANUP_PENDING');
     if (journalId !== null) {
       if (!snapshot) { await this.beginRecovery(journalId); return 'created'; }

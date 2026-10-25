@@ -141,7 +141,7 @@ function target(value: unknown, platform: NodeJS.Platform): Target {
   const projects = Array.isArray(row.projects) && row.projects.length <= 16 && row.projects.every(name => typeof name === 'string' && name.length > 0 && name.length <= 128 && !/[/\\\p{Cc}\p{Cf}]/u.test(name) && name !== '.' && name !== '..') ? row.projects as string[] : [];
   return { projects, pid: row.pid, parentPid: row.parentPid,
     ...(typeof row.startTicks === 'string' ? { startTicks: row.startTicks } : {}), ...(typeof row.bootId === 'string' ? { bootId: row.bootId } : {}), ...(typeof row.commandHash === 'string' ? { commandHash: row.commandHash } : {}), ...(platform === 'win32' ? { platform: 'win32' } : {}),
-    kind: row.kind as Target['kind'], scope, ...(scopeReason ? { scopeReason } : {}), credentialScopeVerified, ...(credentialScopeReason ? { credentialScopeReason } : {}), parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub' && credentialScopeVerified, ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
+    kind: row.kind as Target['kind'], scope, ...(scopeReason ? { scopeReason } : {}), credentialScopeVerified, ...(credentialScopeReason ? { credentialScopeReason } : {}), parentState: row.parentState as Target['parentState'], canEnd: row.canEnd && row.kind === 'unowned-hub' && credentialScopeVerified && scope !== 'unknown', ...(iso(row.startedAt) ? { startedAt: row.startedAt } : {}) };
 }
 /** Selection IDs and complete process proof live only in the host. No UI message
  * can choose a PID, command, path or signal. Every scan invalidates old IDs. */
@@ -149,6 +149,7 @@ export class OfficialProcessRecovery {
   private readonly targets = new Map<string, Target>();
   private selectedGeneration: string | undefined;
   private currentIdentity: OfficialProcessIdentity | undefined;
+  private recoveryPeers = '';
   private revision = 0;
   private ending = false;
   private readonly platform: NodeJS.Platform;
@@ -163,13 +164,24 @@ export class OfficialProcessRecovery {
   }
   private currentGeneration(): string { const api = this.runtime.api(); return hasOfficialHubApi(api) ? generation(api) : 'stopped'; }
   private helper(): NonNullable<ProcessRecoveryRuntime['helper']> { return this.runtime.helper ?? (this.platform === 'win32' ? runWindowsProcessHelper : runProcessHelper); }
-  invalidate(): void { ++this.revision; this.targets.clear(); this.selectedGeneration = undefined; this.currentIdentity = undefined; }
+  invalidate(): void { ++this.revision; this.targets.clear(); this.selectedGeneration = undefined; this.currentIdentity = undefined; this.recoveryPeers = ''; }
   /** Host-only identity from the latest verified scan. Keep it out of Webview
    * state; the public process list deliberately omits process birth proof. */
   currentProcessIdentity(): OfficialProcessIdentity | undefined {
     this.runtime.assertCurrent();
     if (this.selectedGeneration !== undefined && this.selectedGeneration !== this.currentGeneration()) throw new LiveError('HUB_CHANGED_DURING_OPERATION');
     return this.currentIdentity ? { ...this.currentIdentity } : undefined;
+  }
+  /** Full peer proofs stay in the extension host, never Webview state. */
+  recoveryPeerIdentity(): string {
+    this.runtime.assertCurrent();
+    return this.recoveryPeers;
+  }
+  /** A separate scan must not invalidate the user's already confirmed targets. */
+  async assertCurrentProcess(expected: OfficialProcessIdentity): Promise<void> {
+    const inspector = new OfficialProcessRecovery(this.runtime);
+    const state = await inspector.scan(), current = inspector.currentProcessIdentity();
+    if (!state.current?.credentialScopeVerified || !current || current.pid !== expected.pid || current.startTicks !== expected.startTicks) throw new LiveError('OFFICIAL_HUB_PROCESS_UNVERIFIED');
   }
   async scan(): Promise<ProcessConflictState> {
     if (this.ending) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
@@ -184,7 +196,7 @@ export class OfficialProcessRecovery {
         if (!Array.isArray(value.processes) || value.processes.length > 1024) throw new LiveError('PROCESS_CHECK_FAILED');
         rows = value.processes.map(row => target(row, this.platform));
         if (value.supported !== true) limitation = this.platform === 'win32' ? 'windows-helper' : 'helper';
-        else if (rows.some(row => row.kind === 'unverified' || !row.credentialScopeVerified)) limitation = 'ownership';
+        else if (rows.some(row => row.kind === 'unverified' || row.scope === 'unknown' || !row.credentialScopeVerified)) limitation = 'ownership';
         else if (rows.some(row => row.kind === 'unowned-hub' && !row.canEnd)) limitation = 'end-permission';
         if (value.supported !== true) rows = rows.map(row => ({ ...row, canEnd: false }));
       } catch (error) {
@@ -213,9 +225,14 @@ export class OfficialProcessRecovery {
     const processes: ProcessConflict[] = rows.length ? rows.map(row => {
       const id = randomUUID(); if (row.canEnd) { const { projects: _projects, ...proof } = row; void _projects; this.targets.set(id, proof); }
       return { id, projects: row.projects ?? [], pid: row.pid, parentPid: row.parentPid, ...(row.startedAt ? { startedAt: row.startedAt } : {}),
-        owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' ? 'unknown' : row.scope === 'detached' ? 'detached' : 'other',
+        owner: row.kind === 'current-hub' ? 'current' : row.kind === 'unverified' || row.scope === 'unknown' ? 'unknown' : row.scope === 'detached' ? 'detached' : 'other',
         scope: row.scope, ...(row.scopeReason ? { scopeReason: row.scopeReason } : {}), credentialScopeVerified: row.credentialScopeVerified, ...(row.credentialScopeReason ? { credentialScopeReason: row.credentialScopeReason } : {}), parentState: row.parentState, taskState: 'unknown', canEnd: row.canEnd, ...(this.platform === 'win32' && row.canEnd ? { endMode: 'force' as const } : {}) };
     }) : fallback;
+    this.recoveryPeers = JSON.stringify(rows.filter(row => row.scope === 'other-window').map(row => ({
+      pid: row.pid, parentPid: row.parentPid, startTicks: row.startTicks, bootId: row.bootId, commandHash: row.commandHash,
+      platform: row.platform, kind: row.kind, scope: row.scope, scopeReason: row.scopeReason,
+      credentialScopeVerified: row.credentialScopeVerified, credentialScopeReason: row.credentialScopeReason, parentState: row.parentState,
+    })).sort((a, b) => a.pid - b.pid));
     this.selectedGeneration = before;
     const currentTarget = rows.find(row => row.kind === 'current-hub');
     this.currentIdentity = currentTarget?.credentialScopeVerified ? { pid: currentTarget.pid, startTicks: currentTarget.startTicks! } : undefined;
@@ -232,7 +249,7 @@ export class OfficialProcessRecovery {
   }
   /** Consume exactly the caller-confirmed selection set. The first failure
    * stops the batch; no rescan, new PID or replacement birth is adopted. */
-  async endMany(ids: unknown, signal: AbortSignal): Promise<{ id: string; result: 'exited' | 'forced' | 'gone' }[]> {
+  async endMany(ids: unknown, signal: AbortSignal, expectedCurrent?: OfficialProcessIdentity): Promise<{ id: string; result: 'exited' | 'forced' | 'gone' }[]> {
     if (!Array.isArray(ids) || !ids.length || ids.length > 1024 || new Set(ids).size !== ids.length || this.ending) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
     const selected = ids.map(id => ({ id, target: typeof id === 'string' ? this.targets.get(id) : undefined }));
     if (selected.some(row => !row.target)) throw new LiveError('OFFICIAL_PROCESS_SELECTION_STALE');
@@ -251,6 +268,7 @@ export class OfficialProcessRecovery {
       const outcomes: { id: string; result: 'exited' | 'forced' | 'gone' }[] = [];
       for (const row of selected) {
         authorize();
+        if (expectedCurrent) { await this.assertCurrentProcess(expectedCurrent); authorize(); }
         const result = object(await this.helper()({ ...this.request('end'), target: row.target }, signal, authorize));
         authorize();
         const codes = ['OFFICIAL_PROCESS_END_UNAVAILABLE', 'OFFICIAL_PROCESS_SELECTION_STALE', 'OFFICIAL_PROCESS_END_CANCELLED', 'OFFICIAL_PROCESS_END_DENIED', 'OFFICIAL_BACKEND_STOP_TIMEOUT', 'PROCESS_CHECK_FAILED'];

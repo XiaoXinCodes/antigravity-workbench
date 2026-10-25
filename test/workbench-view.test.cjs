@@ -18,34 +18,34 @@ test('unknown scope explains ownership and shows the distinct current Hub withou
  const html=renderWorkbench(state({processConflicts}),'nonce');
  assert.match(html,/本窗口后台：PID 709/);assert.match(html,/额外冲突后台/);assert.match(html,/祖先进程属于不同系统用户/);
  assert.ok(!html.includes('python3'));assert.ok(!html.includes('pidfd'));assert.ok(!html.includes('current-private-selection'));
- assert.match(html,/data-command="live.processEnd" data-id="conflict-selection" disabled/);
+ assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);
 });
 test('independently verified unknown-window backend offers explicit handling and retains truthful ancestry details',()=>{
  const row={id:'selected-synthetic-710',pid:710,parentPid:702,owner:'other',scope:'unknown',scopeReason:'ancestor-user-mismatch',credentialScopeVerified:true,credentialScopeReason:'verified',parentState:'alive',taskState:'unknown',canEnd:true};
  const html=renderWorkbench(state({processConflicts:{phase:'blocked',canContinue:false,current:{id:'private-current-id',pid:709,owner:'current',scope:'current-window',credentialScopeVerified:true,parentState:'alive',taskState:'unknown',canEnd:false},processes:[row]},processSwitchTarget:'target@example.test'}),'nonce');
  assert.match(html,/后台原窗口归属未确定/);assert.match(html,/祖先进程属于不同系统用户/);
  assert.match(html,/已核验同用户、官方程序及同认证范围/);
- assert.match(html,/data-command="live.processEnd" data-id="selected-synthetic-710" class=/);
+ assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);
  assert.ok(!html.includes('private-current-id'));assert.ok(!html.includes('pidfd'));
  const unverified=renderWorkbench(state({processConflicts:{phase:'blocked',canContinue:false,limitation:'ownership',processes:[{...row,credentialScopeVerified:false,credentialScopeReason:'unsupported-launch-flags'}]}}),'nonce');
- assert.match(unverified,/尚未核实的自定义启动选项/);assert.match(unverified,/antigravity\.serverArgs/);assert.match(unverified,/data-command="live.processEnd" data-id="selected-synthetic-710" disabled/);
+ assert.match(unverified,/尚未核实的自定义启动选项/);assert.match(unverified,/antigravity\.serverArgs/);assert.doesNotMatch(unverified,/data-command="live.processEnd/);
 });
 test('conflict list shows PID, birth, ownership uncertainty and the intended switch without private proof',()=>{
  const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,credentialScopeVerified:true}]};
  let html=renderWorkbench(state({processConflicts,processSwitchTarget:'target@example.test'}),'nonce');
- assert.match(html,/PID 710/);assert.match(html,/父进程：702/);assert.match(html,/原窗口未知/);assert.match(html,/任务状态未知/);assert.match(html,/target@example.test/);assert.match(html,/data-command="live.processScan"/);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection"/);
+ assert.match(html,/PID 710/);assert.match(html,/父进程：702/);assert.match(html,/原窗口未知/);assert.match(html,/任务状态未知/);assert.match(html,/target@example.test/);assert.match(html,/data-command="live.processScan"/);assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);
  assert.doesNotMatch(html,/commandHash|csrfToken|startTicks|bootId/);
- html=renderWorkbench(state({processConflicts:{...processConflicts,limitation:'platform',processes:[{...processConflicts.processes[0],canEnd:false}]}}),'nonce');assert.match(html,/暂不支持安全结束/);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection" disabled/);
- html=renderWorkbench(state({processConflicts:{phase:'clear',canContinue:true,processes:[]},processSwitchTarget:'target@example.test'}),'nonce');assert.match(html,/data-command="live.processContinue"/);
+ html=renderWorkbench(state({processConflicts:{...processConflicts,limitation:'platform',processes:[{...processConflicts.processes[0],canEnd:false}]}}),'nonce');assert.match(html,/暂不支持安全结束/);assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);
+ html=renderWorkbench(state({processConflicts:{phase:'clear',canContinue:true,processes:[]},processSwitchTarget:'target@example.test'}),'nonce');assert.doesNotMatch(html,/data-command="live.processContinue"/);
 });
 test('conflict actions explain Windows force and unavailable platform dependencies',()=>{
  const processConflicts={phase:'blocked',canContinue:false,processes:[{id:'opaque-selection',pid:710,parentPid:702,startedAt:'2026-10-08T11:00:00Z',owner:'other',parentState:'alive',taskState:'unknown',canEnd:true,credentialScopeVerified:true,endMode:'force'}]};
  let html=renderWorkbench(state({processConflicts}),'nonce');
- assert.match(html,/强制结束此后台/);
- html=renderWorkbench(state({processConflicts,processSwitchTarget:'target@example.test'}),'nonce');assert.match(html,/强制结束此后台并切号/);
+ assert.doesNotMatch(html,/data-command="live.processEnd/);
+ html=renderWorkbench(state({processConflicts,processSwitchTarget:'target@example.test'}),'nonce');assert.doesNotMatch(html,/data-command="live.processEnd/);
  for(const [limitation,explanation] of [['windows-helper',/系统 PowerShell/],['helper',/python3/]]){
   html=renderWorkbench(state({processConflicts:{...processConflicts,limitation,processes:[{...processConflicts.processes[0],canEnd:false}]}}),'nonce');
-  assert.match(html,explanation);assert.match(html,/data-command="live.processEnd" data-id="opaque-selection" disabled/);
+  assert.match(html,explanation);assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);
  }
 });
 test('capture shares the add toolbar and saved is disabled only for a verified unique host identity',()=>{
@@ -417,7 +417,7 @@ test('compact card has exactly one direct switch, refresh and removal with accou
  const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}]}),'nonce');const card=html.match(/<article class="account"[^>]*>[\s\S]*?<\/article>/)[0];
  for(const command of ['live.switch','live.quota','live.remove'])assert.equal((card.match(new RegExp(`data-command="${command}"`,'g'))||[]).length,1);
  assert.match(card,/aria-label="刷新 example@example.test 的配额"/);assert.match(card,/>刷新<\/button>/);assert.match(card,/>移除<\/button>/);
- assert.ok(card.indexOf('account-quota')<card.indexOf('account-actions'));assert.match(html,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+ assert.ok(card.indexOf('account-actions')<card.indexOf('account-quota'));assert.match(html,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 });
 test('quota bars show low, medium and healthy states with explicit values and reset times',()=>{
  const html=renderWorkbench(state({accounts:[{...account,quota:{phase:'ready',snapshot:{source:'server',email:account.expectedEmail,observedAt:'2026-10-01T03:00:00Z',buckets:[{label:'Low',remaining:0.08,resetAt:'2026-10-01T05:00:00Z'},{label:'Medium',remaining:0.3,resetAt:null},{label:'Healthy',remaining:0.88,resetAt:null}]}}}]}),'nonce').split(/<body[^>]*>/)[1];
@@ -545,13 +545,105 @@ test('unknown recovery provides safe recheck and does not claim a login is runni
  assert.match(html,/恢复状态未确认，已保留保护/);assert.doesNotMatch(html,/登录状态检查中/);
  assert.match(html,/data-command="live.switch"[^>]*disabled/);assert.doesNotMatch(html,/data-command="live.restore"/);
 });
-test('other backends are a collapsed disclosure with project association and secondary destructive actions',()=>{
+test('other backends are secondary diagnostics without destructive actions',()=>{
  const rows=[1,2].map(i=>({id:'selection-'+i,pid:710+i,projects:i===1?['project <one>']:[],parentState:'alive',owner:'other',scope:'other-window',taskState:'unknown',canEnd:true,credentialScopeVerified:true}));
  const html=renderWorkbench(state({processConflicts:{phase:'blocked',canContinue:false,processes:rows}}),'nonce');
- assert.match(html,/<details id="process-conflict-list" data-persist><summary>检测到 2 个其他后台/);
+ assert.match(html,/<details id="process-conflict-list" data-persist><summary>待核验后台：2 个/);
  assert.match(html,/关联工程：project &lt;one&gt;/);assert.match(html,/关联工程：未识别/);
  assert.match(html,/<details><summary>进程详情<\/summary><p>PID 711/);
- assert.match(html,/data-command="live.processEndAll" class="secondary"/);
+ assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);
  assert.ok(html.indexOf('后台仍阻止切号')<html.indexOf('id="process-conflict-list"'));
  assert.doesNotMatch(html,/后台异常与恢复/);
+});
+test('Hub recovery Webview rejects injected arguments and permits cancellation during a pending recovery dispatch', async () => {
+ calls.length=0;let finish;const oldExecute=execute;
+ execute=async(...args)=>{calls.push(args);if(args[0]==='antigravityAccounts.live.hubRecover')await new Promise(resolve=>{finish=resolve});};
+ const f=fixture({processConflicts:{phase:'blocked',canContinue:false,currentCount:0,totalCount:0,processes:[]}});
+ try {
+  await f.message({command:'live.hubRecover',pid:123});assert.equal(calls.length,0);
+  const first=f.message({command:'live.hubRecover'});await new Promise(setImmediate);
+  await f.message({command:'live.hubRecover'});
+  await f.message({command:'live.hubRecoverCancel'});
+  assert.deepEqual(calls,[['antigravityAccounts.live.hubRecover'],['antigravityAccounts.live.hubRecoverCancel']]);
+  finish();await first;
+ } finally {finish?.();execute=oldExecute;f.provider.dispose();}
+});
+test('missing current Hub exposes bounded recovery only for an empty complete scan, and unknown is not counted as verified peer',()=>{
+ const empty={phase:'blocked',canContinue:false,currentCount:0,totalCount:0,processes:[]};
+ let html=renderWorkbench(state({processConflicts:empty}),'nonce');
+ assert.match(html,/data-command="live.hubRecover" class=/);
+ const unknown={id:'unknown',pid:710,owner:'unknown',canEnd:false,credentialScopeVerified:false};
+ html=renderWorkbench(state({processConflicts:{...empty,totalCount:1,processes:[unknown]}}),'nonce');
+ assert.match(html,/已核验非当前后台 0 个，身份未核验 1 个/);
+ assert.match(html,/data-command="live.hubRecover" disabled/);
+});
+test('verified other-window peers permit component recovery and current restart without permitting a missing-current account switch',()=>{
+ const peer={id:'peer',pid:800,owner:'other',scope:'other-window',parentState:'alive',credentialScopeVerified:true,canEnd:true};
+ const conflict={phase:'blocked',canContinue:false,currentCount:0,totalCount:1,processes:[peer]};
+ let html=renderWorkbench(state({processConflicts:conflict}),'nonce');assert.match(html,/data-command="live.hubRecover" class=/);
+ html=renderWorkbench(state({processConflicts:{...conflict,currentCount:1,totalCount:2,current:{pid:710,credentialScopeVerified:true}}}),'nonce');
+ assert.match(html,/data-command="live.hubRestart" class=/);
+ html=renderWorkbench(state({hubRecovering:true,processConflicts:conflict}),'nonce');
+ assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);assert.match(html,/data-command="live.processScan" class=/);
+});
+test('own offline pending exposes settlement and component recovery without enabling credential mutations',()=>{
+ const conflict={phase:'blocked',canContinue:false,currentCount:0,totalCount:0,processes:[]};
+ const html=renderWorkbench(state({accounts:[account],pending:true,offlinePending:true,processConflicts:conflict}),'nonce');
+ assert.match(html,/data-command="live.offlineKeepCurrent" class=/);assert.match(html,/data-command="live.hubRecover" class=/);
+ assert.match(html,/data-command="live.switch"[^>]*disabled/);
+ const foreign=renderWorkbench(state({pending:true,offlinePending:false,processConflicts:conflict}),'nonce');
+ assert.doesNotMatch(foreign,/data-command="live.offlineKeepCurrent"/);assert.match(foreign,/data-command="live.hubRecover" disabled/);
+});
+test('component restoration failure exposes an enabled retry without a new account switch', () => {
+ const html=renderWorkbench(state({pending:true,recoveryPhase:'cleanup',componentRestoration:true,status:'后台恢复待办'}),'nonce');
+ assert.match(html,/data-command="live.verify"[^>]*>恢复后台<\/button>/);
+ assert.ok(!/data-command="live.verify"[^>]*disabled/.test(html));
+});
+test('failed switch keeps accounts before collapsed diagnostics and scopes login verification',()=>{
+ const html=renderWorkbench(state({accounts:[{...account,hostCurrent:true}],activeEmail:account.expectedEmail,error:'UNCLASSIFIED_ERROR',lastFailure:{schema:1,at:'2026-10-22T14:00:00.000Z',action:'switch',stage:'command',phase:'none',code:'UNCLASSIFIED_ERROR'},processConflicts:{phase:'blocked',canContinue:false,currentCount:1,processes:[{id:'peer',pid:123,owner:'peer',parentState:'alive',canEnd:false}]}}),'nonce');
+ assert.ok(html.indexOf('id="account-list"')<html.indexOf('id="backend-diagnostics"'));
+ assert.match(html,/<details id="backend-diagnostics"[^>]*><summary>/);
+ assert.doesNotMatch(html,/<details id="backend-diagnostics"[^>]*(?:open|data-persist)/);
+ assert.doesNotMatch(html,/data-command="live.processEnd(?:All)?"/);
+ assert.doesNotMatch(html,/class="current-status verified"/);
+ assert.match(html,/不代表本次切换成功/);
+ assert.doesNotMatch(html,/UNCLASSIFIED_ERROR/);
+});
+
+test('live error presentation preserves pending verification and rollback actions',()=>{const html=renderWorkbench(state({pending:true,recoveryPhase:'installed',status:'failure',error:'failure'}),'nonce');assert.match(html,/data-command="live.verify"/);assert.match(html,/data-command="live.restore"/);assert.doesNotMatch(html,/id="workbench-warning"/);assert.match(html,/id="workbench-status"/);});
+
+test('account switch action precedes quota details',()=>{const html=renderWorkbench(state({accounts:[account]}),'nonce');assert.ok(html.indexOf('class="account-actions"')<html.indexOf('class="account-quota"'));});
+test('historical offline settlement cannot replace newer success or an active transaction',()=>{
+ for(const observedAt of ['2020-01-01T00:00:00.000Z','2099-01-01T00:00:00.000Z']){
+  const history={message:'OLD_ORIGINAL_VERIFIED',observedAt};
+  const html=renderWorkbench(state({status:'NEW_SWITCH_VERIFIED',offlineHistory:history}),'nonce');
+  assert.doesNotMatch(html,/id="offline-result"/);assert.match(html,/<details id="offline-history"><summary>/);assert.match(html,/NEW_SWITCH_VERIFIED/);assert.match(html,/OLD_ORIGINAL_VERIFIED/);
+  const active=renderWorkbench(state({pending:true,recoveryPhase:'installed',status:'CURRENT_PENDING_VERIFY',offlineHistory:history,offlineStatus:'ACTIVE_OFFLINE_RECOVERY'}),'nonce');
+  assert.match(active,/id="offline-result"[^>]*>ACTIVE_OFFLINE_RECOVERY/);assert.match(active,/CURRENT_PENDING_VERIFY/);
+  assert.match(active,/data-command="live.restore" class="secondary"/);
+ }
+});
+test('component restoration without current identity never presents verified cleanup status', () => {
+ const html=renderWorkbench(state({pending:true,recoveryPhase:'cleanup',componentRestoration:true,status:'仍有窗口的后台需要恢复。'}),'nonce');
+ const current=html.match(/<p id="current-status"[\s\S]*?<\/p>/)[0];
+ assert.doesNotMatch(current,/登录已核验/);assert.match(current,/后台需要恢复/);
+});
+test('peer restoration takes precedence over a freshly verified current-window login', () => {
+ const html=renderWorkbench(state({pending:true,recoveryPhase:'cleanup',componentRestoration:true,activeEmail:'example@example.test',identityVerifiedDuringRecovery:true,status:'恢复中'}),'nonce');
+ const current=html.match(/<p id="current-status"[\s\S]*?<\/p>/)[0];
+ assert.match(current,/后台需要恢复/);assert.doesNotMatch(current,/class="current-status verified"|登录已核验/);
+});
+test('switch progress stays beside its account button with honest counts, never stale or on another account',()=>{
+ const other={...account,id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',label:'Other'};
+ for(const stage of ['prepare','confirm','stop','write','resume','verify','cleanup']){
+  const html=renderWorkbench(state({accounts:[account,other],busy:true,switchProgress:{accountId:account.id,stage,completed:1,total:2}}),'nonce');
+  const cards=html.match(/<article class="account[\s\S]*?<\/article>/g);
+  assert.match(cards[0],/class="switch-progress" role="status"/);assert.doesNotMatch(cards[1],/class="switch-progress"/);
+  assert.equal(cards[0].includes('本阶段已处理 1 / 2'),['resume','verify'].includes(stage));
+  assert.doesNotMatch(cards[0],/aria-valuenow/);
+ }
+ for(const extra of [{busy:false},{busy:true,switchProgress:{accountId:'unknown',stage:'resume'} }]){
+  assert.doesNotMatch(renderWorkbench(state({accounts:[account],switchProgress:{accountId:account.id,stage:'resume'},...extra}),'nonce'),/class="switch-progress" role=/);
+ }
+ const html=renderWorkbench(state({accounts:[account],busy:true,switchProgress:{accountId:account.id,stage:'resume',completed:4,total:2}}),'nonce');assert.doesNotMatch(html,/本阶段已处理 4 \/ 2/);
 });

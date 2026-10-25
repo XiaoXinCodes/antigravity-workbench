@@ -17,6 +17,40 @@ test('verified scan reports the current Hub separately without exposing its capa
   assert.equal(state.processes[0].scope, 'current-window');
   assert.doesNotMatch(JSON.stringify(state), /csrf|synthetic-capability|commandHash|bootId|startTicks/);
 });
+for (const platform of ['linux', 'win32']) test(`${platform}: four unverified rows are blockers, not evidence of four other windows`, async () => {
+  const f = fixture({ platform });
+  f.setRows(Array.from({ length: 4 }, (_, index) => row(710 + index, 'unverified', {
+    canEnd: false, credentialScopeReason: 'process-identity-unverified'
+  })));
+  const state = await f.recovery.scan();
+  assert.equal(state.currentCount, 0);
+  assert.equal(state.current, undefined);
+  assert.equal(state.totalCount, 4);
+  assert.equal(state.canContinue, false);
+  assert.equal(state.limitation, 'ownership');
+  assert.ok(state.processes.every(row => row.owner === 'unknown' && !row.canEnd));
+  assert.equal(f.recovery.currentProcessIdentity(), undefined);
+  await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
+  assert.ok(f.calls.every(call => call.operation === 'scan'));
+});
+for (const platform of ['linux', 'win32']) test(`${platform}: stale valid exports never become ready merely because all observed processes exited`, async () => {
+  const f = fixture({ platform });
+  const make = platform === 'win32' ? windowsRow : row;
+  f.setRows([710, 711, 712].map(pid => make(pid, 'unowned-hub', { scope: 'other-window' })));
+  const initial = await f.recovery.scan();
+  assert.equal(initial.currentCount, 0);
+  assert.equal(initial.canContinue, false);
+  f.setRows([]); // Synthetic exit; no real process is scanned or terminated.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const state = await f.recovery.scan();
+    assert.equal(state.totalCount, 0);
+    assert.equal(state.currentCount, 0);
+    assert.equal(state.canContinue, false);
+  }
+  f.setApi(undefined);
+  assert.equal((await f.recovery.scan()).canContinue, true);
+  assert.ok(f.calls.every(call => call.operation === 'scan'));
+});
 test('host-only current identity detects same-capability PID birth replacement and clears on invalidation', async () => {
   const f = fixture({ platform: 'win32' });
   f.setRows([windowsRow(709, 'current-hub')]); await f.recovery.scan();
@@ -35,16 +69,22 @@ test('verified related backends remain blockers but explicit host selections can
   assert.equal(await f.recovery.end(state.processes[0].id, new AbortController().signal), 'exited');
   assert.equal(f.calls.filter(call => call.operation === 'end').length, 1);
 });
-test('a root-relay ancestry stays unknown while independently verified targets can be explicitly selected', async () => {
+test('unknown ancestry cannot authorize termination even with independently verified credential scope', async () => {
   for (const platform of ['linux', 'win32']) {
     const make = platform === 'win32' ? windowsRow : row;
-    const f = fixture({ platform, helper: async request => request.operation === 'scan' ? { supported: true, processes: [make(709, 'current-hub'), make(710, 'unowned-hub', { parentPid: 702, scope: 'unknown', scopeReason: 'ancestor-user-mismatch', credentialScopeVerified: true })] } : { result: platform === 'win32' ? 'forced' : 'exited' } });
+    let ends = 0;
+    const f = fixture({ platform, helper: async request => {
+      if (request.operation === 'scan') return { supported: true, processes: [make(709, 'current-hub'), make(710, 'unowned-hub', { parentPid: 702, scope: 'unknown', scopeReason: 'ancestor-user-mismatch', credentialScopeVerified: true })] };
+      ends++; return { result: platform === 'win32' ? 'forced' : 'exited' };
+    } });
     const state = await f.recovery.scan();
-    assert.equal(state.phase, 'blocked'); assert.equal(state.canContinue, false); assert.equal(state.limitation, undefined);
+    assert.equal(state.phase, 'blocked'); assert.equal(state.canContinue, false); assert.equal(state.limitation, 'ownership');
     assert.equal(state.processes[0].scope, 'unknown'); assert.equal(state.processes[0].scopeReason, 'ancestor-user-mismatch');
-    assert.equal(state.processes[0].credentialScopeVerified, true); assert.equal(state.processes[0].canEnd, true);
+    assert.equal(state.processes[0].owner, 'unknown');
+    assert.equal(state.processes[0].credentialScopeVerified, true); assert.equal(state.processes[0].canEnd, false);
     assert.equal(state.current.pid, 709); assert.equal(state.current.canEnd, false);
-    assert.equal(await f.recovery.end(state.processes[0].id, new AbortController().signal), platform === 'win32' ? 'forced' : 'exited');
+    await assert.rejects(f.recovery.end(state.processes[0].id, new AbortController().signal), /SELECTION_STALE/);
+    assert.equal(ends, 0);
   }
 });
 test('missing credential proof cannot authorize a target even when helper flags optimistically enable it', async () => {
@@ -62,12 +102,28 @@ test('an advertised current Hub with unverified credential scope cannot make a c
   assert.equal(state.canContinue, false); assert.equal(state.phase, 'blocked'); assert.equal(state.limitation, 'ownership');
   assert.equal(f.recovery.currentProcessIdentity(), undefined); assert.equal(state.current.canEnd, false);
 });
-test('one confirmed batch consumes only the selected scan and ends each original proof in order', async () => {
-  const f = fixture(); f.setRows([row(709, 'current-hub'), row(710), row(711)]);
+test('one confirmed batch ends identified same-scope other-window peers without a window registry', async () => {
+  const f = fixture(); f.setRows([row(709, 'current-hub'), row(710, 'unowned-hub', { parentPid: 702, scope: 'other-window' }), row(711, 'unowned-hub', { parentPid: 703, scope: 'other-window' })]);
   const state = await f.recovery.scan(), ids = state.processes.map(p => p.id);
+  assert.ok(state.processes.every(p => p.owner === 'other' && p.scope === 'other-window' && p.credentialScopeVerified && p.canEnd));
   assert.deepEqual(await f.recovery.endMany(ids, new AbortController().signal), ids.map(id => ({ id, result: 'exited' })));
   assert.deepEqual(f.calls.filter(call => call.operation === 'end').map(call => call.target.pid), [710, 711]);
+  assert.deepEqual(f.calls.filter(call => call.operation === 'end').map(call => call.target.parentPid), [702, 703]);
+  assert.ok(f.calls.filter(call => call.operation === 'end').every(call => call.target.startTicks === '123456' && call.target.commandHash === 'a'.repeat(64)));
   await assert.rejects(f.recovery.endMany(ids, new AbortController().signal), /SELECTION_STALE/);
+});
+test('unknown scope in a mixed selection rejects the entire batch before stopping a known peer', async () => {
+  for (const scope of ['unknown', undefined, 'unrecognized-scope']) {
+    const f = fixture();
+    f.setRows([row(709, 'current-hub'), row(710, 'unowned-hub', { scope: 'other-window' }), row(711, 'unowned-hub', { scope, credentialScopeVerified: true, canEnd: true })]);
+    const state = await f.recovery.scan();
+    assert.equal(state.limitation, 'ownership');
+    assert.equal(state.processes[0].canEnd, true);
+    assert.equal(state.processes[1].owner, 'unknown');
+    assert.equal(state.processes[1].canEnd, false);
+    await assert.rejects(f.recovery.endMany(state.processes.map(p => p.id), new AbortController().signal), /SELECTION_STALE/);
+    assert.equal(f.calls.filter(call => call.operation === 'end').length, 0);
+  }
 });
 test('a confirmed batch rejects duplicate, fabricated and superseded IDs before any signal', async () => {
   for (const reason of ['duplicate', 'fabricated', 'rescan']) {
@@ -441,5 +497,23 @@ test('project association admits only bounded basenames and never augments termi
   assert.deepEqual(state.processes[0].projects,projects[0]==='space project=one'?projects:[]);
   assert.equal(state.processes[0].canEnd,true);await f.recovery.end(state.processes[0].id,new AbortController().signal);
   assert.equal(Object.hasOwn(f.calls[1].target,'projects'),false);
+ }
+});
+for (const platform of ['linux', 'win32']) test(`${platform}: current Hub disappearing or changing birth after consent prevents ending confirmed peers`, async () => {
+  for (const replacement of ['gone', 'reused']) {
+    const f = fixture({ platform }), make = platform === 'win32' ? windowsRow : row;
+    f.setRows([make(709, 'current-hub'), make(710)]);
+    const state = await f.recovery.scan(), current = f.recovery.currentProcessIdentity();
+    f.setRows([...(replacement === 'gone' ? [] : [make(709, 'current-hub', { startTicks: '999999' })]), make(710)]);
+    await assert.rejects(f.recovery.endMany([state.processes[0].id], new AbortController().signal, current), /OFFICIAL_HUB_PROCESS_UNVERIFIED/);
+    assert.ok(f.calls.every(call => call.operation === 'scan'));
+  }
+});
+test('full recovery peer proof changes on birth, command, host or credential scope and stays out of UI state',async()=>{
+ const f=fixture();const base=row(710,'unowned-hub',{scope:'other-window'});
+ f.setRows([base]);const state=await f.recovery.scan(),proof=f.recovery.recoveryPeerIdentity();
+ assert.doesNotMatch(JSON.stringify(state),/startTicks|commandHash|bootId/);
+ for(const change of [{startTicks:'999'},{commandHash:'b'.repeat(64)},{parentPid:999},{bootId:'22222222-2222-4222-8222-222222222222'},{credentialScopeVerified:false}]){
+  f.setRows([{...base,...change}]);await f.recovery.scan();assert.notEqual(f.recovery.recoveryPeerIdentity(),proof);
  }
 });

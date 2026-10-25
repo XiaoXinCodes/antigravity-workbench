@@ -2,6 +2,7 @@ import type * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { constants } from 'node:fs';
+import { createRequire } from 'node:module';
 import { LiveError } from './live-storage';
 
 const MAX_ENTRYPOINT = 32 * 1024 * 1024;
@@ -40,4 +41,17 @@ export async function assertOfficialEntrypoint(extension: InstalledExtension): P
     if (error instanceof LiveError) throw error;
     throw new LiveError('OFFICIAL_ENTRY_UNAVAILABLE');
   }
+}
+
+/** Runtime capability label, not an extension release allowlist. Legacy labels
+ * remain accepted by injected/historical adapters only. Presence does not prove
+ * an absolute pause contract; exit/birth/configuration checks remain mandatory. */
+export type OfficialWriteContract = 'component-runtime' | '1.8.0' | '1.9.0';
+export async function assertOfficialWriteContract(extension: InstalledExtension): Promise<OfficialWriteContract> {
+  await assertOfficialEntrypoint(extension);
+  const cache = createRequire(__filename).cache;
+  const entry = officialEntryPath(extension);
+  const loaded = cache[entry] ?? cache[await fs.realpath(entry)];
+  if (!loaded?.loaded || typeof loaded.exports?.deactivate !== 'function') throw new LiveError('OFFICIAL_LIFECYCLE_NOT_LOADED');
+  return 'component-runtime';
 }

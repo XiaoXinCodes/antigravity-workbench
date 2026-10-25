@@ -6,13 +6,13 @@ const settle=()=>new Promise(setImmediate);
 function setup(options={}){
  const commands=new Map(),events=[],state=options.state??new Map(),warnings=[],notifications=[];
  const ui={answer:undefined,trusted:true,selected:undefined,remoteName:undefined,official:undefined,config:{}};
- const vscode={UIKind:{Desktop:1},ExtensionKind:{UI:1,Workspace:2},env:{uiKind:1,get remoteName(){return ui.remoteName;}},extensions:{getExtension(id){return id==='google.google-antigravity'?ui.official:undefined;}},workspace:{get isTrusted(){return ui.trusted;},getConfiguration(){return{get:key=>ui.config[key]};}},commands:{async getCommands(){return ui.commandIds||[];},registerCommand(n,fn){commands.set(n,fn);return {dispose(){}};},async executeCommand(n){events.push(n);if(ui.execute)await ui.execute(n);}},window:{onDidChangeWindowState(fn){ui.focus=fn;return{dispose(){}};},async showWarningMessage(text,_options,action){warnings.push(text);const answer=ui.answer;return typeof answer==='function'?answer(text,action):answer;},async showQuickPick(){return ui.selected;},async showInformationMessage(text){notifications.push(text);return undefined;}}};
+ const vscode={ProgressLocation:{Notification:1},UIKind:{Desktop:1},ExtensionKind:{UI:1,Workspace:2},env:{uiKind:1,get remoteName(){return ui.remoteName;}},extensions:{getExtension(id){return id==='google.google-antigravity'?ui.official:undefined;}},workspace:{get isTrusted(){return ui.trusted;},getConfiguration(){return{get:key=>ui.config[key]};}},commands:{async getCommands(){return ui.commandIds||[];},registerCommand(n,fn){commands.set(n,fn);return {dispose(){}};},async executeCommand(n){events.push(n);if(ui.execute)await ui.execute(n);}},window:{async withProgress(options,fn){return fn({},{isCancellationRequested:false,onCancellationRequested(handler){ui.cancelAdmission=handler;return{dispose(){}}}})},onDidChangeWindowState(fn){ui.focus=fn;return{dispose(){}};},async showWarningMessage(text,_options,action){warnings.push(text);const answer=ui.answer;return typeof answer==='function'?answer(text,action):answer;},async showQuickPick(){return ui.selected;},async showInformationMessage(text){notifications.push(text);return undefined;}}};
  const original=Module._load;Module._load=function(n,...args){return n==='vscode'?vscode:original.call(this,n,...args);};
  let api;try{delete require.cache[entry];api=require(entry);}finally{Module._load=original;}
  const context={secrets:{get:async()=>undefined},globalState:{get(k,d){return state.has(k)?state.get(k):d;},async update(k,v){state.set(k,v);}},extension:{extensionKind:1},extensionUri:{scheme:'file',authority:''},globalStorageUri:{scheme:'file',authority:'',toString:()=> 'file:///synthetic-private-home'},subscriptions:[]};
  const service={journal:async()=>null,async install(){events.push('install');},};
- const locks=options.locks??{withOperation:async fn=>{events.push('locked');try{return await fn();}finally{events.push('unlocked');}},hasRecovery:async()=>false,async beginRecovery(){events.push('recovery');},async clearRecovery(){events.push('clear');}};
- const backend={generation:'old',async stop(){events.push('stop');},async reload(){events.push('bad-direct-reload');},async proof(){events.push('proof');return{email:'personal@example.test',generation:'old',authValid:true,observedAt:'2026-10-01T00:00:00.000Z',buckets:[{label:'Gemini',remaining:0.5,resetAt:null}]}}};
+ const locks=options.locks??{withOperation:async fn=>{events.push('locked');try{return await fn();}finally{events.push('unlocked');}},inspectRecovery:async()=>({state:'absent'}),hasRecovery:async()=>false,async beginRecovery(){events.push('recovery');},async clearRecovery(){events.push('clear');}};
+ const backend={generation:'old',async assertCredentialWriteSafe(){},async stop(){events.push('stop');},async reload(){events.push('bad-direct-reload');},async proof(){events.push('proof');return{email:'personal@example.test',generation:'old',authValid:true,observedAt:'2026-10-01T00:00:00.000Z',buckets:[{label:'Gemini',remaining:0.5,resetAt:null}]}}};
  backend.quota=async()=>({...await backend.proof(),quotaSource:'server'});
  service.account=async id=>({...state.get('live-switch.accounts.v1').find(a=>a.id===id),slots:{keyring:null,file:'synthetic'}});
  const lifecycle=async(running,login)=>ui.resolveLifecycle?ui.resolveLifecycle(running,login):backend;
@@ -136,7 +136,7 @@ test('remove a noncurrent copy does not switch; failed current replacement retai
  f.set('a@example.test');f.ui.focus({focused:true});await f.diag.refresh();f.service.install=async()=>{throw new (require('../out/live-storage').LiveError)('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN')};await f.call('remove',f.diag.getAccounts().find(item=>item.expectedEmail==='a@example.test').id);
  assert.equal(f.diag.getAccounts().length,2);assert.equal(f.data.has('live-switch.account.v1.'+b.id),true);assert.match(f.diag.getState().error,/查看下方进程/);assert.ok(!f.events.includes('credential-write'));
 });
-test('activation registers real commands but reads no credentials and starts no backend',()=>{const f=setup();assert.equal(f.commands.size,16);assert.ok(f.commands.has('antigravityAccounts.live.processEndAll'));assert.deepEqual(f.events,[]);assert.match(f.diag.getStatus(),/尚未操作/);});
+test('activation registers real commands but reads no credentials and starts no backend',()=>{const f=setup();assert.equal(f.commands.size,21);assert.ok(f.commands.has('antigravityAccounts.live.recoverHosts'));assert.ok(f.commands.has('antigravityAccounts.live.cancelHostRecovery'));assert.ok(f.commands.has('antigravityAccounts.live.processEndAll'));assert.deepEqual(f.events,[]);assert.match(f.diag.getStatus(),/尚未操作/);});
 test('read-only quota preserves a freshly verified official badge while an older add journal remains pending',async t=>{
  const f=officialSyncFixture(t);await f.diag.refresh();await f.real.prepareLogin(f.backend,'00000000-0000-4000-8000-000000000080');f.set('c@example.test');f.ui.focus({focused:true});await f.diag.refresh();const account=f.diag.getAccounts().find(item=>item.expectedEmail==='c@example.test');
  assert.equal(account.active,true);await f.call('quota',account.id);assert.equal(f.diag.getAccounts().find(item=>item.id===account.id).active,true);assert.equal(f.diag.getState().identityVerifiedDuringRecovery,true);assert.equal(f.diag.getState().pending,true);assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
@@ -158,6 +158,19 @@ test('idle official sign-out invalidates the same-Hub current badge instead of s
  f.ui.currentIdentity=async()=>{if(signedOut)throw new (require('../out/live-storage').LiveError)('HUB_AUTH_INVALID');return f.proof()};await f.diag.refresh();signedOut=true;await new Promise(resolve=>setTimeout(resolve,5300));
  assert.equal(f.diag.getState().activeEmail,undefined);assert.ok(f.diag.getAccounts().every(item=>!item.active));assert.ok(!f.events.includes('stop')&&!f.events.includes('credential-write'));
 });
+for(const change of ['HUB_AUTH_INVALID','HUB_EMAIL_MISSING','changed-email'])test(`idle ${change} clears green identity before delayed fresh verification finishes`,async t=>{
+ t.mock.timers.enable({apis:['setInterval']});
+ const f=officialSyncFixture(t),hub=require('../out/live-hub'),old=hub.queryHub;
+ await f.diag.refresh();assert.equal(f.diag.getState().activeEmail,'a@example.test');
+ let release;const delayed=new Promise(resolve=>{release=resolve;});
+ f.ui.currentIdentity=async()=>delayed;
+ hub.queryHub=async()=>{if(change==='changed-email')return{...f.proof(),email:'new@example.test'};throw new(require('../out/live-storage').LiveError)(change);};
+ t.after(()=>{hub.queryHub=old;release(f.proof());});
+ t.mock.timers.tick(5000);await settle();await settle();
+ assert.equal(f.diag.getState().activeEmail,undefined);
+ assert.ok(f.diag.getAccounts().every(item=>!item.active));
+ release(f.proof());await settle();
+});
 test('explicit verify resumes a stopped installed transaction, repins the lifecycle and then verifies under its lock',async()=>{
  const f=setup();await f.diag.refresh();let journal={id:'resume-transaction',phase:'installed',target:{expectedEmail:'a@example.test'}};
  f.service.journal=async()=>journal;f.locks.assertRecovery=async()=>{};f.backend.restartMode='component';f.backend.generation='stopped';
@@ -174,7 +187,7 @@ test('debug-OFF preserves primary switch stage and secondary recovery error inst
  f.service.install=async(_id,_backend,id,stage)=>{stage('journal-installed');journal={id,phase:'installed',target:{expectedEmail:'a@example.test'}};throw new LiveError('RECOVERY_SAVE_NOT_VERIFIED');};
  await f.call('switch');const failure=f.state.get('live-switch.lastFailure.v1');
  assert.equal(failure.code,'RECOVERY_SAVE_NOT_VERIFIED');assert.equal(failure.recoveryCode,'OFFICIAL_HUB_NOT_READY');assert.equal(failure.stage,'journal-installed');assert.equal(failure.phase,'installed');assert.equal(failure.action,'switch');
- assert.deepEqual(f.diag.getState().lastFailure,failure);assert.match(f.diag.getState().error,/RECOVERY_SAVE_NOT_VERIFIED/);assert.doesNotMatch(JSON.stringify(failure),/example|fixture|credential|token/);
+ assert.deepEqual(f.diag.getState().lastFailure,failure);assert.match(f.diag.getState().error,/保存登录状态失败/);assert.doesNotMatch(f.diag.getState().error,/RECOVERY_SAVE_NOT_VERIFIED/);assert.doesNotMatch(JSON.stringify(failure),/example|fixture|credential|token/);
  assert.ok(journal);assert.ok(!f.events.includes('workbench.action.reloadWindow'));
 });
 test('persisted account failure rejects getters and arbitrary credential-like fields',()=>{
@@ -370,11 +383,18 @@ test('official remote host, custom release and invalid entrypoint reject before 
  const f=setup();await assert.rejects(f.api.resolveOfficialLifecycle(f.context,true,true),/OFFICIAL_EXTENSION_MISSING/);
 });
 test('lifecycle accepts future releases and missing version diagnostics with live capabilities',async t=>{
+ // This fixture supplies a WSL Hub snapshot, not native macOS process proof.
+ const platformDescriptor=Object.getOwnPropertyDescriptor(process,'platform');
+ Object.defineProperty(process,'platform',{value:'linux',configurable:true});
+ t.after(()=>Object.defineProperty(process,'platform',platformDescriptor));
  const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage');
  f.ui.remoteName='wsl';const main=path.join(official.extensionPath,'extension.js');const previousCache=require.cache[main],previousRun=storage.runPrivate;
  const contract=require('../out/official-contract'),environment=require('../out/live-environment'),fs=require('node:fs/promises'),previousContract=contract.assertOfficialEntrypoint,previousHash=environment.assertWslBackendExecutable,previousStat=fs.stat,previousAccess=fs.access;
  contract.assertOfficialEntrypoint=async()=>{};environment.assertWslBackendExecutable=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};
  let stopped=false,versionResult={code:0,stdout:'agy version 99.4.2-preview',stderr:''};const calls=[];
+ const locks=require('../out/live-lock'),previousProbe=locks.probeProcessIdentity;
+ locks.probeProcessIdentity=async pid=>pid===321?(stopped?{state:'dead'}:{state:'live',startIdentity:'linux:synthetic:synthetic-birth'}):previousProbe(pid);
+ t.after(()=>{locks.probeProcessIdentity=previousProbe;});
  provideNativeProcessProof(t,()=>{const current={pid:321,parentPid:process.pid,startTicks:'synthetic-birth',kind:'current-hub',taskState:'unknown'};return stopped?{processes:[]}:{processes:[current],current};});
  require.cache[main]={loaded:true,exports:{async deactivate(){stopped=true;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};f.events.push('deactivate-official')}}};
  storage.runPrivate=async(executable,args)=>{calls.push({executable,args});if(args[0]==='--version'){if(versionResult instanceof Error)throw versionResult;return versionResult}return{code:0,stdout:stopped?'':process.platform==='win32'?'"agy.exe","321"':'agy\n',stderr:''}};
@@ -382,11 +402,28 @@ test('lifecycle accepts future releases and missing version diagnostics with liv
  official.packageJSON.version='99.0.0';
  const backend=await f.api.resolveOfficialLifecycle(f.context,true,true);
  assert.equal(backend.backendVersion,'99.4.2-preview');
+ // Release labels do not reject lifecycle construction; actual write capability is tested independently.
+ assert.equal(f.events.includes('deactivate-official'),false);
  for(versionResult of [{code:0,stdout:'future-opaque-release',stderr:''},{code:2,stdout:'',stderr:'unknown option'},new Error('synthetic diagnostic failure')]){
   const compatible=await f.api.resolveOfficialLifecycle(f.context,true,true);assert.equal(compatible.backendVersion,undefined);
  }
  assert.deepEqual(f.events,['activate-official']);assert.ok(calls.some(x=>x.args[0]==='--version'));
- assert.match(backend.generation,/^[a-f0-9]{64}$/);await backend.stop();await backend.stop();assert.equal(f.events.filter(x=>x==='deactivate-official').length,1);
+ const previousWriteContract=contract.assertOfficialWriteContract,hub=require('../out/live-hub'),previousFresh=hub.queryFreshIdentity;
+ t.after(()=>{contract.assertOfficialWriteContract=previousWriteContract;hub.queryFreshIdentity=previousFresh});
+ hub.queryFreshIdentity=async api=>({generation:hub.generation(api),email:'personal@example.test',authValid:true,quotaSource:'server',observedAt:new Date().toISOString(),buckets:[]});
+ for(const version of ['1.8.0','1.9.0']){
+  contract.assertOfficialWriteContract=async()=>version;official.packageJSON.version=version;
+  stopped=false;official.exports={port:34567,csrfToken:'synthetic-official-csrf'};
+  const ready=await f.api.resolveOfficialLifecycle(f.context);
+  assert.equal(ready.credentialAdmissionNeedsDrain,false);
+  if(version==='1.9.0'){f.ui.config.autoRecover=true;const before=f.events.filter(x=>x==='deactivate-official').length;await assert.rejects(ready.assertCredentialWriteSafe(),/OFFICIAL_RECOVERY_ENABLED/);assert.equal(f.events.filter(x=>x==='deactivate-official').length,before);}
+  else {await ready.assertCredentialWriteSafe();await ready.stop();await ready.assertCredentialWriteSafe();}
+ }
+ f.ui.config.autoRecover=false;contract.assertOfficialWriteContract=async()=> '1.8.0';official.packageJSON.version='1.8.0';
+ assert.match(backend.generation,/^[a-f0-9]{64}$/);const finalReady=await f.api.resolveOfficialLifecycle(f.context);await finalReady.assertCredentialWriteSafe();await finalReady.stop();assert.equal(f.events.filter(x=>x==='deactivate-official').length,2);
+ const unownedStopped=await f.api.resolveOfficialLifecycle(f.context,false);
+ await assert.rejects(unownedStopped.assertCredentialWriteSafe(),/OFFICIAL_WRITE_REQUIRES_READY_HUB/);
+
 });
 test('missing loaded module or invalid exported API fails before any credential operation',async t=>{
  const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage');official.isActive=true;
@@ -494,6 +531,7 @@ test('WSL orphan preflight blocks before mutation, rejects reused PID before sto
  official.isActive=true;const main=path.join(official.extensionPath,'extension.js'),oldCache=require.cache[main],oldRun=storage.runPrivate,oldContract=contract.assertOfficialEntrypoint,oldMode=environment.resolveOfficialStorageMode,oldHash=environment.assertWslBackendExecutable,oldStat=fs.stat,oldAccess=fs.access,oldInspect=processes.inspectWslProcesses;
  contract.assertOfficialEntrypoint=async()=>{};environment.resolveOfficialStorageMode=async()=> 'wsl-file';environment.assertWslBackendExecutable=async()=>{};fs.stat=async()=>({isFile:()=>true});fs.access=async()=>{};
  let peer=true,deactivated=0,stopping=false,exitPolls=0,birth='123';
+ t.mock.method(require('../out/live-lock'),'probeProcessIdentity',async()=>stopping&&++exitPolls>=3?{state:'dead'}:{state:'alive',startIdentity:'linux:synthetic:'+birth});
  const current={pid:710,parentPid:process.pid,startTicks:'123',kind:'current-hub',taskState:'unknown'},orphan={pid:711,parentPid:702,startTicks:'100',kind:'unowned-hub',taskState:'unknown'};
  processes.inspectWslProcesses=async()=>{if(stopping&&++exitPolls>=3)return{processes:[]};const owned={...current,startTicks:birth};return{processes:peer?[owned,orphan]:[owned],current:owned};};
  require.cache[main]={loaded:true,exports:{async deactivate(){deactivated++;stopping=true;official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};}}};
@@ -503,7 +541,7 @@ test('WSL orphan preflight blocks before mutation, rejects reused PID before sto
  await assert.rejects(f.api.resolveOfficialLifecycle(f.context),/OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN/);assert.equal(deactivated,0);assert.equal(credentialReads,0);assert.deepEqual(f.events,[]);assert.equal(f.diag.getState().pending,false);
  assert.match(f.api.liveErrorMessage('OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN'),/查看下方进程/);
  peer=false;const backend=await f.api.resolveOfficialLifecycle(f.context);
- birth='124';await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION/);assert.equal(deactivated,0,'same PID and Hub API with a new birth must not be stopped');assert.equal(credentialReads,0);
+ birth='124';await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION|OFFICIAL_HUB_PROCESS_UNVERIFIED/);assert.equal(deactivated,0,'same PID and Hub API with a new birth must not be stopped');assert.equal(credentialReads,0);
  birth='123';await backend.stop();assert.equal(deactivated,1);assert.ok(exitPolls>=4,'hook completion alone does not prove child exit');assert.equal(credentialReads,0);
 });
 
@@ -602,8 +640,8 @@ test('lifecycle never stops a new hub that appeared while its process count was 
  provideNativeProcessProof(t,()=>{if(drift)official.exports={port:45678,csrfToken:'synthetic-new-generation'};const current={pid:321,parentPid:process.pid,startTicks:'synthetic-birth',kind:'current-hub',taskState:'unknown'};return empty?{processes:[]}:{processes:[current],current};});
  storage.runPrivate=async(_executable,args)=>{if(args[0]==='--version')return{code:0,stdout:'agy version 1.2.14',stderr:''};if(drift)official.exports={port:45678,csrfToken:'synthetic-new-generation'};return{code:0,stdout:empty?'':process.platform==='win32'?'"agy.exe","321"':'agy\n',stderr:''};};
  t.after(()=>{contract.assertOfficialEntrypoint=oldContract;environment.assertWslBackendExecutable=oldHash;fs.stat=oldStat;fs.access=oldAccess;storage.runPrivate=oldRun;if(oldCache)require.cache[main]=oldCache;else delete require.cache[main]});
- const backend=await f.api.resolveOfficialLifecycle(f.context);drift=true;await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION/);assert.equal(deactivated,0);
- official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};empty=true;await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION/);assert.equal(deactivated,0);
+ const backend=await f.api.resolveOfficialLifecycle(f.context);drift=true;await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION|OFFICIAL_HUB_PROCESS_UNVERIFIED/);assert.equal(deactivated,0);
+ official.exports={port:undefined,csrfToken:'synthetic-official-csrf'};empty=true;await assert.rejects(backend.stop(),/HUB_CHANGED_DURING_OPERATION|OFFICIAL_HUB_PROCESS_UNVERIFIED/);assert.equal(deactivated,0);
 });
 test('Login rechecks generation after awaited file proof and sends no RPC to a replacement hub',async t=>{
  const f=setup(),official=officialFixture(f),path=require('node:path'),storage=require('../out/live-storage'),contract=require('../out/official-contract'),fs=require('node:fs/promises'),environment=require('../out/live-environment'),proof=require('../out/live-wsl-proof'),hub=require('../out/live-hub');
@@ -1072,4 +1110,22 @@ test('receipt store failure after filesystem commit stays in cleanup and refresh
  f.vault.store=async(k,v)=>{if(fail&&k===f.journalKey+'.completion')throw Error('uncommitted receipt');return store(k,v);};
  await f.call('verify');assert.equal(f.diag.getState().recoveryPhase,'cleanup');const proofs=f.proofs();
  fail=false;await f.diag.refresh();assert.equal(f.diag.getState().pending,false);assert.equal(f.proofs(),proofs);assert.equal(f.writes(),1);
+});
+
+test('cancelling account admission leaves recovery, backend and credentials untouched',async()=>{
+ const f=setup(),account=selectFixture(f);f.ui.answer=(_text,action)=>action;
+ f.backend.credentialAdmissionNeedsDrain=true;
+ let started;const waiting=new Promise(resolve=>{started=resolve});
+ f.backend.assertCredentialWriteSafe=async signal=>{started();await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('CANCELLED')),{once:true}));};
+ const operation=f.call('switch',account.id);await Promise.race([waiting,operation.then(()=>{throw Error('admission did not start')})]);f.ui.cancelAdmission();await operation;
+ for(const event of ['recovery','install','stop','bad-direct-reload'])assert.equal(f.events.includes(event),false,event);
+ f.context.subscriptions.forEach(sub=>sub.dispose());
+});
+test('debug OFF persists file route enum and reload reader preserves it without error payload',async()=>{
+ const f=setup();await f.diag.refresh();selectFixture(f,'a@example.test');f.ui.answer='切换账号';f.backend.restartMode='component';
+ f.service.install=async()=>{throw Object.assign(require('../out/live-wsl-proof').wslFileRouteError('pid-marker-mismatch'),{message:'PRIVATE_LOG_TOKEN',path:'/private/path'});};
+ await f.call('switch');const record=f.state.get('live-switch.lastFailure.v1');
+ assert.equal(record.code,'WSL_FILE_ROUTE_UNVERIFIED');assert.equal(record.fileRouteFailureReason,'pid-marker-mismatch');
+ assert.doesNotMatch(JSON.stringify(record),/PRIVATE|\/private/);
+ const reloaded=setup({state:f.state});assert.equal(reloaded.diag.getState().lastFailure.fileRouteFailureReason,'pid-marker-mismatch');
 });

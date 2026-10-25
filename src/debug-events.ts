@@ -1,3 +1,4 @@
+import { fileRouteFailureReason } from './file-route-failure';
 import { imageEndpointHost, validImageRequestId } from './direct-image-protocol';
 import { sanitizeImageResponseEvidence, trimImageResponseEvidence } from './image-response-evidence';
 /** Diagnostics are constructed from fixed fields/enums; no raw log or error capture. */
@@ -17,6 +18,85 @@ const ACCEPTANCE = ['account-saved', 'oauth-original-restored', 'switch-verified
 const STATUSES = ['starting', 'running', ...DEBUG_OUTCOMES] as const;
 // Deliberate literal allowlist, reviewed when new fixed application codes are added.
 const DEBUG_CODES = new Set([
+  'OFFLINE_AUTOMATIC_WINDOW_UNAVAILABLE',
+  'OFFLINE_AUTOMATIC_WINDOWS_UNSUPPORTED',
+  'OFFLINE_AUTOMATIC_WINDOW_BUSY',
+  'COMPONENT_ACTION_PENDING',
+  'COMPONENT_ACTOR_UNAVAILABLE',
+  'COMPONENT_CENSUS_UNVERIFIED',
+  'COMPONENT_CONTRACT_UNSUPPORTED',
+  'COMPONENT_IDENTITY_UNVERIFIED',
+  'COMPONENT_MAILBOX_ALREADY_REGISTERED',
+  'COMPONENT_MAILBOX_CHANGED',
+  'COMPONENT_MAILBOX_INVALID',
+  'COMPONENT_PARTICIPANTS_CHANGED',
+  'COMPONENT_PARTICIPANTS_UNSUPPORTED',
+  'COMPONENT_PARTICIPANT_FAILED',
+  'COMPONENT_PARTICIPANT_UNAVAILABLE',
+  'COMPONENT_RECOVERY_REQUIRED',
+  'COMPONENT_RESTART_DURING_WRITE',
+  'COMPONENT_RESTORE_FAILED',
+  'HOST_RECOVERY_CHANGED',
+  'HOST_RECOVERY_CLAIM_UNVERIFIED',
+  'HOST_RECOVERY_COMPLETION_UNPROVEN',
+  'HOST_RECOVERY_CONSENT_REQUIRED',
+  'HOST_RECOVERY_DEADLINE',
+  'HOST_RECOVERY_DISPATCH_CLOSED',
+  'HOST_RECOVERY_DUPLICATE_CLAIM',
+  'HOST_RECOVERY_HISTORY_FULL',
+  'HOST_RECOVERY_IDENTITY_UNVERIFIED',
+  'HOST_RECOVERY_INVALID',
+  'HOST_RECOVERY_MISMATCH',
+  'HOST_RECOVERY_NOT_INSTALLED',
+  'HOST_RECOVERY_NOT_SETTLED',
+  'HOST_RECOVERY_NOT_VERIFIED',
+  'HOST_RECOVERY_OBSERVE_ONLY',
+  'HOST_RECOVERY_OLD_PROCESS_PENDING',
+  'HOST_RECOVERY_OWNER_UNVERIFIED',
+  'HOST_RECOVERY_PARTICIPANT_UNVERIFIED',
+  'HOST_RECOVERY_PENDING',
+  'HOST_RECOVERY_REPLAY',
+  'HOST_RECOVERY_RESTART_UNAVAILABLE',
+  'HOST_RECOVERY_UNBOUND',
+
+  'COMPONENT_RESTORE_REQUIRED',
+  'COMPONENT_TRANSACTION_STATE',
+  'OFFLINE_ARGUMENT_INVALID',
+  'OFFLINE_ATTEMPT_CHANGED',
+  'OFFLINE_AUTOMATIC_KEY_MISSING',
+  'OFFLINE_CENSUS_UNVERIFIED',
+  'OFFLINE_CLOSE_TIMEOUT',
+  'OFFLINE_CONFIRMATION_REQUIRED',
+  'OFFLINE_DURABILITY_UNSUPPORTED',
+  'OFFLINE_EXTERNAL_TERMINAL_REQUIRED',
+  'OFFLINE_HELPER_ACK_TIMEOUT',
+  'OFFLINE_HELPER_EXITED',
+  'OFFLINE_HELPER_NOT_READY',
+  'OFFLINE_HELPER_PROTOCOL_INVALID',
+  'OFFLINE_HELPER_SPAWN_FAILED',
+  'OFFLINE_INSTANCE_PRESENT',
+  'OFFLINE_JOURNAL_CHANGED',
+  'OFFLINE_JOURNAL_INVALID',
+  'OFFLINE_JOURNAL_UNVERIFIED',
+  'OFFLINE_NEW_INSTANCE',
+  'OFFLINE_OPERATION_BUSY',
+  'OFFLINE_OPERATION_FAILED',
+  'OFFLINE_PASSWORD_MISMATCH',
+  'OFFLINE_PLATFORM_UNSUPPORTED',
+  'OFFLINE_READBACK_FAILED',
+  'OFFLINE_RECOVERY_CRYPTO_UNAVAILABLE',
+  'OFFLINE_RECOVERY_DECRYPT_FAILED',
+  'OFFLINE_RECOVERY_ENVELOPE_INVALID',
+  'OFFLINE_RECOVERY_INVALID',
+  'OFFLINE_RECOVERY_PASSWORD_INVALID',
+  'OFFLINE_RECOVERY_REQUIRED',
+  'OFFLINE_REOPEN_REQUIRED',
+  'OFFLINE_SCOPE_UNVERIFIED',
+  'OFFLINE_STORAGE_CHANGED',
+  'OFFLINE_SWITCH_FAILED',
+  'OFFLINE_SWITCH_REQUIRED',
+  'OFFLINE_TRANSACTION_SETTLED',
+
   'NATIVE_HOST_PATH_REQUIRED',
   'WORKSPACE_TRUST_REQUIRED',
   'NATIVE_DESKTOP_REQUIRED',
@@ -58,9 +138,12 @@ const DEBUG_CODES = new Set([
   'CLOSE_ALL_AGY_PROCESSES',
   'CLOSE_OTHER_AGY_PROCESSES',
   'OFFICIAL_UNOWNED_HUB_TASK_UNKNOWN', 'OFFICIAL_PROCESS_OWNERSHIP_UNVERIFIED',
+  'OFFICIAL_CREDENTIAL_WRITE_BARRIER_UNAVAILABLE', 'OFFICIAL_WRITE_REQUIRES_READY_HUB',
+  'OFFICIAL_RECOVERY_ENABLED', 'OFFICIAL_BACKEND_RESTARTING',
   'OFFICIAL_HUB_PROCESS_UNVERIFIED', 'OFFICIAL_BACKEND_STOP_TIMEOUT',
   'OFFICIAL_PROCESS_END_UNAVAILABLE', 'OFFICIAL_PROCESS_SELECTION_STALE',
   'OFFICIAL_PROCESS_END_CANCELLED', 'OFFICIAL_PROCESS_END_DENIED',
+  'HUB_RECOVERY_PENDING', 'HUB_RECOVERY_TIMEOUT', 'HUB_RECOVERY_CANCELLED', 'HUB_RECOVERY_PROCESS_BLOCKED',
   'DEBUG_STORAGE_UNAVAILABLE',
   'DIRECTORY_MUST_BE_ABSOLUTE',
   'DIRECTORY_NOT_PRIVATE',
@@ -384,6 +467,12 @@ export function debugFailureOutcome(value: unknown): DebugOutcome {
 function count(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 10000; }
 export function sanitizeDebugData(value: unknown): Record<string, unknown> | undefined {
   const result: Record<string, unknown> = {};
+  const failures = componentFailureDetails(value);
+  if (failures) result.componentFailures = failures;
+  const routeReason = fileRouteFailureReason(value);
+  if (routeReason) result.fileRouteFailureReason = routeReason;
+  const switchStage = own(value, 'switchStage');
+  if (member(switchStage, ['route', 'args', 'confirm', 'lock', 'contract', 'census', 'scope', 'prepare', 'helper', 'stop', 'write', 'resume', 'verify', 'cleanup'])) result.switchStage = switchStage;
   const errorCode = own(value, 'code'); if (errorCode !== undefined) result.code = code(errorCode);
   const endpoint = own(value, 'imageEndpoint');
   if (endpoint === 'daily' || endpoint === 'production') {
@@ -420,6 +509,15 @@ export function sanitizeDebugData(value: unknown): Record<string, unknown> | und
   const guard = own(value, 'guard'), reason = own(guard, 'reason'), generationAllowed = own(guard, 'generationAllowed');
   if (own(guard, 'version') === 1 && member(reason, IMAGE_GUARD_REASONS) && (typeof generationAllowed === 'boolean' || generationAllowed === 'unknown')) { const argumentShape = sanitizeImageArgumentShape(own(guard, 'argumentShape')); result.guard = { version: 1, reason, generationAllowed, ...(argumentShape ? {argumentShape} : {}) }; }
   return Object.keys(result).length ? result : undefined;
+}
+export function componentFailureDetails(value: unknown): Array<{ hostPid: number; stage: string; code: string }> | undefined {
+  const values = own(value, 'componentFailures');
+  if (!Array.isArray(values)) return undefined;
+  const result = values.slice(0, 32).flatMap(row => {
+    const hostPid = own(row, 'hostPid'), stage = own(row, 'stage'), code = own(row, 'code');
+    return typeof hostPid === 'number' && Number.isSafeInteger(hostPid) && hostPid > 0 && member(stage, ['prepare', 'resume', 'release']) && typeof code === 'string' && debugErrorCode({ code }) === code ? [{ hostPid, stage, code }] : [];
+  });
+  return result.length ? result : undefined;
 }
 export function debugErrorData(error: unknown): Record<string, unknown> { return {...sanitizeDebugData(error), code: debugErrorCode(error)}; }
 function metadata(value: DebugMetadata): {version: string; platform: string; host: string} {
@@ -488,3 +586,6 @@ let recorder: DebugRecorder | undefined;
 export function installDebugRecorder(value: DebugRecorder): { dispose(): void } { recorder = value; return { dispose: () => { if (recorder === value) recorder = undefined; value.dispose(); } }; }
 /** This facade is deliberately inert unless the explicit current-window toggle is ON. */
 export function beginDebugOperation(operation: DebugOperation, operationId?: string): DebugSpan { try { return recorder?.begin(operation, operationId) ?? EMPTY_SPAN; } catch { return EMPTY_SPAN; } }
+
+/** Optional performance sampling follows the existing explicit debug toggle. */
+export function debugRecordingEnabled(): boolean { return recorder?.getState().enabled === true; }

@@ -65,3 +65,11 @@ test('concurrent invocation refuses a duplicate before the first deadline and ha
   await assert.rejects(stop(), timeout); await settle(); assert.equal(calls, 1);
   resolve(); await pending; assert.equal(calls, 1);
 });
+test('component restart can await the real stop instead of treating its public deadline as completion',async()=>{
+ const loaded=load();let resolve,settled=false;
+ const f=fixture(()=>new Promise(r=>{resolve=r;}));
+ const stop=loaded(f.file,f.cache,{timeoutMs:5,waitForSettlement:true});
+ const work=stop().then(()=>{settled=true;});await new Promise(r=>setTimeout(r,15));
+ assert.equal(settled,false);assert.throws(()=>loaded(f.file,f.cache),timeout);
+ resolve();await work;assert.equal(settled,true);
+});

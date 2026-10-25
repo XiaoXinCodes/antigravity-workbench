@@ -115,7 +115,10 @@ export async function createOfficialTokenSlots(
       if (value.keyringState !== expected.keyringState) throw new LiveError('OFFICIAL_STORAGE_SCOPE_MISMATCH');
       const onlyFile = await fileScope(expected);
       if (onlyFile) {
-        await fileSlots.write({ keyring: null, file: value.file }, { keyring: null, file: expected.file });
+        await fileSlots.write({ keyring: null, file: value.file }, { keyring: null, file: expected.file }, async () => {
+          await checkMode();
+          if (!await fileScope(expected)) throw new LiveError('WSL_FILE_ROUTE_UNVERIFIED');
+        });
         if (!await fileScope(expected)) throw new LiveError('WSL_FILE_ROUTE_UNVERIFIED');
       } else await nativeSlots().write(value, expected);
       await checkMode();

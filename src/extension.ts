@@ -1,4 +1,6 @@
 import { registerWorkbenchHost } from './workbench-host';
+import { registerWindowRuntime } from './window-runtime-actor';
+import { registerWindowRejoin } from './automatic-window-entry';
 import { registerWorkbenchSupport } from './workbench-support-ui';
 import { registerObservationsUi } from './request-observation-ui';
 import { registerQuotaHistory } from './quota-history-ui';
@@ -26,6 +28,8 @@ let flushImageSession: (() => Promise<void>) | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionDiagnosticsApi> {
   registerI18n(context);
+  registerWindowRejoin(context);
+  registerWindowRuntime(context);
   registerWorkbenchHost(context);
   registerObservationsUi(context);
   registerIdentityPrivacy(context);

@@ -1,0 +1,66 @@
+// Real UI/entry/helper/actor, durable channel/journal/control/locks and file writes.
+// Synthetic boundaries ONLY: VSCode, process identity/census, launcher, RPC and route proof.
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),sync=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm'),{createRequire}=require('node:module');
+const locksModule=require('../out/live-lock'),storage=require('../out/live-storage'),{PrivateState}=require('../out/private-state'),{AutomaticOfflineControl,AutomaticOfflineKey}=require('../out/offline-automatic'),{OfflineRecoveryStore}=require('../out/offline-recovery-store');
+const scope='b'.repeat(64),owner='a'.repeat(64),fingerprint='c'.repeat(64);
+async function until(fn){for(let i=0;i<1000;i++){if(await fn())return;await new Promise(r=>setTimeout(r,10));}throw Error('FIXTURE_TIMEOUT');}
+async function fixture(t,cancel){
+ const home=await fs.mkdtemp(path.join(await fs.realpath(__dirname),'product-orchestration-'));t.after(async()=>{for(const r of roles){r.active=false;for(const d of r.context?.subscriptions??[])d.dispose();}await new Promise(resolve=>setTimeout(resolve,200));await fs.rm(home,{recursive:true,force:true,maxRetries:5,retryDelay:100});});const file=path.join(home,'.gemini','jetski-standalone-oauth-token');await fs.mkdir(path.dirname(file),{mode:0o700});const original=JSON.stringify({token:{refresh_token:'synthetic-original'}}),target=JSON.stringify({token:{refresh_token:'synthetic-target'}});await fs.writeFile(file,original,{mode:0o600});
+ await new PrivateState(path.join(home,'.gemini','antigravity-workbench-window-platform'),v=>v,()=>({})).transaction(s=>Object.assign(s,{schema:1,test:'isolated-windows-wsl-v1',fingerprint,authority:'wsl+synthetic',executable:'/synthetic/Code.exe'}));
+ const roles=[],births=new Map(),events=[],pointers=new Map();let helperDone,helperError,readyResolve,helperRunning=false;
+ function role(pid,workspace){const r={pid,workspace,birth:`linux:11111111-1111-4111-8111-111111111111:${pid}`,timers:[],active:true,commands:new Map()};roles.push(r);births.set(pid,r.birth);return r;}
+ const first=role(811001,'/one'),second=role(811002,'/two'),helper=role(811099,null),probe=async pid=>births.has(pid)?{state:'alive',startIdentity:births.get(pid)}:{state:'dead'},census=async()=>({complete:true,unknown:false,hosts:roles.filter(r=>r.workspace&&births.has(r.pid)).map(r=>({pid:r.pid,startIdentity:r.birth})),hubs:[]});
+ function load(r){
+  const cache=new Map(),p=Object.create(process);Object.defineProperties(p,{platform:{value:'linux'},getuid:{value:()=>1000}});Object.defineProperty(p,'pid',{value:r.pid});Object.defineProperty(p,'env',{value:{...process.env,HOME:home,WSL_DISTRO_NAME:'synthetic'}});Object.defineProperty(p,'stdout',{value:{end(){readyResolve?.();}}});
+  const vscode={env:{remoteName:'wsl',uiKind:1},UIKind:{Desktop:1},workspace:{isTrusted:true,workspaceFolders:r.workspace?[{uri:{toString:()=>`file://${r.workspace}`}}]:[],textDocuments:[],notebookDocuments:[],saveAll:async()=>!(cancel==='save'&&r===second)},tasks:{taskExecutions:[]},debug:{},window:{terminals:[],tabGroups:{all:[]},showWarningMessage:async(_m,_o,yes)=>yes,showErrorMessage:async m=>events.push('error:'+m),showInformationMessage:async()=>{},showInputBox:()=>assert.fail('password forbidden')},commands:{registerCommand:(id,fn)=>{r.commands.set(id,fn);return{dispose(){}};},executeCommand:async command=>{assert.equal(command,'workbench.action.closeWindow');events.push('close:'+r.pid);await assert.rejects(new locksModule.LiveLocks(path.join(home,'.gemini'),owner).withOperation(async()=>assert.fail('writer overlap')),{code:'LIVE_OPERATION_OR_RECOVERY_LOCKED'});events.push('writer-fenced');if(cancel===true){const q=pointers.get(first.pid);await new AutomaticOfflineControl(home,q.id).cancel();}setTimeout(()=>{births.delete(r.pid);r.active=false;},5);}}};
+  r.context={globalState:{get:()=>pointers.get(r.pid),update:async(_k,v)=>pointers.set(r.pid,v)},extensionPath:path.resolve(__dirname,'..'),extension:{extensionKind:2},subscriptions:[]};
+  function req(name,from=path.join(__dirname,'../out/entry.js')){
+   if(name==='vscode')return vscode;if(name==='node:os')return{...os,homedir:()=>home};if(!name.startsWith('.'))return createRequire(from)(name);
+   const filename=require.resolve(path.resolve(path.dirname(from),name)),base=path.basename(filename);
+   if(base==='live-storage.js')return storage;if(base==='live-lock.js')return{...locksModule,probeProcessIdentity:probe};if(base==='private-state.js')return{PrivateState};
+   if(base==='native-host.js')return{assertNativeHost(){},resolveCredentialHostId:async()=>scope};if(base==='official-contract.js')return{assertOfficialWriteContract:async()=>{}};if(base==='live-wsl-proof.js')return{createWslReadGuard:()=>async()=>true};
+   if(base==='live-environment.js')return{resolveOfficialStorageMode:async()=> 'wsl-file',EnvironmentTokenSlots:class{async read(){return{keyring:null,keyringState:'unobserved',file:await fs.readFile(file,'utf8')};}}};if(base==='offline-process-census.js')return{inspectOfflineLinuxProcesses:census};
+   if(base==='wsl-window-launcher.js')return{...require(filename),WslWindowLauncher:class{
+    async discover(workspace){return{schema:1,executable:'/synthetic/Code.exe',cwd:'/synthetic',cli:'resources/app/out/cli.js',fingerprint,authority:'wsl+synthetic',workspace,profilePolicy:'workspace-association'};}async validate(){}
+    async launch(plan){events.push('reopen:'+plan.workspace.uri);const next=role(812000+roles.length,new URL(plan.workspace.uri).pathname);next.api=load(next);next.api.req('./automatic-window-entry').registerWindowRejoin(next.context);next.api.req('./window-runtime-actor').registerWindowRuntime(next.context);next.api.ui();return{dispatched:true};}
+   }};
+   if(cache.has(filename))return cache.get(filename).exports;const m={exports:{}};cache.set(filename,m);
+   vm.runInThisContext(`(function(require,module,exports,__filename,__dirname,process,setInterval){${sync.readFileSync(filename,'utf8')}\n})`,{filename})(n=>req(n,filename),m,m.exports,filename,path.dirname(filename),p,(cb,ms)=>{const timer={cb,ms,unref(){}};r.timers.push(timer);return timer;});
+   if(base==='offline-automatic.js')m.exports.launchAutomaticOfflineHelper=async(_script,id,host,kind,remote,action,attempt)=>{const ready=new Promise(resolve=>readyResolve=resolve);helperRunning=true;helperDone=load(helper).req('./offline-automatic-helper').automaticOfflineHelper([id,host,String(kind),remote,action,attempt]).catch(e=>{helperError=e;readyResolve();}).finally(()=>{helperRunning=false;});await ready;};return m.exports;
+  }
+  function ui(){r.controller=req('./offline-ui').registerOfflineUi(r.context,{owner,accounts:()=>[{id:'target',label:'synthetic'}],account:async()=>({slots:{keyring:null,file:target},expectedEmail:'target@example.test'}),official:()=>({}),proof:async()=>({authValid:true,quotaSource:'server',email:(await fs.readFile(file,'utf8'))===target?'target@example.test':'original@example.test',generation:'fresh-'+r.pid}),changed(){}});return r.controller;}return{req,ui};
+ }
+ for(const r of [first,second]){r.api=load(r);r.api.req('./window-runtime-actor').registerWindowRuntime(r.context);}
+ const pump=setInterval(()=>{for(const r of roles)if(r.active)for(const timer of r.timers)if(timer.ms===500)timer.cb();else if(r.pid>=812000&&helperRunning){events.push('poll-during-helper');timer.cb();}},20);t.after(()=>clearInterval(pump));await until(async()=>{const c=new(first.api.req('./window-runtime-channel').WindowRuntimeChannel)(home);return(await c.roster(await census(),scope)).complete;});first.api.ui();
+ return{home,file,original,target,events,first,locks:new locksModule.LiveLocks(path.join(home,'.gemini'),owner),prepare:()=>first.controller.prepareAutomatic('target'),done:async()=>{await helperDone;return helperError;},poll:()=>{for(const r of roles)if(r.active&&r.controller)for(const timer of r.timers)if(timer.ms!==500)timer.cb();},record:async()=>{const q=pointers.get(first.pid),key=await new AutomaticOfflineKey(home,q.host,q.id).read();return new OfflineRecoveryStore(path.join(home,'.gemini','antigravity-workbench-offline',q.id),key,q.host,q.id).read();}};
+}
+// These integration cases exercise actual POSIX directory fsync and concurrent
+// atomic replacement, not a simulated Windows durability implementation.
+for(const cancel of [false,true])test('real product orchestration '+(cancel?'partial-close cancellation and recovery':'successful two-window transaction'),{skip:process.platform==='win32'?'Requires POSIX durability; native Windows rejection covered below':false},async t=>{
+ const f=await fixture(t,cancel);assert.equal(await f.prepare(),true);const error=await f.done();assert.equal(error?.code,cancel?'CANCELLED':undefined);assert.equal(await fs.readFile(f.file,'utf8'),cancel?f.original:f.target);assert.equal(await f.locks.hasRecovery(),true);assert.equal(f.events.filter(e=>e.startsWith('close:')).length,cancel?1:2);assert.equal(f.events.filter(e=>e.startsWith('reopen:')).length,cancel?1:2);assert.equal(f.events.filter(e=>e==='writer-fenced').length,cancel?1:2);assert.ok(f.events.includes('poll-during-helper'));
+ f.poll();await until(async()=>!await f.locks.hasRecovery());assert.equal((await f.record()).phase,cancel?'restored-verified':'verified');assert.equal((await f.record()).backup.file,f.original);
+});
+
+test('peer save cancellation while initiating UI is busy retains original and settles on poll',{skip:process.platform==='win32'?'Requires POSIX durability; native Windows rejection covered below':false},async t=>{const f=await fixture(t,'save');await assert.rejects(f.prepare(),{code:'CANCELLED'});assert.equal(f.events.filter(e=>e.startsWith('close:')).length,0);assert.equal(await fs.readFile(f.file,'utf8'),f.original);assert.equal(await f.locks.hasRecovery(),true);f.poll();await until(async()=>!await f.locks.hasRecovery());assert.equal((await f.record()).phase,'restored-verified');});
+
+test('native Windows refuses offline durability while retaining recovery material and original file',{skip:process.platform!=='win32'},async t=>{
+ const home=await fs.mkdtemp(path.join(await fs.realpath(__dirname),'native-windows-durability-'));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const id=require('node:crypto').randomUUID(),file=path.join(home,'.gemini','jetski-standalone-oauth-token');
+ const original=JSON.stringify({token:{refresh_token:'synthetic-original'}}),target=JSON.stringify({token:{refresh_token:'synthetic-target'}});
+ await fs.mkdir(path.dirname(file));await fs.writeFile(file,original);
+ const record={schema:1,hostId:scope,id,phase:'prepared',backup:{keyring:null,file:original},target:{keyring:null,file:target},expectedEmail:'synthetic@example.test'};
+ const store=new OfflineRecoveryStore(path.join(home,'recovery'),'synthetic-password',scope,id);
+ await assert.rejects(store.save(record,undefined),{code:'OFFLINE_DURABILITY_UNSUPPORTED'});
+ // Save writes its encrypted envelope before discovering unsupported directory
+ // durability. Never delete it or reinterpret the rejection as a committed switch.
+ assert.deepEqual(await store.read(),record);
+ assert.equal(await fs.readFile(file,'utf8'),original);
+ const key=new AutomaticOfflineKey(home,scope,id);
+ await assert.rejects(key.create(),error=>['EPERM','EACCES','EISDIR','EINVAL','EBADF'].includes(error.code));
+ const retained=await key.read();assert.match(retained,/^[a-f0-9]{64}$/);
+ await assert.rejects(key.create(),{code:'OFFLINE_RECOVERY_REQUIRED'});
+ assert.equal(await key.read(),retained);assert.deepEqual(await store.read(),record);
+ assert.equal(await fs.readFile(file,'utf8'),original);
+ assert.equal((await new locksModule.LiveLocks(path.join(home,'.gemini'),owner).inspectRecovery()).state,'absent');
+});

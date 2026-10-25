@@ -88,3 +88,18 @@ test('catalog diagnostics use a separate operation and strict stage/failure/cach
  const result=f.records.map(JSON.parse).find(row=>row.phase==='result');assert.equal(result.operation,'image.catalog');assert.equal(result.data.catalogStage,'transport');assert.equal(result.data.catalogFailure,'tls');assert.equal(result.data.catalogCacheHit,false);assert.equal(result.data.httpStatus,400);assert.doesNotMatch(f.records.join('\n'),/SENTINEL|example\.test/);
  const raw=sanitizeDebugData({catalogStage:'SENTINEL',catalogFailure:'SENTINEL',catalogUse:'SENTINEL',catalogCacheHit:'SENTINEL'});assert.equal(raw,undefined);
 });
+
+test('offline and component failures survive the diagnostic allowlist without raw text',()=>{const {debugErrorCode}=require('../out/debug-events');for(const code of ['OFFLINE_HELPER_EXITED','OFFLINE_HELPER_ACK_TIMEOUT','OFFLINE_SCOPE_UNVERIFIED','OFFLINE_NEW_INSTANCE','OFFLINE_ATTEMPT_CHANGED','OFFLINE_AUTOMATIC_KEY_MISSING','COMPONENT_CONTRACT_UNSUPPORTED','OFFLINE_SWITCH_REQUIRED','OFFLINE_RECOVERY_REQUIRED'])assert.equal(debugErrorCode({code}),code);assert.equal(debugErrorCode({code:'OFFLINE_SECRET_PRIVATE_VALUE'}),'UNCLASSIFIED_ERROR');});
+
+test('switch preparation stage is safely retained and unknown location text is dropped',()=>{const {sanitizeDebugData}=require('../out/debug-events'),{readLastAccountFailure}=require('../out/last-account-failure');for(const stage of ['route','args','confirm','contract','census','scope','prepare','helper']){assert.equal(sanitizeDebugData({switchStage:stage,stack:'SECRET /home/user token'})?.switchStage,stage);assert.equal(readLastAccountFailure({schema:1,at:'2026-10-22T14:46:02.119Z',action:'switch',stage,phase:'none',code:'OFFLINE_CENSUS_UNVERIFIED'}).stage,stage);}assert.equal(sanitizeDebugData({switchStage:'SECRET /private/path',stack:'SECRET'}),undefined);});
+
+test('component failures retain only fixed per-host stages and codes in diagnostics and persistent record',()=>{
+ const { debugErrorData }=require('../out/debug-events');
+ const {readLastAccountFailure}=require('../out/last-account-failure');
+ const componentFailures=[{hostPid:42,stage:'resume',code:'OFFICIAL_COMPONENT_RESTART_TIMEOUT',token:'secret',path:'/private'}, {hostPid:43,stage:'secret',code:'HUB_RPC_FAILED'}, {hostPid:44,stage:'release',code:'SECRET_TOKEN_VALUE'}];
+ const data=debugErrorData({code:'COMPONENT_RESTORE_FAILED',componentFailures});
+ assert.deepEqual(data.componentFailures,[{hostPid:42,stage:'resume',code:'OFFICIAL_COMPONENT_RESTART_TIMEOUT'}]);
+ const record=readLastAccountFailure({schema:1,at:'2026-10-25T00:00:00.000Z',action:'verify',stage:'resume',phase:'none',...data});
+ assert.deepEqual(record.componentFailures,data.componentFailures);assert.ok(!JSON.stringify(record).includes('secret'));
+ assert.ok(readLastAccountFailure({schema:1,at:'2026-10-25T00:00:00.000Z',action:'verify',stage:'command',phase:'none',code:'COMPONENT_RESTORE_FAILED'}));
+});

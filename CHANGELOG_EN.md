@@ -4,6 +4,20 @@
 
 User-visible features and fixes in this repository's formal releases. Release dates use UTC.
 
+## [0.1.18](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.18) — 2026-10-25
+
+Stabilize multi-window switching and recovery; retire experimental entry points.
+
+- Repair missing WSL storage evidence caused by shared startup logs within the confirmed interruption scope. Bind evidence to the backend instance and retain recovery data on failure; never borrow another window’s proof.
+- Coordinate related backends in the same credential scope and freshly verify identity. The normal route needs no manual window closure, recovery password or external terminal.
+- Persist account commit separately from backend restoration so cleanup failure does not overwrite a committed switch result. Preserve backups and unknown external credential changes.
+- Correct verify/recovery routing and stale status messages. Host restart recovery requires explicit confirmation because it affects other extensions in that window.
+- Show actual steps beside the selected account and switch button, with stage-local window counts and no fabricated percentage or ETA.
+- Check actual capabilities, configuration and process ownership rather than an official-version allowlist. Retain bounded two-window read-only verification without claiming native speed improvement.
+- Remove the obsolete window-experiment acceptance import command. Save performance samples only while explicit debug recording is enabled; retain sanitized errors, legacy recovery and regression coverage.
+
+[Release notes](docs/RELEASE_0.1.18.md) · [Validation scope](docs/VALIDATION_0.1.18.md)
+
 ## [0.1.17](https://github.com/XiaoXinCodes/antigravity-workbench/releases/tag/v0.1.17) — 2026-10-20
 
 Improve completion recovery after account switching and make backend status easier to inspect.
