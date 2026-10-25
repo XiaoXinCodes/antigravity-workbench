@@ -123,7 +123,7 @@ test('concurrent preparation uses shared exclusion rather than two handoffs', as
 test('durable descriptors survive fresh journal instance; stale CAS and descriptor replacement reject', async t => {
   const fs = require('node:fs/promises'), path = require('node:path'), os = require('node:os');
   const { WindowSwitchJournal } = require('../out/window-switch-journal');
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'window-journal-fixture-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'window-journal-fixture-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const f = fixture(); await f.prepare(); const original = structuredClone(f.state.record);
   const first = new WindowSwitchJournal(path.join(dir, 'state')); await first.save(original, undefined);
   const second = new WindowSwitchJournal(path.join(dir, 'state')); assert.deepEqual(await second.read(), original);
@@ -145,7 +145,7 @@ test('journal rejects raw commands, tokens, URI secrets, old schemas and fabrica
 test('durable participant registry uses runtime births and includes hosts with no Hub', async t => {
   const fs = require('node:fs/promises'), path = require('node:path'), os = require('node:os');
   const { WindowParticipants } = require('../out/window-participants');
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'window-registry-fixture-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'window-registry-fixture-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const registry = new WindowParticipants(path.join(dir, 'registry')); const f = fixture(); const [a, b, c] = f.state.windows;
   const register = w => registry.register({ self: async () => w.host, capture: async () => w });
   await register(a); await register(b);

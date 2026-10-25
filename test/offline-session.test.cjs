@@ -19,17 +19,17 @@ async function fixture(t){
  return{home,file,record,input,deps,journal,host,empty,isReady:()=>ready};
 }
 test('executor publishes durable recovery and legacy fence before waiting, installs after closure',async t=>{
- const f=await fixture(t);assert.equal(await runOfflineFileSession(f.input,f.deps),'installed-awaiting-verification');
+ const f=await fixture(t);if(process.platform==='win32'){await assert.rejects(runOfflineFileSession(f.input,f.deps),{code:'OFFLINE_DURABILITY_UNSUPPORTED'});assert.equal(f.isReady(),false);assert.equal(await fs.readFile(f.file,'utf8'),f.record.backup.file);assert.equal((await new LiveLocks(path.join(f.home,'.gemini'),owner).inspectRecovery()).state,'absent');return;}assert.equal(await runOfflineFileSession(f.input,f.deps),'installed-awaiting-verification');
  assert.equal(f.isReady(),true);assert.equal(await fs.readFile(f.file,'utf8'),f.record.target.file);assert.equal((await f.journal.read()).phase,'installed');
  const locks=new LiveLocks(path.join(f.home,'.gemini'),owner);assert.equal((await locks.inspectRecovery()).owner.schema,4);
  await assert.rejects(locks.withOperation(()=>locks.reconcileRecovery(null)),{code:'OFFLINE_RECOVERY_REQUIRED'});
 });
-test('new host after preparation aborts and keeps encrypted recovery and original credentials',async t=>{
+test('new host after preparation aborts and keeps encrypted recovery and original credentials',{skip:process.platform==='win32'?'Requires successful POSIX directory durability; Windows refusal covered above':false},async t=>{
  const f=await fixture(t);let calls=0;f.deps.census=async()=>({...f.empty,hosts:[{...f.host,startIdentity:++calls===1?'fixture-birth':'new-birth'}]});
  await assert.rejects(runOfflineFileSession(f.input,f.deps),{code:'OFFLINE_NEW_INSTANCE'});
  assert.equal(await fs.readFile(f.file,'utf8'),f.record.backup.file);assert.equal((await f.journal.read()).phase,'prepared');
 });
-test('close timeout and cancellation retain a recoverable prepared record without writing',async t=>{
+test('close timeout and cancellation retain a recoverable prepared record without writing',{skip:process.platform==='win32'?'Requires successful POSIX directory durability; Windows refusal covered above':false},async t=>{
  for(const cancel of [false,true]){const f=await fixture(t),controller=new AbortController();let clock=0;
  f.deps.census=async()=>({...f.empty,hosts:[f.host]});f.deps.now=()=>clock;f.deps.wait=async()=>{clock=200;if(cancel)controller.abort();};
  await assert.rejects(runOfflineFileSession(f.input,f.deps,controller.signal),{code:cancel?'CANCELLED':'OFFLINE_CLOSE_TIMEOUT'});
@@ -40,7 +40,7 @@ test('file route receipt cannot downgrade native slots or replace another transa
  f.input.fileRoute.backup=f.record.backup;const locks=new LiveLocks(path.join(f.home,'.gemini'),owner);await locks.beginRecovery(randomUUID());
  await assert.rejects(runOfflineFileSession(f.input,f.deps),{code:'OFFLINE_RECOVERY_REQUIRED'});assert.equal(f.isReady(),false);
 });
-test('external execution consumes prior GUI preparation, restore retains fence until fresh verification',async t=>{
+test('external execution consumes prior GUI preparation, restore retains fence until fresh verification',{skip:process.platform==='win32'?'Requires successful POSIX directory durability; Windows refusal covered above':false},async t=>{
  const f=await fixture(t),locks=new LiveLocks(path.join(f.home,'.gemini'),owner);
  f.host.startIdentity='linux:11111111-1111-4111-8111-111111111111:123';
  f.record.execution={owner,extensionKind:2,remoteName:'wsl',knownHosts:[f.host],participants:[f.host]};
@@ -56,6 +56,6 @@ test('external execution consumes prior GUI preparation, restore retains fence u
  assert.equal((await locks.inspectRecovery()).owner.schema,4);
 });
 
-test('late helper cannot write after reopened host cleared its exact recovery marker',async t=>{
+test('late helper cannot write after reopened host cleared its exact recovery marker',{skip:process.platform==='win32'?'Requires successful POSIX directory durability; Windows refusal covered above':false},async t=>{
  const f=await fixture(t),locks=new LiveLocks(path.join(f.home,'.gemini'),owner);await locks.withOperation(async()=>{await f.journal.save(f.record,undefined);await locks.beginOfflineRecovery(f.record.id);await locks.clearOfflineRecovery(f.record.id);});f.deps.prepared=true;await assert.rejects(runOfflineFileSession(f.input,f.deps),{code:'RECOVERY_LOCK_OWNER_MISMATCH'});assert.equal(await fs.readFile(f.file,'utf8'),f.record.backup.file);assert.equal(f.isReady(),false);
 });

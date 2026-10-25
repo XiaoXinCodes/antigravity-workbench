@@ -41,3 +41,10 @@ test('new recovery directory ancestors are synced before save reports success',{
  finally{fs.open=original;}
  assert.ok(synced.includes(dir));assert.ok(synced.includes(path.dirname(dir)));assert.ok(synced.includes(root));assert.ok(synced.includes(path.dirname(root)));
 });
+
+test('Windows journal save rejects unsupported directory durability without pretending success',{skip:process.platform!=='win32'},async t=>{
+ const dir=await setup(t),store=new OfflineRecoveryStore(dir,password,record.hostId,record.id);
+ await assert.rejects(store.save(record,undefined),{code:'OFFLINE_DURABILITY_UNSUPPORTED'});
+ // The envelope can already exist: retaining it is required for honest recovery.
+ assert.deepEqual(await store.read(),record);
+});
