@@ -105,18 +105,29 @@ async function fixture(t, options = {}) {
   // Seed a transaction through real legacy coordinator/service, not a removed
   // normal dispatch. The UI below only consumes its existing recovery state.
   let seededGroup, seededId;
+  // External fixture writes bypass command busy/state publication. Drain any
+  // refresh that sampled the old lock, then request a post-mutation snapshot.
+  async function refreshAfterExternalMutation() { await controller.refresh(); await controller.refresh(); }
   async function seedLegacy() {
     const {ComponentCoordination}=require('../out/component-coordination'),{ComponentSwitch}=require('../out/component-switch');
-    let failure;
+    let failure, releaseOldSnapshot, oldRefresh;
     await locks.withOperation(async()=>{
       seededId=require('node:crypto').randomUUID();await locks.beginRecovery(seededId);
+      if(options.deferSeedRefresh){
+        const inspect=locks.inspectOperation.bind(locks);let sampled;
+        const captured=new Promise(resolve=>{sampled=resolve;});
+        const released=new Promise(resolve=>{releaseOldSnapshot=resolve;});
+        locks.inspectOperation=async()=>{const value=await inspect();locks.inspectOperation=inspect;sampled();await released;return value;};
+        oldRefresh=controller.refresh().then(()=>{events.push('old-refresh:'+controller.getState().recoveryPhase);});
+        await captured;
+      }
       seededGroup=new ComponentCoordination({census:components.census,assertOperation:()=>locks.assertOperationHeld(),participant:host=>components.mailbox.participant(host)});
       const driver=new ComponentSwitch({service,group:seededGroup,host:hosts[0],local,readFileRoute:components.readFileRoute,readCurrent:slots.read,assertOperation:()=>locks.assertOperationHeld(),index:{read:()=>state.get('live-switch.accounts.v1'),write:async rows=>state.set('live-switch.accounts.v1',rows)},finalizer:{prepare:(id,b)=>locks.prepareCompletion(id,b),pending:()=>locks.pendingCompletion(),identity:id=>locks.completionIdentity(id),clear:(id,m)=>locks.clearCompletedRecovery(id,m)}});
       try {await seededGroup.prepare();await driver.install(account.id,seededId);await seededGroup.close();}
       catch(error){failure=error;if(!await service.journal()){try{await seededGroup.close();if((await locks.inspectRecovery()).state!=='absent')await locks.clearRecovery(seededId);}catch{ /* Retain real outstanding restoration. */ }}else{try{await driver.restore(seededId);await seededGroup.close();}catch{ /* Preserve failed journal for UI verification. */ }}}
-    });await controller.refresh();return failure;
+    });releaseOldSnapshot?.();await refreshAfterExternalMutation();await oldRefresh;return failure;
   }
-  async function retrySeedCleanup(){await locks.withOperation(async()=>{await seededGroup.close();await locks.clearRecovery(seededId);});await controller.refresh();}
+  async function retrySeedCleanup(){await locks.withOperation(async()=>{await seededGroup.close();await locks.clearRecovery(seededId);});await refreshAfterExternalMutation();}
   let controller; controller = createController();
   t.after(async () => { subscriptions.forEach(item => item.dispose()); await fs.rm(root, { recursive: true, force: true }); });
   await controller.refresh();
@@ -452,4 +463,15 @@ test('route recovery followed by peer release failure remains reachable after a 
 
 for(const change of ['newWindowAfterRepair','replacedWindowAfterRepair'])test('post-repair census refuses unconfirmed window '+change,async t=>{
  const f=await fixture(t,{multi:true,routeMissing:[1],[change]:true});await f.call('switch');assert.ok(!f.events.includes('credential-write'));assert.ok(!f.events.some(e=>e==='stop:99'||e==='stop:3'));assert.equal(f.state.get('live-switch.lastFailure.v1').code,'COMPONENT_PARTICIPANTS_CHANGED');
+});
+
+test('external legacy seed drains a deterministically stale active-lock refresh before publishing cleanup',async t=>{
+ const f=await fixture(t,{resumeFailure:2,deferSeedRefresh:true});await f.seedLegacy();
+ assert.ok(f.events.includes('old-refresh:locked'),'deferred refresh must actually publish its old active-lock snapshot');
+ assert.equal(await f.service.journal(),null);assert.equal((await f.locks.inspectRecovery()).state,'absent');
+ assert.equal(f.controller.getState().recoveryPhase,'cleanup');assert.equal(f.controller.getState().componentRestoration,true);
+ assert.equal(f.events.filter(e=>e==='credential-write').length,1);
+ f.options.resumeFailure=undefined;await f.call('verify');
+ assert.equal(f.controller.getState().recoveryPhase,'none');assert.equal(f.hubs.size,3);
+ assert.equal(f.events.filter(e=>e==='credential-write').length,1);
 });
